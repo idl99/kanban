@@ -7,8 +7,23 @@
 <p align="center"><b>Kanban for Claude Code.</b> Drop a ticket into Ready and a headless Claude Code session picks it up, does the work and moves it to Review, with a GitHub PR when it changed code.</p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/board.png" alt="The ckanban board: Backlog, Planning, In Progress, Review and Done columns with tickets Claude is working on">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/board-dark.webp">
+    <img src="docs/assets/screenshots/board.webp" alt="The ckanban board: Backlog, Planning, In Progress, Review and Done columns with tickets Claude is working on">
+  </picture>
 </p>
+
+## What it does
+
+- 🤖 **Tickets run by headless Claude.** Move a card to Ready and a `claude -p` session works it in its own git worktree and branch, up to 5 at once per board.
+- 💬 **Planning chat.** Claude interviews you with a clickable question form, draws HTML mockups for UI work and proposes a clear ticket. *Apply & start work* is one click.
+- 🗺️ **Plans.** Split a big ticket into child tickets that run unattended in dependency order; Claude is only woken when one needs it.
+- 🗣️ **Huddles.** A team of Claude teammates (reviewer, QA, researcher, UX critic, facilitator, ...) discuss one ticket in a shared room, tag each other and pin findings, with a budget you set.
+- ✅ **Review with PR checks.** See the diff, comment on lines, watch the PR's checks on the card, send failures back to Claude, or **Merge & done**.
+- 👥 **Team tab.** Your teammates, their prompts and the notes they've learned, for every board or just one.
+- ⌘ **`⌘K` everywhere.** Jump to any ticket on any board by title, description, result or PR number, or run any action.
+
+All data lives in plain files under `~/.claude-kanban/`.
 
 ## Install (macOS)
 
@@ -27,56 +42,23 @@ Install ckanban for me by following
 https://raw.githubusercontent.com/leoawesome/kanban/main/docs/install-ai.md
 ```
 
-The guide walks the assistant through prerequisites, install, PATH, verification and troubleshooting.
-
-Then click the profile menu → **New profile…**, pick a folder you've used Claude Code in, and create a ticket.
+Then open the board switcher (top left) → **New board…**, pick a folder you've used Claude Code in, and create a ticket.
 
 ## How it works
 
-Columns: **Backlog → Planning → Ready → In Progress → Review → Done**.
+**Backlog → Planning → Ready → In Progress → Review → Done.** Park ideas in Backlog. In Planning, Claude asks questions and shapes the ticket without changing files. Ready starts a run; In Progress shows Claude's latest step on the card. In Review you check the diff and the PR, chat to change it, and merge. A merged PR moves the card to Done.
 
-- **Backlog**: park ideas. Nothing runs.
-- **Planning**: Claude interviews you with a clickable question form, draws HTML mockups for UI work, and proposes a clear ticket. It changes no files.
-- **Ready → In Progress**: a headless `claude -p` session works the ticket in its own git worktree (up to 5 at once per board).
-- **Review**: check the diff in the Changes tab, comment on lines or chat with Claude to change it, or merge the PR. Merged PRs move the card to Done.
+## Screenshots
 
-All data lives in plain files under `~/.claude-kanban/`.
+| | |
+|---|---|
+| **One chat per ticket**, like the terminal: steer it while it runs.<br><img src="docs/assets/screenshots/ticket-chat.webp" alt="A ticket drawer: details and description on the left, Claude's chat on the right"> | **Planning**: Claude interviews you before it starts.<br><img src="docs/assets/screenshots/planning.png" alt="A Planning ticket: Claude asks questions in a clickable form with a recommended option"> |
+| **Plans** run child tickets in order, unattended.<br><img src="docs/assets/screenshots/plan.webp" alt="The Plan tab: 13 of 14 child tickets done, with their dependencies"> | **Huddles**: teammates discuss, pin findings and stay on budget.<br><img src="docs/assets/screenshots/huddle.webp" alt="The Huddle tab: a facilitator's ranked list in the feed, the brief, participants with cost and pinned findings"> |
+| **Team**: teammates, their prompts and saved notes.<br><img src="docs/assets/screenshots/team.webp" alt="The Team tab in the dock: built-in teammates and the facilitator's prompt and notes"> | **`⌘K`** finds tickets by title, description, result or PR.<br><img src="docs/assets/screenshots/command-bar.webp" alt="The command bar matching 'spend limit' in a ticket's description, with a snippet"> |
 
-## A closer look
+## More features
 
-**Planning: Claude interviews you before it starts.** Pick answers, add notes, send once.
-
-<img src="docs/assets/screenshots/planning.png" alt="A Planning ticket: Claude asks five questions in a clickable form with a recommended option">
-
-**One chat per ticket, like the terminal.** The whole Claude session, with a message box to steer or follow up.
-
-<img src="docs/assets/screenshots/chat.png" alt="A ticket in Review: description on the left, Claude's chat on the right">
-
-**Terminal & files.** A real shell and a read-only file tree for the board's folder, right under the board.
-
-<img src="docs/assets/screenshots/files.png" alt="The Terminal & files panel open under the board, showing a README with syntax highlighting">
-
-**"Need you" inbox.** Everything waiting on you, across all boards.
-
-<img src="docs/assets/screenshots/inbox.png" alt="The need-you inbox listing tickets with open questions, proposals and replies">
-
-## Features
-
-- **Profiles**: one board per folder; git repos get a worktree and branch per ticket.
-- **Worktree setup**: each new worktree gets your `.env` files copied and dependencies installed before Claude starts, auto-detected from your folder.
-- **Auto pickup**: moving a card to Ready starts a run right away, up to max parallel per board.
-- **Live activity**: cards show Claude's latest action; the ticket shows the full transcript and cost.
-- **Ticket chat**: refine in Planning, steer while running, follow up in Review.
-- **Diff review**: the Changes tab shows what Claude changed (file tree, unified diff); comment on lines and send them all to Claude at once.
-- **Prompt snippets**: save text you reuse and insert it with `@name` in tickets and chat.
-- **Command bar**: `⌘K` jumps to any ticket on any board, any board or action.
-- **Mockups**: UI tickets get HTML mockups you preview and pick from before work starts.
-- **Plans**: split a ticket into child tickets that run in dependency order, unattended.
-- **Schedules**: recurring tickets on a cron schedule.
-- **Connections**: manage your Claude Code MCP servers, like `/mcp`.
-- **Terminal handoff**: copy a `claude --resume` command to continue any ticket yourself.
-- **Use it from other agents**: Claude Code or Codex can create, start and steer tickets through `ckanban mcp`.
-- **PR tracking**: Review cards with a PR are checked via `gh`; merged → Done.
+Inbox of everything waiting on you, Changes tab with line comments, worktree setup (`.env` copy and install), auto-continue after a usage limit, one-click session recovery, schedules on a cron, prompt snippets, terminal & files panel, MCP connections, branching a ticket, and tickets that ask each other questions.
 
 Every feature in detail: **[docs/features.md](docs/features.md)**. What changed in each release: **[CHANGELOG.md](CHANGELOG.md)**.
 

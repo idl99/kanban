@@ -52,8 +52,8 @@ Expected: a version number, JSON like `{"claude":true,"git":true,"gh":true}`, an
 
 Tell them:
 - Open http://localhost:7777.
-- Profile menu (top left) → **New profile…** → pick a folder they have used Claude Code in (or Browse…). One board per folder.
-- **New ticket** → describe the task. "Interview me first" (default) makes Claude ask clarifying questions in the ticket comments before working. Move the card to **Ready** to start.
+- Board switcher (top left) → **New board…** → pick a folder they have used Claude Code in (or Browse…). One board per folder.
+- **New ticket** → describe the task. **Start planning** (default) has Claude ask clarifying questions in the ticket chat and propose a clear ticket; **Start now** (or moving the card to **Ready**) starts the work.
 - Runs use `--permission-mode bypassPermissions`: Claude can run any command in that folder without asking. Only create boards for folders they trust Claude to change.
 
 ## Updating, restarting, uninstalling

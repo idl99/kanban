@@ -4,6 +4,43 @@ What changed in each ckanban release. Get the latest with `ckanban update`.
 
 ## Unreleased
 
+## [0.10.0] - 2026-10-11
+
+### Added
+- **Huddles**: several Claude sessions work one ticket together in a shared room. The ticket's own session is `@main`; teammates (reviewer, QA, engineer, security, researcher, ux-critic, facilitator, ...) are woken by `@tags`, post findings and report back. Claude proposes a huddle as an editable card in the chat; the **Huddle tab** shows the live feed, roster with status and cost per agent, pinned findings, a pinned brief and a composer with `@` autocomplete.
+- Huddle safety: a budget per huddle (default $20, Resume adds more), message and loop brakes, read-only teammates working in a snapshot of the committed code, and only you can close a huddle.
+- Click a huddle participant to watch its own Claude session, read-only, next to the feed.
+- Switch between a ticket's huddle rounds; each huddle gets its own summary.
+- Teammates propose lessons when they finish; you review them in the **🎓 Learnings** drawer and save them as notes that every future teammate of that role gets.
+- Whole-huddle templates (roster, rounds, budget, report format), including a built-in *Design review*.
+- Huddle badges on board cards and a *Huddles* list in the dock.
+- **Team tab** in the dock (header *Team* button or `T`): every teammate with its prompt, notes, usage and recent huddles, plus templates and notes for all roles. Teammates and templates can be saved for all boards or just one, and *Start huddle* starts one from there.
+- **Claude proposes new teammates** as a card in the chat; save it with one click, or edit it first.
+- New built-in teammates: researcher, ux-critic and facilitator.
+- **Review cards show PR checks**, conflicts and comments. The ticket's PR box lists every check, *Send failures to Claude* sends the failing logs, and **Merge & done** squash-merges a green PR and moves the card to Done.
+- **Spend limit**: a run that hits the Claude usage limit shows *Limit hit · continues at 4:00* and continues by itself when the limit resets (or click *Continue now*; you can turn auto-continue off per ticket).
+- **One-click recovery**: *Start fresh session* when a ticket's session is lost (same worktree and branch), or *Take over here* when the session is open in a terminal.
+- **Edit chat messages** Claude hasn't received yet (waiting for a run slot, a restart, or left unsent by Stop); `↑` in an empty box edits the last one.
+- **Apply & start work** on proposal cards applies Claude's ticket and starts it in one click.
+- Planning chats can move, edit, create, comment on and stop other tickets on the board when you ask; deletes go through a confirm card.
+- `⌘K` also finds tickets by their description, last result summary and PR number, with a snippet of the match.
+- A finished plan offers *Move to Done* and *Add more tickets* instead of Start work / Start plan.
+- The Inbox shows how long each ticket has been waiting.
+- Type `/` in a ticket description to insert a skill or command; known ones show as chips.
+- Hold `⌘` for key hints in dialogs too; `R` refines a Backlog ticket.
+
+### Changed
+- Cards, counts and the Inbox use one "needs you" rule; a ticket whose huddle is working no longer shows *Blocked*.
+- The header's running pill counts every active run, chat replies and huddle teammates included.
+- The *Has PR* filter only counts open PRs.
+- Huddle roles and templates moved from Board settings to the Team tab. Board settings is titled *Board settings · <name>*.
+- Claude's questions form takes any number of questions with up to 8 options each.
+
+### Fixed
+- `1`–`9` in the board switcher picks that board instead of searching for the digit.
+- The chat no longer says *Moved to Planning* when a reply was blocked and the card stayed put.
+- Huddle messages show as huddle blocks in the host ticket's chat, not as your own messages.
+
 ## [0.9.0] - 2026-10-08
 
 ### Added
@@ -127,6 +164,7 @@ First release.
 - Terminal & file explorer panel, Connections panel for MCP servers, scheduled tickets on a cron, claude.ai artifacts from runs.
 - Standalone binary, installer, `ckanban update` and a background service that starts at login.
 
+[0.10.0]: https://github.com/leoawesome/kanban/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/leoawesome/kanban/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/leoawesome/kanban/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/leoawesome/kanban/compare/v0.6.0...v0.7.0
