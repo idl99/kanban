@@ -7,6 +7,7 @@ import { LimitActions } from "./LimitActions";
 import { limitLabel, limitWait } from "./limitText";
 import { ResourceChip, resourceWait } from "./Needs";
 import { currentPr, prChips } from "./prText";
+import { ImportantStar } from "./StarToggle";
 import { elapsed, fullTime, plainPreview, timeAgo, useNow } from "./time";
 
 /** Live running time: ticks every second for the first minute, then every 30s. */
@@ -27,7 +28,23 @@ function workingBadge(label: string, since?: string | null) {
 // Shown by the badge already, so the activity line would only repeat it.
 const QUIET_ACTIVITY = new Set(["Starting…", "Claude is replying…"]);
 
+/** The ticket's auto huddle: reviewing its work ("Auto huddle · reason"), or waiting for the board's one slot. */
+export function autoHuddleChip(a: NonNullable<Ticket["autoHuddle"]>) {
+  if (a.state === "waiting") {
+    return <span className="badge queued" title={`Another ticket has this board's auto huddle; this one resumes when it ends. Reason: ${a.reason}`}>Waiting for huddle slot</span>;
+  }
+  return (
+    <span className="badge auto-huddle" title={`Claude started a review huddle (${a.template}) before landing: ${a.reason}`}>
+      <span className="live-dot" /> Auto huddle · <span className="ah-reason">{a.reason}</span>
+    </span>
+  );
+}
+
+/** In Progress only because it waits for its auto huddle (no run right now). */
+export const autoHuddleIdle = (t: Ticket) => !!t.autoHuddle && !t.running;
+
 export function outcomeBadge(t: Ticket) {
+  if (autoHuddleIdle(t)) return autoHuddleChip(t.autoHuddle!);
   if (waitsForSlot(t)) return <span className="badge queued" title="Your reply starts when a run slot is free">Queued</span>;
   if (t.status === "in_progress") return workingBadge("Running", t.runStartedAt);
   if (t.running) return workingBadge("Replying", t.runStartedAt);
@@ -76,7 +93,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
   huddle?: CardHuddleBadge | null; onOpenHuddle?: (ticketId: string) => void;
   limit?: { slug: string; onError: (msg: string) => void };
 }) {
-  const working = (ticket.status === "in_progress" && !waitsForSlot(ticket)) || !!ticket.running;
+  const working = (ticket.status === "in_progress" && !waitsForSlot(ticket) && !autoHuddleIdle(ticket)) || !!ticket.running;
   const att = ticket.attention ?? null;
   const waitFor = resourceWait(ticket);
   // Its own huddle works on it: the huddle badge says so, not a stale Blocked or Failed.
@@ -102,7 +119,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
         </div>
       )}
       <KeyHint inset className="card-keys" keys={ticket.status === "review" ? "↵ open · D done · Space move" : "↵ open · Space move"} />
-      <div className="card-title" title={ticket.title}>{ticket.title}</div>
+      <div className="card-title" title={ticket.title}>{ticket.important && <ImportantStar />}{ticket.title}</div>
       {showActivity ? (
         <div className="card-activity" title={ticket.lastActivity!}>{ticket.lastActivity}</div>
       ) : last && (
@@ -111,7 +128,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           {plainPreview(last.from === "huddle" ? digestPreview(last.text) : last.text)}
         </div>
       )}
-      {(badge || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || huddle) && (
+      {(badge || ticket.autoHuddle || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || huddle) && (
         <div className="card-meta">
           {ticket.plan && ticket.plan.state !== "done" && (
             <span className={`badge plan ${ticket.plan.state}`} title="This ticket runs a plan of child tickets">
@@ -125,6 +142,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           )}
           {ticket.needs?.map((n) => <ResourceChip key={n} name={n} held={!!ticket.resources?.holding} />)}
           {badge}
+          {ticket.autoHuddle && working && autoHuddleChip(ticket.autoHuddle)}
           {huddle && <HuddleBadge badge={huddle} onOpen={onOpenHuddle} />}
           {ticket.prUrl && (
             <a className="badge pr" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>

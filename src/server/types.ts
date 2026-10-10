@@ -24,6 +24,26 @@ export interface Profile {
   cleanupCommand?: string;
   /** What auto-detection last found; missing: detection never ran (the board runs it on start). */
   setupDetected?: SetupDetection | null;
+  /**
+   * Unattended runs may start a review huddle by themselves (start_huddle) before landing important or risky work.
+   * Missing: on (see autoHuddlesOn).
+   */
+  autoHuddles?: boolean;
+}
+
+/** Board setting "Auto huddles": on unless turned off. */
+export const autoHuddlesOn = (p: Pick<Profile, "autoHuddles"> | null | undefined): boolean => p?.autoHuddles !== false;
+
+/**
+ * A review huddle the ticket's unattended run started by itself (start_huddle). waiting: another auto huddle is live
+ * on the board, so the ticket waits in In Progress and the board wakes it when that one ends. live: huddleId runs.
+ */
+export interface AutoHuddle {
+  state: "waiting" | "live";
+  reason: string;
+  template: string;
+  at: string;
+  huddleId?: string | null;
 }
 
 /** Worktree setup values detected from the board folder (see worktree-setup.ts). */
@@ -107,6 +127,10 @@ export interface Ticket {
    * Ready tickets. from: where the card was, so Stop puts it back.
    */
   slotWait?: { at: string; from: Pick<Ticket, "status" | "outcome"> } | null;
+  /** ⭐ Important: set by the user (or Claude when the user says so); unattended runs review it in an auto huddle before landing. */
+  important?: boolean;
+  /** The auto huddle this ticket's run started or waits for; the card stays In Progress until it ends. */
+  autoHuddle?: AutoHuddle | null;
   /** Set with outcome "limit": when the limit resets and whether the board sends "continue" then (see limit.ts). */
   limit?: LimitHit | null;
   /** false: the user turned automatic continues off for this ticket ("Don't auto-continue"). Missing: on. */
@@ -254,6 +278,8 @@ export interface QueuedMessage {
    * local: a built-in that runs without a model turn (/compact), so Claude never echoes it back.
    */
   slash?: "prompt" | "local";
+  /** From the ticket's own auto huddle (findings, the budget brake) or a freed auto-huddle slot: sent as-is, run as its work. */
+  hostWake?: boolean;
 }
 
 /** A question one ticket's Claude asked another's (ask_ticket), kept per board in questions.json. */
@@ -436,6 +462,8 @@ export interface Huddle {
   brief?: { text: string; by: string; at: string } | null;
   /** Template the huddle was started from (see huddle-templates.ts). */
   template?: string | null;
+  /** Started by the host ticket's unattended run (start_huddle), with its reason; @main may close it itself. */
+  auto?: { reason: string } | null;
   /** Lessons agents proposed when they turned done; only the user saves them as role notes (see huddle-notes.ts). */
   learnings?: HuddleLearning[];
   createdAt: string;

@@ -51,6 +51,9 @@ export interface TicketInfo {
   /** Plan child waiting on the user: the plan won't start it until then. */
   userWait?: string | null;
   plan?: { state: string; maxConcurrent: number } | null;
+  /** ⭐ Important: reviewed in an auto huddle before landing. */
+  important?: boolean;
+  autoHuddle?: { state: "waiting" | "live"; reason: string; template: string; huddleId?: string | null } | null;
   createdAt: string;
   updatedAt: string;
   attention?: { kind: string } | null;
@@ -125,6 +128,7 @@ export interface TicketPatch {
   mode?: TicketMode;
   dependsOn?: string[];
   needs?: string[];
+  important?: boolean;
   /** null takes the ticket out of its plan. */
   parentId?: null;
 }
@@ -331,6 +335,9 @@ export class BoardClient {
   /** lessons (status done): proposed for the user to review as role notes. */
   huddleStatus = (slug: string, hid: string, status: HuddleStatusChange, reason: string | undefined, c: HuddleCaller, lessons?: HuddleLesson[]) =>
     this.req<HuddleParticipantInfo>("POST", `${this.h(slug, hid)}/status`, { status, reason, ...(lessons?.length ? { lessons } : {}) }, this.as(c));
+  /** start_huddle: the host ticket's own unattended run starts its auto huddle, or waits for the board's slot. */
+  startAutoHuddle = (slug: string, input: { reason: string; template?: string; roster?: RosterEntry[] }, c: HuddleCaller) =>
+    this.req<{ waiting: boolean; template: string; huddle: HuddleInfo | null }>("POST", `/api/profiles/${encodeURIComponent(slug)}/huddles/auto`, input, this.as(c));
   huddleCloseRequest = (slug: string, hid: string, reason: string, c: HuddleCaller) =>
     this.req<HuddleInfo>("POST", `${this.h(slug, hid)}/close-request`, { reason }, this.as(c));
   huddleMode = (slug: string, hid: string, handle: string, mode: HuddleMode, c: HuddleCaller) =>
@@ -450,7 +457,7 @@ function state(t: TicketInfo): string {
 
 export function ticketLine(t: TicketInfo): string {
   const extra = [t.parentId ? `in plan ${t.parentId}` : null, t.needs?.length ? `needs ${t.needs.join(", ")}` : null].filter(Boolean);
-  return `${t.id}  [${state(t)}]  ${t.title}${extra.length ? `  (${extra.join("; ")})` : ""}`;
+  return `${t.id}  [${state(t)}]  ${t.important ? "⭐ " : ""}${t.title}${extra.length ? `  (${extra.join("; ")})` : ""}`;
 }
 
 export function ticketText(t: TicketInfo, comments: CommentInfo[] = []): string {

@@ -30,6 +30,19 @@ const MAX_ROUNDS = 20;
 const DESIGN_REVIEW_READ =
   "Read the code you review without changing the checkout (git show <ref>:<path>, git grep); never edit, checkout or reset. ";
 
+/** The templates an unattended run starts by itself with start_huddle (auto huddles). */
+export const AUTO_REVIEW = "auto-review";
+export const AUTO_REVIEW_IMPORTANT = "auto-review-important";
+export const AUTO_TEMPLATES = [AUTO_REVIEW, AUTO_REVIEW_IMPORTANT];
+
+const AUTO_REVIEW_READ = "Read the code without changing the checkout; never edit, checkout or reset. Report to @qa-lead, not @main. ";
+const AUTO_REVIEW_LEAD =
+  "Collect the reviewers' and testers' findings, de-duplicate them, pin them with huddle_findings and send @main one consolidated list, MUST first. " +
+  "When @main asks for the re-check after its fixes, have the same reviewer check the MUST fixes once, briefly, then tell @main the result.";
+const AUTO_REVIEW_REPORT =
+  "One finding per line: [MUST|SHOULD|COULD] file:line - problem - concrete fix. MUST = a bug, data loss, security hole or broken user path; " +
+  "evidence required. SHOULD/COULD are listed in the ticket's result, not fixed now. Workers report to @qa-lead, who sends @main one list.";
+
 export const BUILTIN_TEMPLATES: HuddleTemplate[] = [
   {
     name: "design-review",
@@ -66,6 +79,33 @@ export const BUILTIN_TEMPLATES: HuddleTemplate[] = [
         handle: "facilitator", preset: "facilitator",
         prompt: "Run the rounds the brief sets; when they are over, send @main the final ranked list.",
       },
+    ],
+  },
+  {
+    name: AUTO_REVIEW,
+    label: "Auto review",
+    description: "Claude's own review squad before landing risky work while the user is away: a reviewer and a QA tester, with a QA lead who sends @main one list.",
+    rounds: null,
+    maxCostUsd: 20,
+    report: AUTO_REVIEW_REPORT,
+    roster: [
+      { preset: "reviewer", prompt: AUTO_REVIEW_READ + "Review the change for correctness: bugs, edge cases, missing tests." },
+      { preset: "qa", prompt: AUTO_REVIEW_READ + "Test the change: run the tests and try the user-facing paths it touches." },
+      { preset: "qa-lead", prompt: AUTO_REVIEW_LEAD },
+    ],
+  },
+  {
+    name: AUTO_REVIEW_IMPORTANT,
+    label: "Auto review (important)",
+    description: "The bigger squad for ⭐ important tickets and security, data, payments or migration changes: two reviewers (correctness and security), two QA testers and a QA lead.",
+    rounds: null,
+    maxCostUsd: 20,
+    report: AUTO_REVIEW_REPORT,
+    roster: [
+      { handle: "reviewer", preset: "reviewer", prompt: AUTO_REVIEW_READ + "Review the change for correctness: bugs, edge cases, missing tests." },
+      { handle: "security", preset: "security", prompt: AUTO_REVIEW_READ + "Review the change for security and data risks." },
+      { preset: "qa", count: 2, prompt: AUTO_REVIEW_READ + "Test the change: run the tests and try the paths it touches; the QA lead splits the areas." },
+      { preset: "qa-lead", prompt: AUTO_REVIEW_LEAD },
     ],
   },
 ];

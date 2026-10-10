@@ -24,7 +24,7 @@ import { BOARD_COMMANDS, commandText, listCommands, MODEL_HELP, parseSlash, REFU
 import { mcpConfig } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
-import type { Interrupted, LimitHit, Plan, PrStatus, Profile, QueuedMessage, Status, Ticket, TicketMode } from "./types";
+import { autoHuddlesOn, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
 import { CLEANUP_TIMEOUT_MS, prepareWorktree, runShell, withSetup, type SetupResult } from "./worktree-setup";
 import { nowIso, slugify } from "./util";
 
@@ -73,7 +73,11 @@ interface ActiveRun {
     text: string; mode: ChatMode; raw?: boolean; returnTo?: Status; quiet?: boolean; from?: Pick<Ticket, "status" | "outcome">; user?: boolean;
     /** text is a slash command (see QueuedMessage.slash). */
     slash?: "prompt" | "local";
+    /** A wake for the ticket's own auto huddle (see QueuedMessage.hostWake): a full prompt, run as the ticket's work. */
+    hostWake?: boolean;
   };
+  /** This run started an auto huddle (start_huddle): one per run. */
+  autoHuddleStarted?: boolean;
   /** Queued messages (ticket.queued) written to this claude process, keyed by id, with the text it was given. */
   inFlight: Map<string, string>;
   /** Queued message this chat run was started with; it leaves the queue once Claude reads the prompt. */
@@ -103,7 +107,11 @@ export function chatModeFor(status: Status): ChatMode {
 }
 
 /** How a chat run handles a queued message: a peer message (from another ticket's Claude) is sent as-is, quietly. */
-function chatFor(t: Pick<Ticket, "status" | "outcome">, msg: { text: string; peer?: boolean; fromPlanner?: boolean; slash?: "prompt" | "local" }): NonNullable<ActiveRun["chat"]> {
+function chatFor(
+  t: Pick<Ticket, "status" | "outcome">, msg: { text: string; peer?: boolean; fromPlanner?: boolean; slash?: "prompt" | "local"; hostWake?: boolean },
+): NonNullable<ActiveRun["chat"]> {
+  // The ticket's auto huddle wakes it: unattended work on its own ticket, so it ends like a work run (result line, column).
+  if (msg.hostWake) return { text: msg.text, mode: "act", raw: true, hostWake: true };
   const mode = chatModeFor(t.status);
   if (msg.peer) return { text: msg.text, mode, raw: true, quiet: true };
   const chat: NonNullable<ActiveRun["chat"]> = { text: msg.text, mode, from: { status: t.status, outcome: t.outcome }, ...(msg.fromPlanner ? {} : { user: true }) };
@@ -113,8 +121,24 @@ function chatFor(t: Pick<Ticket, "status" | "outcome">, msg: { text: string; pee
 }
 
 /** Queued-message flags from Board.chat options. */
-function flags(o: { peer?: boolean; fromPlanner?: boolean; slash?: "prompt" | "local" }): Pick<QueuedMessage, "peer" | "fromPlanner" | "slash"> {
-  return { ...(o.peer ? { peer: true } : {}), ...(o.fromPlanner ? { fromPlanner: true } : {}), ...(o.slash ? { slash: o.slash } : {}) };
+function flags(o: ChatOptions): Pick<QueuedMessage, "peer" | "fromPlanner" | "slash" | "hostWake"> {
+  return {
+    ...(o.peer ? { peer: true } : {}), ...(o.fromPlanner ? { fromPlanner: true } : {}), ...(o.slash ? { slash: o.slash } : {}),
+    ...(o.hostWake ? { hostWake: true } : {}),
+  };
+}
+
+/** Board.chat options; hostWake: the ticket's own auto huddle (or a free auto-huddle slot) wakes it. */
+export interface ChatOptions {
+  peer?: boolean;
+  fromPlanner?: boolean;
+  slash?: "prompt" | "local";
+  hostWake?: boolean;
+}
+
+/** What the card says while the ticket waits for its auto huddle. */
+export function autoHuddleActivity(a: NonNullable<Ticket["autoHuddle"]>): string {
+  return a.state === "waiting" ? "Waiting for huddle slot" : "Auto huddle: waiting for the review";
 }
 
 /** Holding a resource: Claude works on the ticket (In progress or a chat reply), or it is queued in Ready. */
@@ -332,7 +356,7 @@ export class Board {
       }
       if (this.full(slug)) return;
       this.patch(slug, t.id, { slotWait: null });
-      this.start(slug, t.id, next.peer ? chatFor(t, next) : { ...chatFor(t, next), mode: "act", from: t.slotWait!.from }, next.id);
+      this.start(slug, t.id, next.peer || next.hostWake ? chatFor(t, next) : { ...chatFor(t, next), mode: "act", from: t.slotWait!.from }, next.id);
     }
     const ready = idle.filter((t) => t.status === "ready").sort((a, b) => a.order - b.order);
     for (const t of ready) {
@@ -367,13 +391,13 @@ export class Board {
    * While Claude is working the message steers the run instead: Claude reads it at its next step.
    * peer: the message comes from another ticket's Claude (see questions.ts) and is already a full prompt.
    */
-  async chat(slug: string, id: string, text: string, opts: { peer?: boolean; fromPlanner?: boolean; slash?: "prompt" | "local" } = {}): Promise<Ticket> {
+  async chat(slug: string, id: string, text: string, opts: ChatOptions = {}): Promise<Ticket> {
     const t = this.store.getTicket(slug, id);
     if (!t) throw new Error(`ticket ${id} not found`);
     if (!text.trim()) throw new Error("message is empty");
     if (t.error?.startsWith("corrupt")) throw new Error("ticket file is corrupt");
     const active = this.runs.get(this.key(slug, id));
-    if (!opts.peer && !opts.slash) {
+    if (!opts.peer && !opts.slash && !opts.hostWake) {
       const refused = parseSlash(text)?.name;
       if (refused && REFUSED_COMMANDS.has(refused)) {
         throw new Error(`/${refused} isn't available here: start a new ticket for a fresh conversation.`);
@@ -383,7 +407,7 @@ export class Board {
       if (slash) [text, opts] = [slash.text, { ...opts, slash: slash.command.local ? "local" : "prompt" }];
     }
     // The user (or the board's automatic continue) picks the conversation up again: the limit wait is over.
-    if (t.limit && !opts.peer) this.patch(slug, id, { limit: null });
+    if (t.limit && !opts.peer && !opts.hostWake) this.patch(slug, id, { limit: null });
     if (active) {
       if (active.stopRequested || this.shuttingDown) throw new ConflictError("Claude is stopping; send your message once it has stopped");
       // Saved on the ticket until Claude reads it, so closing the chat, Stop or a restart can't lose it.
@@ -441,7 +465,7 @@ export class Board {
     if (!msg) throw new Error("message not found");
     if (msg.state !== "unsent") throw new ConflictError("message is already on its way to Claude");
     this.dropQueued(slug, id, [msgId]);
-    return this.chat(slug, id, msg.text, { peer: msg.peer, fromPlanner: msg.fromPlanner, slash: msg.slash });
+    return this.chat(slug, id, msg.text, { peer: msg.peer, fromPlanner: msg.fromPlanner, slash: msg.slash, hostWake: msg.hostWake });
   }
 
   discardQueued(slug: string, id: string, msgId: string): Ticket {
@@ -480,7 +504,7 @@ export class Board {
   private steer(run: ActiveRun, msg: QueuedMessage): boolean {
     if (run.inFlight.has(msg.id) || run.promptMsgId === msg.id) return true;
     // A slash command goes alone: anything after it would become the command's arguments.
-    const text = msg.slash ? localizeUrls(msg.text, this.store.attachmentsDir) : localizeImages(msg.peer ? msg.text : steerPrompt(msg.text), this.store.attachmentsDir);
+    const text = msg.slash ? localizeUrls(msg.text, this.store.attachmentsDir) : localizeImages(msg.peer || msg.hostWake ? msg.text : steerPrompt(msg.text), this.store.attachmentsDir);
     if (!run.handle?.send(text, { local: msg.slash === "local" })) return false;
     // Claude never echoes a local command back: it is read once it is written.
     if (msg.slash === "local") this.dropQueued(run.slug, run.id, [msg.id]);
@@ -640,8 +664,9 @@ export class Board {
       ? firstRunPrompt(t, {
         isGit: session.isGit, linked: !!t.workdir, comments: t.workdir || t.runCount > 0 ? newComments : [], outputDir,
         schedule: t.scheduleId ? { id: t.scheduleId, name: this.store.getSchedule(slug, t.scheduleId)?.name ?? null, board: slug } : undefined,
+        autoHuddles: autoHuddlesOn(profile),
       })
-      : resumePrompt(t, newComments, outputDir), this.store.attachmentsDir), this.takeSetup(slug, id));
+      : resumePrompt(t, newComments, outputDir, autoHuddlesOn(profile)), this.store.attachmentsDir), this.takeSetup(slug, id));
     // A slash command only runs when it is the whole message: Claude Code passes everything after the name to
     // it as arguments (the board's note too). So the command goes alone and the board's instructions go in
     // the system prompt for this run.
@@ -749,7 +774,7 @@ export class Board {
 
     if (run.handle.stopped) {
       this.store.addComment(slug, id, "ai", "Run stopped by user.");
-      this.patch(slug, id, { ...base, outcome: "stopped", error: null, lastActivity: null });
+      this.patch(slug, id, { ...base, outcome: "stopped", error: null, lastActivity: null, ...this.dropAutoWait(slug, id) });
       return;
     }
     // The account hit its usage limit: not a failure of the work, it continues once the limit resets.
@@ -797,12 +822,21 @@ export class Board {
     // Questions must reach the user verbatim; otherwise the short summary is enough.
     const summary = (result?.status === "questions" ? body : result?.summary) || body || "(no output)";
     this.store.addComment(slug, id, "ai", summary);
+    // Its auto huddle reviews the work (or it waits for the slot): the card stays In Progress until the huddle wakes it.
+    const auto = current.autoHuddle;
+    if (auto && !run.targetStatus && result?.status !== "blocked" && result?.status !== "questions") {
+      this.patch(slug, id, {
+        ...base, status: "in_progress", outcome: null, error: null, lastActivity: autoHuddleActivity(auto),
+        prUrl: result?.prUrl ?? current.prUrl,
+      });
+      return;
+    }
     this.patch(slug, id, {
       ...base,
       outcome: result?.status === "questions" ? "needs_input" : result?.status ?? "done",
       ...(result?.status === "questions" ? { interviewed: true } : {}),
       // A planner wake-up reports its children's PRs; the planner keeps its own.
-      prUrl: run.chat?.raw ? current.prUrl : result?.prUrl ?? current.prUrl,
+      prUrl: run.chat?.raw && !run.chat.hostWake ? current.prUrl : result?.prUrl ?? current.prUrl,
       error: null,
     });
   }
@@ -1000,7 +1034,7 @@ export class Board {
     slug: string,
     input: {
       title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[];
-      needs?: string[];
+      needs?: string[]; important?: boolean;
     },
   ): Promise<Ticket> {
     const status = input.status === "in_progress" ? "ready" : input.status;
@@ -1018,7 +1052,7 @@ export class Board {
   async updateTicket(
     slug: string,
     id: string,
-    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "needs">> & {
+    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "needs" | "important">> & {
       expectedBody?: string;
       /** null: take the ticket out of its plan (only clearing is allowed here; adoptTickets sets it). */
       parentId?: null;
@@ -1036,6 +1070,7 @@ export class Board {
     if (patch.mode !== undefined) clean.mode = patch.mode;
     if (patch.notice !== undefined) clean.notice = patch.notice;
     if (patch.needs !== undefined) clean.needs = normalizeNeeds(patch.needs);
+    if (patch.important !== undefined) clean.important = !!patch.important;
     if (patch.parentId === null && current.parentId) {
       const plannerId = current.parentId;
       const me = current;
@@ -1072,8 +1107,9 @@ export class Board {
     }
     // The store places the ticket in its new column unless the patch carries a drop position.
     if (status && status !== current.status) clean.status = status;
-    // Moved by hand: the user takes it from here, no automatic continue.
+    // Moved by hand: the user takes it from here, no automatic continue, and the card no longer waits for an auto huddle.
     if (clean.status && current.limit) clean.limit = null;
+    if (clean.status && current.autoHuddle) clean.autoHuddle = null;
     let t = this.patch(slug, id, clean);
 
     if (clean.status === "done") t = await this.cleanupWorktree(slug, t);
@@ -1136,6 +1172,36 @@ export class Board {
     const out = this.patch(slug, id, { plan: { ...t.plan, maxConcurrent: clampConcurrency(n) } });
     this.advancePlans(slug);
     return out;
+  }
+
+  /**
+   * The ticket's current run works unattended on its own ticket (a Ready / In Progress run, a plan child, a schedule
+   * run, or its auto huddle waking it), not a Planning chat, a reply to the user's message or to another ticket.
+   */
+  unattendedRun(slug: string, id: string): boolean {
+    const r = this.runs.get(this.key(slug, id));
+    if (!r || r.stopRequested) return false;
+    if (!r.chat) return true;
+    return !!r.chat.hostWake;
+  }
+
+  /** start_huddle in this run: false when the run already started an auto huddle (one per run). */
+  claimAutoHuddle(slug: string, id: string): boolean {
+    const r = this.runs.get(this.key(slug, id));
+    if (!r || r.autoHuddleStarted) return false;
+    r.autoHuddleStarted = true;
+    return true;
+  }
+
+  /** Set or clear the ticket's auto huddle state (Huddles drives it). */
+  setAutoHuddle(slug: string, id: string, autoHuddle: Ticket["autoHuddle"], extra: Partial<Ticket> = {}): Ticket | null {
+    if (!this.store.getTicket(slug, id)) return null;
+    return this.patch(slug, id, { autoHuddle, ...extra });
+  }
+
+  /** A stopped ticket no longer waits for an auto-huddle slot (a live auto huddle carries on; the user closes it). */
+  private dropAutoWait(slug: string, id: string): Partial<Ticket> {
+    return this.store.getTicket(slug, id)?.autoHuddle?.state === "waiting" ? { autoHuddle: null } : {};
   }
 
   /** The ticket's current run answers a message the user typed in its chat (see ActiveRun.chat.user). */
@@ -1502,7 +1568,7 @@ export class Board {
     const recent = comments.filter((c) => !BOARD_NOTE_RE.test(c.text) && c !== last).slice(-10);
     return freshSessionPrompt(t, {
       isGit, linked: !!t.workdir, baseBranch: this.store.getProfile(slug)?.baseBranch || "main",
-      lastResult: last?.text ?? null, comments: recent, outputDir,
+      lastResult: last?.text ?? null, comments: recent, outputDir, autoHuddles: autoHuddlesOn(this.store.getProfile(slug)),
     });
   }
 
@@ -1578,10 +1644,10 @@ export class Board {
       this.cancelSlotWait(slug, id);
       return true;
     }
-    // In Progress with no run behind it (e.g. the daemon lost it): clear the card instead of leaving it stuck.
+    // In Progress with no run behind it (e.g. the daemon lost it, or it waits for its auto huddle): clear the card.
     if (t?.status !== "in_progress") return false;
-    this.store.addComment(slug, id, "ai", "Run stopped by user.");
-    this.patch(slug, id, { status: "review", outcome: "stopped", error: null, lastActivity: null });
+    this.store.addComment(slug, id, "ai", t.autoHuddle ? "Stopped by user while waiting for its auto huddle." : "Run stopped by user.");
+    this.patch(slug, id, { status: "review", outcome: "stopped", error: null, lastActivity: null, ...(t.autoHuddle ? { autoHuddle: null } : {}) });
     return true;
   }
 
@@ -1679,7 +1745,8 @@ export class Board {
     for (const p of this.store.listProfiles()) {
       for (const t of this.store.listTickets(p.slug)) {
         // Replies waiting for a slot keep waiting: dispatch() below starts them first.
-        if (t.status !== "in_progress" || t.slotWait || this.isRunning(p.slug, t.id)) continue;
+        // Tickets waiting for their auto huddle stay put: the huddle (or a freed slot) wakes them.
+        if (t.status !== "in_progress" || t.slotWait || t.autoHuddle || this.isRunning(p.slug, t.id)) continue;
         if (t.plan?.awaiting && planActive(t.plan)) {
           // A planner wake-up was cut off: wake it again with the children's current state.
           this.store.addComment(p.slug, t.id, "ai", "Planner interrupted by daemon restart; waking it again.");

@@ -29,6 +29,7 @@ import { NeedsField } from "./Needs";
 import { useHuddle, members } from "./huddle";
 import { HuddlePanel } from "./HuddlePanel";
 import type { HuddleSeed, TeamRequest } from "./Team";
+import { StarToggle } from "./StarToggle";
 
 // v2: widths saved under the old 80% default are dropped once so the new default shows.
 const WIDTH_KEY = "ckanban.panelWidth.v2";
@@ -456,6 +457,9 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               {detailsOpen && <rect x="2.75" y="3.75" width="3.5" height="10.5" rx="1.5" fill="currentColor" opacity="0.35" />}
             </svg>
           </button>
+          <StarToggle on={!!ticket.important} onChange={(important) => {
+            api.updateTicket(slug, ticket.id, { important }).catch((e) => onError(`Important not saved: ${e.message}`));
+          }} />
           <input ref={titleRef} className="title-input" value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();

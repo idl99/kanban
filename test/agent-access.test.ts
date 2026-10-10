@@ -235,7 +235,7 @@ test("every tool advertises a profile argument; change tools are flagged", () =>
   expect(TOOLS.filter((t) => t.allowInRun).map((t) => t.name).sort()).toEqual([
     "ask_ticket", "create_schedule", "delete_huddle_preset", "delete_schedule", "huddle_add_participant", "huddle_brief", "huddle_close", "huddle_findings", "huddle_mode", "huddle_post", "huddle_status",
     "reply_ticket",
-    "save_huddle_preset", "update_schedule",
+    "save_huddle_preset", "start_huddle", "update_schedule",
   ]);
 });
 

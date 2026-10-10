@@ -6,17 +6,19 @@ import { ModeToggle } from "./ModeToggle";
 import { KeyHint } from "./KeyHint";
 import { Modal } from "./Modal";
 import { SessionPicker, sessionLabel } from "./SessionPicker";
+import { StarToggle } from "./StarToggle";
 
 export function NewTicketDialog({ slug, folder, onClose, onCreate }: {
   slug: string;
   folder: string;
   onClose: () => void;
-  onCreate: (input: { title: string; body: string; status: Status; sessionId?: string; mode?: TicketMode }) => Promise<void>;
+  onCreate: (input: { title: string; body: string; status: Status; sessionId?: string; mode?: TicketMode; important?: boolean }) => Promise<void>;
 }) {
   const [mode, setMode] = useState<TicketMode>("interview");
   const [session, setSession] = useState<ClaudeSession | null>(null);
   const [picking, setPicking] = useState(false);
   const [title, setTitle] = useState("");
+  const [important, setImportant] = useState(false);
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -31,7 +33,7 @@ export function NewTicketDialog({ slug, folder, onClose, onCreate }: {
     if (busy || !title.trim() || images.uploading) return;
     setBusy(true);
     try {
-      await onCreate({ title: title.trim(), body, status, sessionId: session?.id, mode });
+      await onCreate({ title: title.trim(), body, status, sessionId: session?.id, mode, ...(important ? { important } : {}) });
     } catch (e: any) {
       setErr(e.message);
       setBusy(false);
@@ -54,10 +56,13 @@ export function NewTicketDialog({ slug, folder, onClose, onCreate }: {
             <button type="button" className="link-btn" onClick={() => setPicking(true)}>Start from an existing Claude session…</button>
           )}
         </div>
-        <label>
-          Title
-          <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What should be done?" />
-        </label>
+        <div className="field">
+          <label htmlFor="new-ticket-title">Title</label>
+          <div className="title-row">
+            <input id="new-ticket-title" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What should be done?" />
+            <StarToggle on={important} onChange={setImportant} />
+          </div>
+        </div>
         <label>
           Description
           <DescriptionEditor slug={slug} value={body} setValue={setBody} images={images} inputRef={bodyRef} />

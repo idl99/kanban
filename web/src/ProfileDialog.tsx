@@ -31,6 +31,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
   const maxParallelError = /^\d+$/.test(maxParallelText.trim()) && maxParallel >= 1 && maxParallel <= 20 ? null : "A whole number from 1 to 20";
   const [saving, setSaving] = useState(false);
   const [model, setModel] = useState(profile?.model ?? "");
+  const [autoHuddles, setAutoHuddles] = useState(profile?.autoHuddles !== false);
   const [claudeModel, setClaudeModel] = useState<string | null>(null);
   const [recent, setRecent] = useState<ClaudeProject[] | null>(null);
   const [filter, setFilter] = useState("");
@@ -85,7 +86,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
     try {
       const p = profile
         ? await api.updateProfile(profile.slug, {
-          name, path, maxParallel, model: model || null,
+          name, path, maxParallel, model: model || null, autoHuddles,
           // A file typed but not yet added with Enter still counts.
           copyFiles: newFile.trim() && !copyFiles.includes(newFile.trim()) ? [...copyFiles, newFile.trim()] : copyFiles,
           setupCommand: setupCommand.trim(), cleanupCommand: cleanupCommand.trim(), setupDetected: detected,
@@ -202,6 +203,15 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
 
         {profile && (
           <>
+            <label className="check-row board-switch">
+              <input type="checkbox" checked={autoHuddles} onChange={(e) => setAutoHuddles(e.target.checked)} />
+              <span>
+                Auto huddles
+                <span className="muted small">
+                  When you're away, Claude starts a review huddle on its own before landing ⭐ important or risky work ($20 cap, one at a time per board).
+                </span>
+              </span>
+            </label>
             <div className="form-section">
               <span>Worktree setup</span>
               <button type="button" className="btn small ghost link" onClick={detectAgain} disabled={detecting}>

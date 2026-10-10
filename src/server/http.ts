@@ -525,6 +525,7 @@ export function createServer(deps: ServerDeps) {
         }
         if (b.setupCommand !== undefined) next.setupCommand = String(b.setupCommand ?? "").trim();
         if (b.cleanupCommand !== undefined) next.cleanupCommand = String(b.cleanupCommand ?? "").trim();
+        if (b.autoHuddles !== undefined) next.autoHuddles = !!b.autoHuddles;
         if (b.setupDetected !== undefined) next.setupDetected = b.setupDetected && typeof b.setupDetected === "object" ? b.setupDetected : null;
         if (next.path !== profile.path) shells.kill(slug);
         store.saveProfile(next);
@@ -731,6 +732,7 @@ export function createServer(deps: ServerDeps) {
         if (parentId && !store.getTicket(slug, parentId)) throw new HttpError(400, `parent ticket ${parentId} not found`);
         let t = await board.createTicket(slug, {
           title, body: String(b.body ?? ""), status: b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn, needs,
+          important: b.important === true,
         });
         if (planner) store.addComment(slug, t.id, "ai", `Created by the planner of plan ${planner.id}.`);
         if (requester) store.addComment(slug, t.id, "ai", `Created ${byRequest(requester)}.`);
@@ -756,7 +758,10 @@ export function createServer(deps: ServerDeps) {
         const b = await body(req);
         if (b.status !== undefined && !STATUSES.includes(b.status)) throw new HttpError(400, `invalid status ${b.status}`);
         const target = store.getTicket(slug, id)!;
-        const { planner, requester } = runRights(req, slug, target);
+        // ⭐ Important on its own ticket: any of the ticket's runs may set it (the user said the task matters).
+        const own = req.headers.get(RUN_HEADER) === `${slug}/${id}` && !req.headers.get(HUDDLE_HEADER);
+        const onlyImportant = Object.keys(b).length > 0 && Object.keys(b).every((k) => k === "important");
+        const { planner, requester } = own && onlyImportant ? {} : runRights(req, slug, target);
         const patch: Parameters<Board["updateTicket"]>[2] = {};
         const deps = strings(b.dependsOn);
         if (deps) patch.dependsOn = deps;
@@ -771,6 +776,10 @@ export function createServer(deps: ServerDeps) {
         if (b.status) patch.status = b.status;
         if (typeof b.order === "number") patch.order = b.order;
         if (b.notice === null) patch.notice = null;
+        if (b.important !== undefined) {
+          if (typeof b.important !== "boolean") throw new HttpError(400, "important must be true or false");
+          patch.important = b.important;
+        }
         if (planner || requester) {
           delete patch.order;
           delete patch.notice;
@@ -792,9 +801,10 @@ export function createServer(deps: ServerDeps) {
           throw new HttpError(400, (e as Error).message);
         }
         const changer = planner ?? requester;
+        if (own && onlyImportant && target.important !== t.important) store.addComment(slug, id, "ai", t.important ? "Claude marked this ticket ⭐ Important." : "Claude cleared ⭐ Important.");
         if (changer) {
           const what = Object.entries(patch)
-            .map(([k, v]) => (k === "status" ? `moved it to ${v}` : k === "parentId" ? `released it from plan ${target.parentId}` : `changed ${k}`)).join(", ");
+            .map(([k, v]) => (k === "status" ? `moved it to ${v}` : k === "parentId" ? `released it from plan ${target.parentId}` : k === "important" ? (v ? "marked it ⭐ Important" : "cleared ⭐ Important") : `changed ${k}`)).join(", ");
           if (what) store.addComment(slug, id, "ai", planner ? `Planner ${what}.` : `${what[0].toUpperCase()}${what.slice(1)} ${byRequest(changer)}.`);
         }
         return json(view(profile, t));
@@ -1106,6 +1116,20 @@ export function createServer(deps: ServerDeps) {
       const v = url.searchParams.get(k);
       return v === null || v === "" || !Number.isFinite(Number(v)) ? undefined : Number(v);
     };
+    // start_huddle: the host ticket's own unattended run starts its review huddle (Huddles.startAuto checks the rest).
+    if (rest.length === 1 && rest[0] === "auto" && m === "POST") {
+      const [runSlug, ticketId] = (who.run ?? "").split("/");
+      if (!who.run || who.agent || runSlug !== slug || !ticketId) {
+        throw new HttpError(403, "only a board run of the host ticket can start an auto huddle; propose a roster with propose_huddle instead");
+      }
+      const b = await body(req);
+      const out = huddles.startAuto(slug, ticketId, {
+        reason: typeof b.reason === "string" ? b.reason : "",
+        template: typeof b.template === "string" && b.template.trim() ? b.template.trim() : undefined,
+        roster: Array.isArray(b.roster) ? b.roster : undefined,
+      });
+      return json({ waiting: out.waiting, template: out.template, huddle: out.huddle ? huddles.view(slug, out.huddle) : null }, out.waiting ? 202 : 201);
+    }
     if (rest.length === 0) {
       if (m === "GET") return json(huddles.list(slug, url.searchParams.get("ticket") ?? undefined));
       if (m === "POST") {

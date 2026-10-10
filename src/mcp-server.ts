@@ -109,7 +109,7 @@ export interface ToolContext {
     | "listProfiles" | "listTickets" | "getTicket" | "createTicket" | "updateTicket" | "deleteTicket" | "chat" | "stop" | "listComments"
     | "comment" | "ask" | "pollQuestion" | "replyQuestion" | "reportBug" | "listSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "runSchedule"
     | "scheduleHistory" | "cronPreview" | "adopt" | "planAction" | "huddleRead" | "huddlePost" | "huddleMode" | "huddleAdd" | "huddleFindings"
-    | "huddleStatus" | "huddleCloseRequest"
+    | "huddleStatus" | "huddleCloseRequest" | "startAutoHuddle"
     | "listHuddlePresets" | "saveHuddlePreset" | "deleteHuddlePreset" | "listHuddleTemplates" | "huddleBrief" | "huddleProposeTeammate">;
   cwd: string;
   env: Record<string, string | undefined>;
@@ -784,7 +784,8 @@ const HUDDLE_TOOLS: Tool[] = [
     name: "huddle_close",
     description:
       "@main and leads: ask the user to close the huddle once its work is done. First write the summary to outputs/huddles/<huddle id>/summary.md " +
-      "in the host ticket's outputs folder (what was decided, the findings and their state, what is left). This tags the user; only the user closes the huddle.",
+      "in the host ticket's outputs folder (what was decided, the findings and their state, what is left). This tags the user; only the user closes the huddle. " +
+      "Exception: @main of an auto huddle (start_huddle) closes it at once.",
     inputSchema: {
       type: "object",
       properties: { reason: { type: "string", description: "One line: why the huddle can close." }, huddle: HUDDLE, profile: PROFILE },
@@ -794,7 +795,8 @@ const HUDDLE_TOOLS: Tool[] = [
     allowInRun: true,
     async run(args, ctx) {
       const slug = await slugFor(args, ctx);
-      await ctx.client.huddleCloseRequest(slug, huddleId(args, ctx), str(args, "reason")!, huddleCaller(ctx.env));
+      const h = await ctx.client.huddleCloseRequest(slug, huddleId(args, ctx), str(args, "reason")!, huddleCaller(ctx.env));
+      if (h.status === "closed") return "Closed the auto huddle. Finish the run as usual (land the work if you haven't, then the result line).";
       return "Asked the user to close the huddle. Only they close it; until then the huddle stays open.";
     },
   },
@@ -928,6 +930,45 @@ const HUDDLE_TOOLS: Tool[] = [
       const e = rosterError(args?.roster, undefined, names);
       if (e) throw new ClientError(`${e}. Fix it and call propose_huddle again.`);
       return SHOWN;
+    },
+  },
+  {
+    name: "start_huddle",
+    description:
+      "Unattended board runs only (Ready / In Progress work, plan children, schedule runs) on a board with Auto huddles on: start a review huddle on your own ticket " +
+      "yourself, before landing important or risky work, instead of proposing one. Same inputs as propose_huddle plus a required reason (posted on the ticket). " +
+      "Default template: auto-review-important for ⭐ tickets, else auto-review. After it starts, end your turn: the board keeps the ticket In Progress and wakes you " +
+      "with the findings. If another auto huddle is live on the board, the ticket waits for the slot and the board wakes you when it frees. " +
+      "Refused in chats and Planning, when the setting is off, or when the ticket already has a huddle: use propose_huddle then.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        reason: { type: "string", description: "One line: why this work needs a review (⭐ important, or the risk: user-facing, data, security, payments, migrations)." },
+        template: { type: "string", description: "auto-review, or auto-review-important for ⭐ tickets and security/data/payments/migration risks." },
+        roster: { type: "array", minItems: 1, items: ROSTER_ENTRY, description: "Optional custom roster instead of a template." },
+        profile: PROFILE,
+      },
+      required: ["reason"],
+    },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      if (!ctx.env[RUN_ENV]) throw new ClientError("start_huddle only works inside an unattended board run; propose a huddle with propose_huddle instead");
+      const reason = str(args, "reason")!;
+      const template = typeof args?.template === "string" && args.template.trim() ? args.template.trim() : undefined;
+      if (args?.roster !== undefined) {
+        const e = rosterError(args.roster, undefined, undefined);
+        if (e) throw new ClientError(`${e}. Fix it and call start_huddle again.`);
+      }
+      const slug = await slugFor(args, ctx);
+      const r = await ctx.client.startAutoHuddle(slug, { reason, template, roster: args?.roster }, huddleCaller(ctx.env));
+      if (r.waiting) {
+        return "Another auto huddle is running on this board, so this ticket waits for the huddle slot. End your turn now with a short note (no landing); " +
+          "the board keeps the ticket In Progress and wakes you when the slot frees.";
+      }
+      const h = r.huddle!;
+      return `Auto huddle ${h.id} started (${r.template}) with ${h.participants.filter((p) => p.kind === "agent").map((p) => `@${p.handle}`).join(", ")}; you are @main. ` +
+        "Don't land yet: end your turn now with a short note. The board keeps the ticket In Progress and wakes you with the QA lead's consolidated findings.";
     },
   },
   {
@@ -1079,7 +1120,7 @@ export const TOOLS: Tool[] = [
   {
     name: "update_ticket",
     description:
-      "Edit a ticket's title, description, column, mode, dependsOn or needs. Moving it to ready starts a Claude run, " +
+      "Edit a ticket's title, description, column, mode, dependsOn, needs or ⭐ important. Moving it to ready starts a Claude run, " +
       "moving it to planning starts the interview in the board chat (same as dragging it on the board). " +
       "A planner can take one of its children out of its plan with release: true.",
     inputSchema: {
@@ -1087,6 +1128,11 @@ export const TOOLS: Tool[] = [
       properties: {
         profile: PROFILE, id: ID, title: { type: "string" }, body: { type: "string", description: "New markdown description (replaces the old one)." },
         status: STATUS, mode: MODE, dependsOn: DEPENDS_ON, needs: NEEDS,
+        important: {
+          type: "boolean",
+          description: "⭐ Important: unattended runs review the work in an auto huddle before landing it. Set it only when the user says the task is very important; " +
+            "a ticket's own run (its chat included) may set it on that ticket.",
+        },
         release: { type: "boolean", description: "true: take the ticket out of its plan (it keeps its column; its dependsOn and key are cleared)." },
       },
       required: ["id"],
@@ -1105,7 +1151,8 @@ export const TOOLS: Tool[] = [
       const needs = needsList(args);
       if (needs) patch.needs = needs;
       if (args?.release === true) patch.parentId = null;
-      if (!Object.keys(patch).length) throw new ClientError("nothing to change: pass title, body, status, mode, dependsOn, needs or release");
+      if (typeof args?.important === "boolean") patch.important = args.important;
+      if (!Object.keys(patch).length) throw new ClientError("nothing to change: pass title, body, status, mode, dependsOn, needs, important or release");
       const t = await ctx.client.updateTicket(slug, str(args, "id")!, patch, ctx.env[RUN_ENV]);
       return `Updated ${t.id}: ${ticketLine(t)}`;
     },

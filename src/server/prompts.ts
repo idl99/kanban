@@ -61,6 +61,22 @@ const PEERS_RULE = `# Other tickets
 const CHROME_RULE = `# Browser
 Claude in Chrome is available (mcp__claude-in-chrome__* tools, in the user's own Chrome). Open your own new tab and don't close or take over the user's tabs. If it isn't connected, say so and carry on without it.`;
 
+/**
+ * Unattended runs on a board with "Auto huddles" on: review important or risky work in a huddle Claude starts itself
+ * (start_huddle) before landing it. Planning chats never get this (they propose a huddle instead).
+ */
+export function autoHuddleRule(t: Pick<Ticket, "important">): string {
+  return `# Auto huddle (review before landing)
+${t.important ? "This ticket is marked ⭐ Important, so it gets a review huddle before you land it." : "Start a review huddle before you land this work if the change is risky: user-facing behaviour, data, security, payments or migrations. Small, low-risk changes don't need one; heavy tasks are split into tickets, not huddled."}
+- When: after the work is done and committed, BEFORE landing it (before pushing it, opening a PR or moving it on). At most once per run; never from a Planning chat (there, propose one with propose_huddle).
+- How: call the ckanban \`start_huddle\` tool with a one-line reason (it is posted on the ticket) and a template: \`auto-review-important\` when the ticket is ⭐ or the risk is security, data, payments or migrations; otherwise \`auto-review\`. Then end your turn with a short note, no result line needed: the board keeps the ticket In Progress and wakes you with the QA lead's consolidated findings. If the board says another auto huddle is running, end your turn the same way; the board wakes you when the slot frees.
+- Then: fix every MUST finding and commit, ask the same reviewer for one short re-check, then land the work as usual, write the huddle summary and close the huddle with \`huddle_close\`. List the SHOULD and COULD findings in your result summary.
+- Budget: the huddle stops at its cap. If it stops while MUST findings are still open, do NOT land: end with status "blocked" and a summary like "Auto huddle hit its $20 cap with N MUST findings open; not landed."`;
+}
+
+/** The section above, when the board has auto huddles on (absent: nothing). */
+const autoSection = (t: Pick<Ticket, "important">, on?: boolean) => (on ? `\n\n${autoHuddleRule(t)}` : "");
+
 const quote = (s: string, max = 200) => {
   const one = s.replace(/\s+/g, " ").trim();
   return one.length > max ? `${one.slice(0, max - 1)}…` : one;
@@ -177,6 +193,8 @@ export interface PromptContext {
   outputDir: string;
   /** The ticket was created by this schedule (null name: schedule since deleted). */
   schedule?: { id: string; name: string | null; board: string };
+  /** The board has "Auto huddles" on: add the auto huddle section (not for interview-mode tickets' first run). */
+  autoHuddles?: boolean;
 }
 
 /** Tells a scheduled run where it came from, so it can read or refine its own schedule. */
@@ -212,7 +230,7 @@ ${interview ? `${INTERVIEW}\n\n` : ""}# Rules
 - Decide whether this task requires changing files in a code project.
 - If it changes files and this is a git repo with a GitHub remote: commit your changes, push the branch, open a pull request with \`gh pr create\`, and include the PR URL in the result line.
 - If it is a development task but git or a GitHub remote is not available, do NOT fake it. Stop, and report status "blocked" explaining what is missing.
-- If it is a non-code task (research, writing, analysis, file organisation), no PR is needed.
+- If it is a non-code task (research, writing, analysis, file organisation), no PR is needed.${autoSection(t, ctx.autoHuddles)}
 
 ${PEERS_RULE}
 
@@ -225,7 +243,7 @@ ${artifactRule()}
 ${RESULT_RULE}`);
 }
 
-export function resumePrompt(t: Ticket, newComments: Comment[], outputDir: string): string {
+export function resumePrompt(t: Ticket, newComments: Comment[], outputDir: string, autoHuddles = false): string {
   const feedback = newComments.length
     ? newComments.map((c) => `- ${c.text}`).join("\n")
     : "- (no new comments; continue the task)";
@@ -234,7 +252,7 @@ export function resumePrompt(t: Ticket, newComments: Comment[], outputDir: strin
 # User feedback since last run
 ${feedback}
 
-${t.mode === "interview" ? `${t.interviewed ? AFTER_ANSWERS : INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}Continue working on the ticket, addressing the feedback. If a pull request already exists, push new commits to the same branch to update it. Update deliverables in ${outputDir} rather than creating duplicates.
+${t.mode === "interview" ? `${t.interviewed ? AFTER_ANSWERS : INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}Continue working on the ticket, addressing the feedback. If a pull request already exists, push new commits to the same branch to update it. Update deliverables in ${outputDir} rather than creating duplicates.${autoSection(t, autoHuddles)}
 
 ${targetDesignRule(outputDir)}${PEERS_RULE}
 
@@ -256,6 +274,7 @@ export interface FreshContext {
   /** Recent ticket comments, oldest first. */
   comments: Comment[];
   outputDir: string;
+  autoHuddles?: boolean;
 }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
@@ -286,7 +305,7 @@ ${state}
 ${t.mode === "interview" && !t.interviewed ? `${INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}# Rules
 - If it changes files and this is a git repo with a GitHub remote: commit your changes, push the branch and open a pull request with \`gh pr create\` (if one already exists, push new commits to the same branch to update it), and include the PR URL in the result line.${ctx.linked ? `
 - You are working in the main checkout of this project (not an isolated worktree): use a feature branch, never commit directly to the default branch.` : ""}
-- Update deliverables in ${ctx.outputDir} rather than creating duplicates.
+- Update deliverables in ${ctx.outputDir} rather than creating duplicates.${autoSection(t, ctx.autoHuddles)}
 
 ${PEERS_RULE}
 
@@ -555,6 +574,7 @@ export function huddleAgentPrompt(kind: "start" | "wake" | "interrupted", p: Hud
  */
 export function huddleMainPrompt(h: Huddle, p: HuddleParticipant, digest: string): string {
   const coordinator = p.handle === "main";
+  if (coordinator && h.auto) return autoHuddleMainPrompt(h, p, digest);
   return `${digest}
 
 ${context("Huddle messages", `(Messages from huddle ${h.id}, where you are @${p.handle}${coordinator ? ", the coordinator" : ""}. Participants:
@@ -563,4 +583,40 @@ ${coordinator && p.prompt ? `Your role as coordinator: ${p.prompt}\n` : ""}Answe
 ${DIGEST_RULE} Don't post only to acknowledge, and tag only who must act.
 If you were in the middle of work, carry on with it afterwards and keep following the instructions you were given for that run, including how to end it. Otherwise just act on these messages and end your turn.)
 ${huddleTools(h)}`, { huddle: h.id })}`;
+}
+
+/**
+ * The auto huddle (start_huddle) wakes the ticket's own run: it is unattended work on the ticket, so it ends with the
+ * result line; the board keeps the ticket In Progress while the huddle is open.
+ */
+function autoHuddleMainPrompt(h: Huddle, p: HuddleParticipant, digest: string): string {
+  return `${digest}
+
+${context("Huddle messages", `(Messages from your auto huddle ${h.id} (${h.template ?? "custom roster"}; reason: ${h.auto?.reason ?? ""}), where you are @main, the coordinator. Participants:
+${rosterLines(h)}
+Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there. Reviewers and QA see only committed code, so commit before you tag them.
+What to do:
+- Findings not in yet: end your turn with a short note; the board wakes you again.
+- Fix every MUST finding and commit, then ask the same reviewer for ONE short re-check (tag them with the commit sha) and end your turn.
+- Re-check passed (or no MUST findings): land the work as the ticket's instructions say, write the huddle summary to outputs/${summaryFile(h.id)} in your outputs folder, close the huddle with \`huddle_close\` (an auto huddle closes at once), and end with the result line. List the SHOULD and COULD findings in the summary.
+- The huddle stopped at its budget with MUST findings open: do NOT land; end with status "blocked" and say how many MUST findings are open.
+${DIGEST_RULE} Don't post only to acknowledge.)
+${huddleTools(h)}
+
+${RESULT_RULE}`, { huddle: h.id })}`;
+}
+
+/** The board wakes a ticket that waited for the auto-huddle slot. */
+export function autoHuddleSlotPrompt(reason: string, template: string): string {
+  return context("Auto huddle slot free", `The other auto huddle on this board has ended, so the slot is free. If the work still needs its review, call the ckanban \`start_huddle\` tool now (template ${template}, reason: ${reason}) and end your turn; otherwise land it as usual.
+
+${RESULT_RULE}`);
+}
+
+/** The auto huddle stopped (budget, message limit, the user): the ticket's run decides whether it can land. */
+export function autoHuddleStoppedPrompt(h: Huddle, why: string, open: number): string {
+  return context("Auto huddle stopped", `Your auto huddle ${h.id} stopped: ${why}. ${open} pinned finding${open === 1 ? " is" : "s are"} still open.
+If any MUST finding is still unfixed, do NOT land: end with status "blocked" and a summary like "Auto huddle hit its cap with N MUST findings open; not landed." If every MUST finding is fixed and re-checked, land the work as usual, write the huddle summary to outputs/${summaryFile(h.id)}, and list the SHOULD and COULD findings in the result.
+
+${RESULT_RULE}`, { huddle: h.id });
 }

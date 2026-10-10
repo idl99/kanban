@@ -105,6 +105,8 @@ export interface Profile {
   cleanupCommand?: string;
   /** What auto-detection last found (values equal to it show an "Auto-detected" badge). */
   setupDetected?: SetupDetection | null;
+  /** Unattended runs start a review huddle themselves before landing important or risky work. Missing: on. */
+  autoHuddles?: boolean;
   pathExists?: boolean;
   running?: number;
 }
@@ -170,6 +172,10 @@ export interface Ticket {
   autoContinue?: boolean;
   /** Its run takes one of the board's maxParallel slots. */
   holdsSlot?: boolean;
+  /** ⭐ Important: unattended runs review it in an auto huddle before landing. */
+  important?: boolean;
+  /** The auto huddle its run started (live) or waits for (waiting, another one has the board's slot). */
+  autoHuddle?: { state: "waiting" | "live"; reason: string; template: string; at: string; huddleId?: string | null } | null;
   createdAt: string;
   updatedAt: string;
   body: string;
@@ -923,11 +929,11 @@ export const api = {
   },
   createTicket: (slug: string, input: {
     title: string; body: string; status: Status; sessionId?: string; mode?: TicketMode; parentId?: string; planKey?: string; dependsOn?: string[];
-    needs?: string[];
+    needs?: string[]; important?: boolean;
   }) => req<Ticket>("POST", t(slug), input),
   plan: (slug: string, id: string, action: "start" | "pause" | "resume" | "done" | "concurrency", maxConcurrent?: number) =>
     req<Ticket>("POST", `${t(slug, id)}/plan`, { action, maxConcurrent }),
-  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "needs">> & { expectedBody?: string }) =>
+  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "needs" | "important">> & { expectedBody?: string }) =>
     req<Ticket>("PATCH", t(slug, id), patch),
   deleteTicket: (slug: string, id: string) => req<void>("DELETE", t(slug, id)),
   /** The user answered a teammate card (saved it, or dismissed it). */

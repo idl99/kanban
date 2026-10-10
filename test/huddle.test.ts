@@ -1320,7 +1320,9 @@ test("templates: built-ins merge with the board's own; overriding, resetting and
   expect(over.template).toMatchObject({ name: "design-review", label: "Design review", rounds: 2, maxCostUsd: 35 });
   expect(over.template.roster).toEqual(BUILTIN_TEMPLATES[0].roster);
   const merged = mergeTemplates([], over.list);
-  expect(merged.map((t) => [t.name, t.source, t.base])).toEqual([["design-review", "board", "builtin"], ["bug-bash", "board", null]]);
+  expect(merged.map((t) => [t.name, t.source, t.base])).toEqual([
+    ["design-review", "board", "builtin"], ["auto-review", "builtin", null], ["auto-review-important", "builtin", null], ["bug-bash", "board", null],
+  ]);
   expect(deleteTemplate(over.list, "design-review").reset).toBe(true);
   expect(() => deleteTemplate([], "design-review")).toThrow("built-in");
   expect(() => saveTemplate([], { name: "x" })).toThrow("roster is required");
@@ -1337,7 +1339,7 @@ test("templates: saved and listed over HTTP (the user only), and listed for Clau
     { name: "bug-bash", label: "Bug bash", description: "", roster: [{ preset: "qa", count: 2 }], rounds: 1, maxCostUsd: 8, report: "" },
   ]);
   const list = (await (await api("/huddle-templates")).json()) as { name: string }[];
-  expect(list.map((x) => x.name)).toEqual(["design-review", "bug-bash"]);
+  expect(list.map((x) => x.name)).toEqual(["design-review", "auto-review", "auto-review-important", "bug-bash"]);
   // A run can read them but not change them.
   expect((await postJson("/huddle-templates", { name: "sneaky", roster: [{ preset: "qa" }] }, { "x-ckanban-run": `p/${t.id}` })).status).toBe(403);
   expect((await postJson("/huddle-templates", { name: "bad", roster: [{ preset: "nope" }] })).status).toBe(400);

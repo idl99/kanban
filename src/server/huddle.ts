@@ -51,15 +51,16 @@ import {
   ALL_ROLES, cleanLessons, cleanNotes, type HuddleNote, lessonsSection, type LessonInput, NOTE_MAX, noteRole, noteText, type NoteScope, type RoleNotes,
 } from "./huddle-notes";
 import {
-  BUILTIN_TEMPLATES, deleteTemplate, type HuddleTemplate, type HuddleTemplateView, mergeTemplates, saveTemplate, templateBrief,
+  AUTO_REVIEW, AUTO_REVIEW_IMPORTANT, BUILTIN_TEMPLATES, deleteTemplate, type HuddleTemplate, type HuddleTemplateView, mergeTemplates, saveTemplate, templateBrief,
 } from "./huddle-templates";
 import type { HostHuddle } from "./attention";
 import { huddleUsage, type Usage } from "./huddle-usage";
 import { isLevel, type Level, lowerLevels } from "./layers";
-import { huddleAgentPrompt, huddleAgentSystemPrompt, huddleDigest, huddleMainPrompt } from "./prompts";
+import { autoHuddleSlotPrompt, autoHuddleStoppedPrompt, huddleAgentPrompt, huddleAgentSystemPrompt, huddleDigest, huddleMainPrompt } from "./prompts";
 import { buildArgs, MONITOR_IDLE_MS, startRun, type RunHandle } from "./runner";
 import type { Store } from "./store";
 import { proposalPreset, teammateProposal, type TeammateProposal } from "./teammate-proposal";
+import { autoHuddlesOn } from "./types";
 import type {
   Huddle, HuddleFinding, HuddleLearning, HuddleMessage, HuddleMessageKind, HuddleMode, HuddleParticipant, HuddleSource, HuddleStopReason, Profile, Ticket,
 } from "./types";
@@ -235,6 +236,8 @@ export class Huddles {
   /** Each huddle as this board last saved it, with its file's stamp, by "<slug>/<huddle>" (see guard). */
   private saved = new Map<string, { stamp: string | null; h: Huddle }>();
   private sweeper: ReturnType<typeof setInterval> | null = null;
+  /** Per board: the ticket the board last woke because the auto-huddle slot freed; the next waiter waits until its run is over. */
+  private slotWoken = new Map<string, string>();
 
   constructor(private store: Store, private board: Board, private bus: Bus, private opts: HuddleOptions) {
     this.sessionExists = opts.sessionExists ?? claudeSessionExists;
@@ -252,6 +255,11 @@ export class Huddles {
         if (this.store.listHuddles(profile).some((h) => h.hostTicket === ticket.id && h.status !== "closed")) {
           queueMicrotask(() => this.closeForTicket(profile, ticket.id, "the host ticket moved to Done"));
         }
+      }
+      // A ticket woken for a free auto-huddle slot finished its run without taking it: the next waiter gets it.
+      if (this.slotWoken.get(e.profile) === e.ticket.id && !this.board.isRunning(e.profile, e.ticket.id)) {
+        const { profile } = e;
+        queueMicrotask(() => this.freeSlot(profile));
       }
       // @main was asked for a closed huddle's summary: once its run is over, the board writes it if it didn't.
       for (const key of [...this.summaryOwed]) {
@@ -827,7 +835,10 @@ export class Huddles {
    * template's name; its roster is used when `roster` is empty, its budget unless one is given, and its rules become
    * the pinned brief.
    */
-  create(slug: string, hostId: string, roster: RosterEntry[], opts: { maxParticipants?: number; maxCostUsd?: number; template?: string } = {}): Huddle {
+  create(
+    slug: string, hostId: string, roster: RosterEntry[],
+    opts: { maxParticipants?: number; maxCostUsd?: number; template?: string; auto?: { reason: string } } = {},
+  ): Huddle {
     const host = this.store.getTicket(slug, hostId);
     if (!host) throw new HuddleError(404, `ticket ${hostId} not found`);
     if (host.error?.startsWith("corrupt")) throw new HuddleError(409, `ticket ${hostId} file is corrupt`);
@@ -852,6 +863,7 @@ export class Huddles {
       id: `h_${newId()}`, hostTicket: hostId, status: "live", maxParticipants: max, findings: [], invited: [], seq: 0,
       maxCostUsd, maxMessages: DEFAULT_MAX_MESSAGES, posts: 0, sinceUser: 0, stopReason: null, createdAt: at, updatedAt: at,
       template: tpl?.name ?? null, brief: tpl ? { text: templateBrief(tpl, maxCostUsd), by: USER_HANDLE, at } : null,
+      ...(opts.auto ? { auto: { reason: opts.auto.reason } } : {}),
       participants: [
         { ...base, handle: USER_HANDLE, role: "User", model: null, mode: "monitor", lead: true, canEdit: false, kind: "human" },
         {
@@ -868,9 +880,109 @@ export class Huddles {
     }
     this.save(slug, h);
     this.bus.emit({ type: "huddle.updated", profile: slug, huddle: this.view(slug, h) });
-    this.system(slug, h.id, `Huddle started on ticket ${hostId} "${host.title}"${tpl ? ` from template ${tpl.label}` : ""} with ${agents.map((p) => `@${p.handle} (${p.role})`).join(", ")}. @main coordinates. Budget ${money(maxCostUsd)}.`);
+    this.system(slug, h.id, `${opts.auto ? "Auto huddle" : "Huddle"} started on ticket ${hostId} "${host.title}"${opts.auto ? ` by its own run (${opts.auto.reason})` : ""}${tpl ? ` from template ${tpl.label}` : ""} with ${agents.map((p) => `@${p.handle} (${p.role})`).join(", ")}. @main coordinates. Budget ${money(maxCostUsd)}.`);
     for (const p of agents) this.kickoff(slug, h.id, p.handle);
     return this.get(slug, h.id);
+  }
+
+  // ---- Auto huddles: an unattended run reviews its own work before landing it (start_huddle) ----
+
+  /**
+   * An unattended run of the host ticket starts its own review huddle (the HTTP route checks the caller is that run).
+   * Refused (403) when the board has auto huddles off, the run isn't unattended, it already started one, or the
+   * ticket has an open huddle. While another auto huddle is live on the board, the ticket waits for the slot instead:
+   * the card stays In Progress and freeSlot() wakes it when that one ends.
+   */
+  startAuto(
+    slug: string, hostId: string, input: { reason: string; template?: string; roster?: RosterEntry[] },
+  ): { huddle: Huddle | null; waiting: boolean; template: string } {
+    const profile = this.store.getProfile(slug);
+    const host = this.store.getTicket(slug, hostId);
+    if (!profile || !host) throw new HuddleError(404, `ticket ${hostId} not found`);
+    const reason = input.reason.trim().replace(/\s+/g, " ").slice(0, 200);
+    if (!reason) throw new HuddleError(400, "reason is required: one line on why this work needs a review huddle");
+    const propose = "; use propose_huddle to propose one to the user instead";
+    if (!autoHuddlesOn(profile)) throw new HuddleError(403, `auto huddles are off on board ${slug}${propose}`);
+    if (!this.board.unattendedRun(slug, hostId)) {
+      throw new HuddleError(403, `start_huddle only works in an unattended run of the ticket (Ready / In Progress work, a plan child, a schedule run), not in a chat${propose}`);
+    }
+    const open = this.store.listHuddles(slug).find((h) => h.hostTicket === hostId && h.status !== "closed");
+    if (open) throw new HuddleError(409, `ticket ${hostId} already has an open huddle (${open.id})${propose}, or post in that one`);
+    const template = input.template?.trim() || (input.roster?.length ? "" : host.important ? AUTO_REVIEW_IMPORTANT : AUTO_REVIEW);
+    if (template && !this.templates(slug).some((t) => t.name === template)) {
+      throw new HuddleError(404, `no huddle template "${template}" (templates: ${this.templates(slug).map((t) => t.name).join(", ")})`);
+    }
+    const busy = this.liveAuto(slug).find((h) => h.hostTicket !== hostId);
+    if (busy) {
+      const at = host.autoHuddle?.state === "waiting" ? host.autoHuddle.at : nowIso();
+      this.board.setAutoHuddle(slug, hostId, { state: "waiting", reason, template: template || "custom", at, huddleId: null });
+      if (host.autoHuddle?.state !== "waiting") this.store.addComment(slug, hostId, "ai", `Auto huddle wanted (${reason}); waiting for huddle slot: ticket ${busy.hostTicket} has the board's auto huddle.`);
+      return { huddle: null, waiting: true, template: template || "custom" };
+    }
+    if (!this.board.claimAutoHuddle(slug, hostId)) {
+      throw new HuddleError(409, "this run already started an auto huddle (one per run); finish with the findings you have");
+    }
+    const h = this.create(slug, hostId, input.roster ?? [], { template: template || undefined, auto: { reason } });
+    if (this.slotWoken.get(slug) === hostId) this.slotWoken.delete(slug);
+    this.board.setAutoHuddle(slug, hostId, { state: "live", reason, template: template || "custom", at: h.createdAt, huddleId: h.id });
+    this.store.addComment(slug, hostId, "ai", `Auto huddle started (${template || "custom roster"}): ${reason}`);
+    return { huddle: h, waiting: false, template: template || "custom" };
+  }
+
+  /** The board's live auto huddles (at most one, unless the user resumed a stopped one). */
+  private liveAuto(slug: string): Huddle[] {
+    return this.store.listHuddles(slug).filter((h) => h.auto && h.status === "live");
+  }
+
+  /**
+   * An auto huddle ended. closed: by @main after landing, or because the host is done or deleted. halt: a brake
+   * stopped it, so the host is woken to decide whether it may land. user: the user stopped or closed it; a host that
+   * only waited for it goes to Review. Then the next ticket waiting for the slot gets it.
+   */
+  private autoEnded(slug: string, hid: string, how: "closed" | "halt" | "user", why: string) {
+    const h = this.load(slug, hid);
+    const t = h && this.store.getTicket(slug, h.hostTicket);
+    if (h && t?.autoHuddle?.huddleId === hid) {
+      const idle = t.status === "in_progress" && !this.board.isRunning(slug, t.id);
+      if (how === "user" && idle) {
+        this.store.addComment(slug, t.id, "ai", `Auto huddle ended: ${why}. The work was not landed.`);
+        this.board.setAutoHuddle(slug, t.id, null, { status: "review", outcome: "stopped", lastActivity: null });
+      } else this.board.setAutoHuddle(slug, t.id, null);
+      if (how === "halt" && t.status !== "done") {
+        const open = h.findings.filter((f) => f.status === "open").length;
+        this.board.chat(slug, t.id, autoHuddleStoppedPrompt(h, why, open), { hostWake: true }).catch((e) => {
+          this.store.addComment(slug, t.id, "ai", `Auto huddle stopped (${why}) and the ticket couldn't be woken: ${(e as Error).message}`);
+        });
+      }
+    }
+    queueMicrotask(() => this.freeSlot(slug));
+  }
+
+  /**
+   * No auto huddle is live on the board: wake the ticket that has waited longest for the slot (one at a time; the
+   * next one once that ticket's run is over). Also run after a restart.
+   */
+  freeSlot(slug: string): void {
+    if (this.shuttingDown || this.board.isRestartPending() || this.liveAuto(slug).length) return;
+    const woken = this.slotWoken.get(slug);
+    if (woken) {
+      const t = this.store.getTicket(slug, woken);
+      if (t && (this.board.isRunning(slug, woken) || t.queued?.some((m) => m.state === "queued" && m.hostWake))) return;
+      this.slotWoken.delete(slug);
+    }
+    const next = this.store.listTickets(slug)
+      .filter((t) => t.autoHuddle?.state === "waiting" && t.status === "in_progress")
+      .sort((a, b) => a.autoHuddle!.at.localeCompare(b.autoHuddle!.at))[0];
+    if (!next) return;
+    const a = next.autoHuddle!;
+    this.slotWoken.set(slug, next.id);
+    // It no longer waits: its run takes the slot with start_huddle, or lands without one.
+    this.board.setAutoHuddle(slug, next.id, null, { lastActivity: "Huddle slot free: resuming" });
+    this.board.chat(slug, next.id, autoHuddleSlotPrompt(a.reason, a.template), { hostWake: true }).catch((e) => {
+      this.slotWoken.delete(slug);
+      this.board.setAutoHuddle(slug, next.id, a);
+      console.error(`couldn't wake ${slug}/${next.id} for the auto-huddle slot`, e);
+    });
   }
 
   /** Participants made from one roster entry, with handles not in `taken`. */
@@ -1106,6 +1218,8 @@ export class Huddles {
       throw new HuddleError(409, `write the huddle summary first: ${summary} (what was decided, the findings and their state, what is left to do), then call huddle_close again`);
     }
     const why = reason.trim() || "the work is done";
+    // An auto huddle runs while the user is away: its coordinator closes it itself.
+    if (h.auto && isCoordinator(h, by)) return this.close(slug, hid, `closed by @main (${why})`);
     this.update(slug, hid, (x) => void (x.closeRequest = { by: by.handle, at: nowIso(), reason: why }));
     this.system(slug, hid, `@${by.handle} asks to close the huddle: ${why}. The summary is in the host ticket's outputs (${summaryFile(hid)}). @you: press Close huddle to end it; only you can close it.`, [USER_HANDLE]);
     return this.get(slug, hid);
@@ -1161,6 +1275,7 @@ export class Huddles {
       if (hard) for (const p of x.participants) if (p.kind === "agent") p.status = "stopped";
     });
     this.system(slug, hid, text, [USER_HANDLE]);
+    if (h.auto) this.autoEnded(slug, hid, "halt", reason === "budget" ? "it hit its budget cap" : reason === "messages" ? "it hit its message limit" : "its agents kept answering each other, so routing paused");
   }
 
   /** After a cost update: warn the leads at 80% of the budget, stop at 100%. */
@@ -1359,7 +1474,10 @@ export class Huddles {
       const u = p.ticketId ? this.takeUnread(slug, hid, handle) : null;
       if (!u) return;
       this.mainWoken.set(`${slug}/${p.ticketId}`, { hid, handle });
-      this.board.chat(slug, p.ticketId!, huddleMainPrompt(h, p, u.digest), { peer: true }).catch((e) => {
+      // Its own auto huddle wakes the host as unattended work on the ticket (it ends with a result line and lands).
+      const own = this.store.getTicket(slug, p.ticketId!)?.autoHuddle;
+      const hostWake = !!h.auto && isCoordinator(h, p) && own?.state === "live" && own.huddleId === h.id;
+      this.board.chat(slug, p.ticketId!, huddleMainPrompt(h, p, u.digest), hostWake ? { hostWake } : { peer: true }).catch((e) => {
         u.undo();
         this.system(slug, hid, `Couldn't reach @${handle}: ${(e as Error).message}`);
       });
@@ -1641,6 +1759,7 @@ export class Huddles {
     });
     this.system(slug, hid, "Huddle agents stopped by @you. The tickets' own runs keep going.");
     this.userActed(slug, hid);
+    if (h.auto) this.autoEnded(slug, hid, "user", "the user stopped it");
     return this.get(slug, hid);
   }
 
@@ -1688,6 +1807,7 @@ export class Huddles {
       for (const p of x.participants) if (p.kind === "agent" && p.status === "working") p.status = "stopped";
     });
     if (h.participants.some((p) => p.kind === "agent" && p.worktree)) this.chore(this.removeWorktrees(slug, hid));
+    if (h.auto) this.autoEnded(slug, hid, why ? "closed" : "user", why ?? "the user closed it");
     if (summarize) this.ensureSummary(slug, hid);
     return out;
   }
@@ -1826,6 +1946,17 @@ export class Huddles {
         }
         for (const p of h.participants) if (p.kind !== "human") this.wakeIfOwed(slug, h.id, p.handle);
       }
+      // A ticket that waits for an auto huddle that is gone (closed while the daemon was down): back to Review.
+      for (const t of this.store.listTickets(slug)) {
+        const a = t.autoHuddle;
+        if (a?.state !== "live") continue;
+        const h = a.huddleId ? this.store.getHuddle(slug, a.huddleId) : null;
+        if (h && h.status === "live") continue;
+        if (h && h.status === "stopped") continue;
+        this.store.addComment(slug, t.id, "ai", "Its auto huddle is no longer open; the work was not landed.");
+        this.board.setAutoHuddle(slug, t.id, null, this.board.isRunning(slug, t.id) ? {} : { status: "review", outcome: "stopped", lastActivity: null });
+      }
+      this.freeSlot(slug);
     }
   }
 
