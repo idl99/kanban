@@ -177,7 +177,7 @@ test("children that need the emulator run one at a time; a child without needs r
   board.startPlan("p", planner.id, { maxConcurrent: 3 });
   // Right away: one E child holds the emulator (whichever the plan picked first), the other two wait for it in Backlog.
   const emuKids = kids.slice(0, 3).map((k) => store.getTicket("p", k.id)!);
-  const holders = emuKids.filter((t) => board.resourceState("p", t).holding);
+  const holders = emuKids.filter((t) => board.resourceState("p", t)?.holding);
   expect(holders.length).toBe(1);
   for (const t of emuKids.filter((t) => t.id !== holders[0].id)) {
     expect(board.resourceState("p", t)).toEqual({ holding: false, waitingFor: ["emulator"] });
