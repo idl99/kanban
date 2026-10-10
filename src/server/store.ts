@@ -53,6 +53,7 @@ function serializeTicket(t: Ticket): string {
 export class Store {
   /** Parsed huddle message logs by "<slug>/<huddle>", with the byte offset read up to (see readHuddleMessages). */
   private huddleLogs = new Map<string, { offset: number; msgs: HuddleMessage[] }>();
+  private lastAiCache = new Map<string, { key: string; text: string | null }>();
   constructor(public readonly root: string) {
     mkdirSync(join(root, "profiles"), { recursive: true });
   }
@@ -237,6 +238,23 @@ export class Store {
 
   listComments(slug: string, id: string): Comment[] {
     return readJsonl<Comment>(join(this.ticketDir(slug, id), "comments.jsonl"));
+  }
+
+  /** Text of the ticket's last Claude comment (its last result summary), cached until comments.jsonl changes. */
+  lastAiComment(slug: string, id: string): string | null {
+    const file = join(this.ticketDir(slug, id), "comments.jsonl");
+    let key: string;
+    try {
+      const st = statSync(file);
+      key = `${st.mtimeMs}:${st.size}`;
+    } catch {
+      return null;
+    }
+    const hit = this.lastAiCache.get(file);
+    if (hit?.key === key) return hit.text;
+    const text = this.listComments(slug, id).findLast((c) => c.author === "ai")?.text ?? null;
+    this.lastAiCache.set(file, { key, text });
+    return text;
   }
 
   addComment(slug: string, id: string, author: Comment["author"], text: string): Comment {

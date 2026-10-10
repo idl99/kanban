@@ -102,3 +102,13 @@ test("parentId round-trips; tickets without it still load", () => {
   expect(store.getTicket("demo", planner.id)!.parentId).toBeUndefined();
   expect(readFileSync(store.ticketPath("demo", planner.id), "utf8")).not.toContain("parentId");
 });
+
+test("lastAiComment returns Claude's last comment and sees new ones", () => {
+  const t = store.createTicket("demo", { title: "x", body: "", status: "backlog" });
+  expect(store.lastAiComment("demo", t.id)).toBeNull();
+  store.addComment("demo", t.id, "ai", "first result");
+  store.addComment("demo", t.id, "user", "thanks");
+  expect(store.lastAiComment("demo", t.id)).toBe("first result");
+  store.addComment("demo", t.id, "ai", "second result");
+  expect(store.lastAiComment("demo", t.id)).toBe("second result");
+});

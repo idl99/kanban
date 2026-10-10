@@ -765,6 +765,10 @@ export interface TicketRow {
   status: Status;
   running: boolean;
   updatedAt: string;
+  body: string;
+  /** Its last result summary (Claude's last comment), capped. */
+  summary: string;
+  prUrl: string | null;
 }
 
 export type BugBlockId = "env" | "ticket" | "log";
