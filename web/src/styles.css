@@ -142,6 +142,7 @@ body.show-hints .sortable-card:not(:focus) .key-hint.card-keys { display: none; 
 .banner .icon-btn:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
 .banner.warn { background: var(--warn-soft); color: var(--warn); }
 .banner.info { background: var(--info-soft); color: var(--info); }
+.banner.ok { background: var(--ok-soft); color: var(--ok); }
 .banner code { background: color-mix(in srgb, currentColor 10%, transparent); padding: 1px 5px; border-radius: 4px; }
 .banner a { color: inherit; text-decoration: underline; }
 .banner.error { background: var(--err-soft); color: var(--err); cursor: pointer; }
@@ -666,6 +667,8 @@ textarea { resize: vertical; font-size: 13.5px; }
 .plan-reason { color: var(--warn); }
 /* Plan tab: same centred column as the chat. */
 .panel-scroll.panel-plan { padding: 20px max(28px, calc((100% - var(--read-max)) / 2)); }
+.plan-finished { border: 0; border-radius: 8px; padding: 8px 12px; flex-wrap: wrap; }
+.action-stack .plan-finished > span:first-child { flex-basis: 100%; }
 .plan-panel { display: flex; flex-direction: column; gap: 10px; }
 .plan-head { display: flex; align-items: center; gap: 10px; }
 .plan-progress { flex: 1; height: 6px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }

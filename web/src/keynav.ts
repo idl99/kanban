@@ -66,11 +66,15 @@ export function canStartFromProposal(t: { status: string; working: boolean }): b
   return !t.working && (t.status === "backlog" || t.status === "planning");
 }
 
-/** ⌘⇧Enter in the ticket panel does the ticket's next step: apply a pending proposal first (and start work when it can), then the column's action. */
+/**
+ * ⌘⇧Enter in the ticket panel does the ticket's next step: apply a pending proposal first (and start work when it can),
+ * then the column's action. A planner whose plan is finished moves to Done.
+ */
 export type NextStep = "apply" | "apply-start" | "start" | "done" | null;
-export function nextStep(t: { status: string; working: boolean; proposalPending: boolean }): NextStep {
+export function nextStep(t: { status: string; working: boolean; proposalPending: boolean; planFinished?: boolean }): NextStep {
   if (t.working) return null;
   if (t.proposalPending) return canStartFromProposal(t) ? "apply-start" : "apply";
+  if (t.planFinished && t.status !== "done") return "done";
   if (t.status === "backlog" || t.status === "planning") return "start";
   if (t.status === "review") return "done";
   return null;

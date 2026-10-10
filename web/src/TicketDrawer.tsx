@@ -15,7 +15,7 @@ import { useFocusTrap, useLayer } from "./layers";
 import { isTyping, nextStep, panelStep } from "./keynav";
 import { KeyHint } from "./KeyHint";
 import { MOD } from "./Shortcuts";
-import { complete, PlanPanel, PlanSummary } from "./PlanPanel";
+import { complete, PlanFinished, planFinished, PlanPanel, PlanSummary } from "./PlanPanel";
 import { Outputs } from "./Outputs";
 import { PrBox } from "./PrBox";
 import { Select } from "./Select";
@@ -398,7 +398,13 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
     applyProposalRef.current = apply;
     setProposalPending(!!apply);
   }, []);
-  const next = nextStep({ status: ticket.status, working, proposalPending });
+  // Every child of its plan is done: Move to Done replaces Start work.
+  const finished = planFinished(children);
+  const addMoreTickets = () => {
+    setTab("chat");
+    requestAnimationFrame(() => panelRef.current?.querySelector<HTMLTextAreaElement>(".composer textarea")?.focus());
+  };
+  const next = nextStep({ status: ticket.status, working, proposalPending, planFinished: finished });
   const nextStepRef = useRef(() => {});
   nextStepRef.current = () => {
     if (next === "apply" || next === "apply-start") applyProposalRef.current?.(next === "apply-start");
@@ -498,7 +504,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
 
               <div className="action-stack">
                 {working && <button className="btn danger" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop Claude"}</button>}
-                {!working && (ticket.status === "backlog" || ticket.status === "planning") && (
+                {finished && <PlanFinished ticket={ticket} total={children.length} onMoveToDone={() => setStatus("done")} onAddMore={addMoreTickets} />}
+                {!working && !finished && (ticket.status === "backlog" || ticket.status === "planning") && (
                   <button className={`btn ${att?.kind === "questions" || att?.kind === "proposal" ? "" : "primary"}`}
                     onClick={startWork} title={`${startTarget === "planning" ? "Claude interviews you first" : "Claude works on its own"} (${proposalPending ? `${MOD}⇧Enter applies the proposal and starts` : `${MOD}⇧Enter`})`}>
                     Start work{!proposalPending && <KeyHint keys="⌘⇧↵" />}
@@ -509,7 +516,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                     Refine with Claude<KeyHint keys={startTarget === "planning" && !proposalPending ? "⌘⇧↵ · R" : "R"} />
                   </button>
                 )}
-                {ticket.status === "review" && (
+                {ticket.status === "review" && !finished && (
                   <button className={`btn ${ticket.prUrl ? "" : "primary"}`} onClick={() => setStatus("done")} title={`Mark done (${MOD}⇧Enter)`}>Mark done{!working && <KeyHint keys={proposalPending ? "⌘⇧↵ after Apply" : "⌘⇧↵"} />}</button>
                 )}
                 {ticket.prUrl && ticket.status !== "review" && (
@@ -667,7 +674,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             </nav>
             {tab === "plan" ? (
               <div className="panel-scroll panel-plan">
-                <PlanPanel slug={slug} ticket={ticket} children={children} onOpenTicket={onOpenTicket} onError={onError} />
+                <PlanPanel slug={slug} ticket={ticket} children={children} onOpenTicket={onOpenTicket} onError={onError}
+                  onMoveToDone={() => setStatus("done")} onAddMore={addMoreTickets} />
               </div>
             ) : tab === "huddle" ? (
               <HuddlePanel slug={slug} ticket={ticket} tickets={tickets} state={huddleState} onError={onError} seed={huddleSeed ?? null} onSelect={setHuddlePick}

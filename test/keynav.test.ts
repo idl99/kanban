@@ -82,6 +82,15 @@ test("nextStep applies a pending proposal first (starting work from Backlog/Plan
   expect(nextStep({ status: "planning", working: true, proposalPending: true })).toBeNull();
 });
 
+test("nextStep moves a planner whose plan is finished to Done instead of starting work", () => {
+  expect(nextStep({ status: "planning", working: false, proposalPending: false, planFinished: true })).toBe("done");
+  expect(nextStep({ status: "backlog", working: false, proposalPending: false, planFinished: true })).toBe("done");
+  expect(nextStep({ status: "review", working: false, proposalPending: false, planFinished: true })).toBe("done");
+  expect(nextStep({ status: "done", working: false, proposalPending: false, planFinished: true })).toBeNull();
+  expect(nextStep({ status: "planning", working: false, proposalPending: true, planFinished: true })).toBe("apply-start");
+  expect(nextStep({ status: "planning", working: true, proposalPending: false, planFinished: true })).toBeNull();
+});
+
 test("hintStep: holding ⌘ arms, any other key or releasing hides", () => {
   expect(hintStep({ type: "keydown", key: "Meta" }, true)).toBe("arm");
   expect(hintStep({ type: "keydown", key: "Meta", repeat: true }, true)).toBe("none");

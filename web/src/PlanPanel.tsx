@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { api, COLUMNS, type Ticket } from "./api";
 import { ResourceChip, resourceWait } from "./Needs";
+import { checkInsText, complete, planFinished } from "./planText";
+
+export { complete, planFinished };
 
 const STATE_LABEL: Record<string, [string, string]> = {
   running: ["Running", "running"],
@@ -9,9 +12,6 @@ const STATE_LABEL: Record<string, [string, string]> = {
   stuck: ["Stuck", "blocked"],
   done: ["Done", "ok"],
 };
-
-/** Done, or finished in Review without a PR to merge (same rule as the server's plan.ts). */
-export const complete = (t: Ticket) => t.status === "done" || (t.status === "review" && t.outcome === "done" && !t.prUrl);
 
 const stateOf = (plan: Ticket["plan"]): [string, string] => plan ? STATE_LABEL[plan.state] ?? [plan.state, "stopped"] : ["Not started", "stopped"];
 
@@ -31,13 +31,31 @@ export function PlanSummary({ ticket, children, onOpen }: { ticket: Ticket; chil
   );
 }
 
+/** Every child is done: "Plan finished · 5 of 5 tickets done" with Move to Done (while the planner isn't Done) and Add more tickets. */
+export function PlanFinished({ ticket, total, onMoveToDone, onAddMore }: {
+  ticket: Ticket;
+  total: number;
+  onMoveToDone: () => void;
+  onAddMore: () => void;
+}) {
+  return (
+    <div className="banner ok plan-finished" role="status">
+      <span>Plan finished · {total} of {total} tickets done</span>
+      {ticket.status !== "done" && <button className="btn primary small" onClick={onMoveToDone}>Move to Done</button>}
+      <button className="btn small" onClick={onAddMore} title="Ask Claude in the chat for more tickets">Add more tickets</button>
+    </div>
+  );
+}
+
 /** Plan tab: a planner's children, plus Start / Pause / Resume for running them unattended in dependency order. */
-export function PlanPanel({ slug, ticket, children, onOpenTicket, onError }: {
+export function PlanPanel({ slug, ticket, children, onOpenTicket, onError, onMoveToDone, onAddMore }: {
   slug: string;
   ticket: Ticket;
   children: Ticket[];
   onOpenTicket: (id: string) => void;
   onError: (m: string) => void;
+  onMoveToDone: () => void;
+  onAddMore: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const plan = ticket.plan ?? null;
@@ -57,6 +75,7 @@ export function PlanPanel({ slug, ticket, children, onOpenTicket, onError }: {
   const live = !!plan && plan.state !== "done";
   const cap = live ? plan!.maxConcurrent : draftCap;
   const [label, tone] = stateOf(plan);
+  const finished = planFinished(children);
   const titleOf = (ref: string) => children.find((c) => c.id === ref || c.planKey === ref)?.title ?? ref;
   return (
     <section className="plan-panel">
@@ -69,29 +88,33 @@ export function PlanPanel({ slug, ticket, children, onOpenTicket, onError }: {
         </span>
         <span className="muted small">{done}/{children.length} done</span>
       </div>
-      {plan?.state === "stuck" && plan.reason && <p className="field-help plan-reason">{plan.reason}</p>}
-      <div className="plan-actions">
-        {!plan || plan.state === "done" ? (
-          <button className="btn primary small" disabled={busy || (plan?.state === "done" && done === children.length)}
-            title="Children switch to auto mode and run in dependency order; Claude is woken only when one needs a decision"
-            onClick={() => act("start", cap)}>Start plan</button>
-        ) : plan.state === "paused" || plan.state === "stuck" ? (
-          <button className="btn primary small" disabled={busy} onClick={() => act("resume")}>Resume plan</button>
-        ) : (
-          <button className="btn small" disabled={busy} onClick={() => act("pause")}>Pause</button>
-        )}
-        {(plan?.state === "stuck" || plan?.state === "paused") && (
-          <button className="btn small" disabled={busy} title="Close the plan as it is, without waking Claude"
-            onClick={() => act("done")}>Mark plan done</button>
-        )}
-        <label className="muted small plan-cap" title="Children of this plan in Ready or In progress at once">
-          At once
-          <select value={cap} disabled={busy} onChange={(e) => (live ? act("concurrency", Number(e.target.value)) : setDraftCap(Number(e.target.value)))}>
-            {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </label>
-        {plan && <span className="muted small" title="Times Claude was woken to decide something">{plan.wakeups} wake-up{plan.wakeups === 1 ? "" : "s"}</span>}
-      </div>
+      {!finished && plan?.state === "stuck" && plan.reason && <p className="field-help plan-reason">{plan.reason}</p>}
+      {finished ? (
+        <PlanFinished ticket={ticket} total={children.length} onMoveToDone={onMoveToDone} onAddMore={onAddMore} />
+      ) : (
+        <div className="plan-actions">
+          {!plan || plan.state === "done" ? (
+            <button className="btn primary small" disabled={busy}
+              title="Children switch to auto mode and run in dependency order; Claude is woken only when one needs a decision"
+              onClick={() => act("start", cap)}>Start plan</button>
+          ) : plan.state === "paused" || plan.state === "stuck" ? (
+            <button className="btn primary small" disabled={busy} onClick={() => act("resume")}>Resume plan</button>
+          ) : (
+            <button className="btn small" disabled={busy} onClick={() => act("pause")}>Pause</button>
+          )}
+          {(plan?.state === "stuck" || plan?.state === "paused") && (
+            <button className="btn small" disabled={busy} title="Close the plan as it is, without waking Claude"
+              onClick={() => act("done")}>Mark plan done</button>
+          )}
+          <label className="muted small plan-cap" title="Children of this plan in Ready or In progress at once">
+            At once
+            <select value={cap} disabled={busy} onChange={(e) => (live ? act("concurrency", Number(e.target.value)) : setDraftCap(Number(e.target.value)))}>
+              {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </label>
+          {plan && <span className="muted small" title="Times the plan asked Claude to decide something">{checkInsText(plan.wakeups)}</span>}
+        </div>
+      )}
       <ul className="child-tickets">
         {children.map((c) => {
           const waitFor = complete(c) ? [] : resourceWait(c);
