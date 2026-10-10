@@ -281,9 +281,12 @@ test("planner rights: a reply to the user's own chat message, or any run of a ru
   expect(board.isRunning("p", w.id)).toBe(true);
   expect(board.plannerRights("p", w.id)).toBeNull();
   await settle();
-  // Nor a chat on a ticket whose plan is done.
+  // A plan that is done: the user's own message still grants rights (tidy up its children), wake-ups don't.
   store.updateTicket("p", mgr.id, { plan: { state: "done", maxConcurrent: 2, wakeups: 0, startedAt: "", originalCount: 1 } });
-  await board.chat("p", mgr.id, "again");
+  await board.chat("p", mgr.id, "mark all children done");
+  expect(board.plannerRights("p", mgr.id)?.id).toBe(mgr.id);
+  await settle();
+  await board.chat("p", mgr.id, "from the planner", { fromPlanner: true });
   expect(board.plannerRights("p", mgr.id)).toBeNull();
   await settle();
 }, 30000);

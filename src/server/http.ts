@@ -1025,6 +1025,7 @@ export function createServer(deps: ServerDeps) {
         if (!board.plannerRights(slug, id)) {
           throw new HttpError(403, "starting the plan from a board run needs the user's go-ahead: only a reply to the user's message in this ticket's chat may do it");
         }
+        if (store.getTicket(slug, id)!.plan?.state === "done") throw new HttpError(403, "this ticket's plan is done; the user can start a new one first");
       }
       const n = b.maxConcurrent === undefined || byPlanner ? undefined : Number(b.maxConcurrent);
       try {

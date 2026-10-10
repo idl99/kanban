@@ -548,10 +548,14 @@ test("the user's chat gives a ticket planner rights over its own children: adopt
     r = await post(`${tickets}/${mgr.id}/plan`, { action: "resume" }, run);
     expect(((await r.json()) as any).plan.state).toBe("running");
     await post(`${tickets}/${mgr.id}/plan`, { action: "done" });
-    // Done: no rights, no adopting.
+    // Done: the user's chat may still tidy up the plan's own children, but not adopt more or restart it.
     r = await post(`${tickets}/${a.id}`, { body: "late" }, run, "PATCH");
+    expect(r.status).toBe(200);
+    r = await post(`${tickets}/${elsewhere.id}`, { body: "late" }, run, "PATCH");
     expect(r.status).toBe(403);
     r = await post(`${tickets}/${mgr.id}/adopt`, { ids: [elsewhere.id] }, run);
+    expect(r.status).toBe(403);
+    r = await post(`${tickets}/${mgr.id}/plan`, { action: "resume" }, run);
     expect(r.status).toBe(403);
   } finally {
     board.userChatRun = real;

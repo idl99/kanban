@@ -1211,13 +1211,14 @@ export class Board {
 
   /**
    * The planner ticket a run belongs to, if that run may manage the ticket's own children: any run of a running
-   * plan (wake-ups), or a reply to the user's chat message while the plan isn't done (or there is none yet).
+   * plan (wake-ups), or a reply to the user's chat message in any plan state, so the user can still tidy up a finished
+   * plan's children (e.g. mark them done). Restarting a done plan stays refused (see plan_control in http.ts).
    */
   plannerRights(slug: string, runTicketId: string): Ticket | null {
     const t = this.store.getTicket(slug, runTicketId);
     if (!t) return null;
     if (planActive(t.plan)) return t;
-    return t.plan?.state !== "done" && this.userChatRun(slug, runTicketId) ? t : null;
+    return this.userChatRun(slug, runTicketId) ? t : null;
   }
 
   /**
