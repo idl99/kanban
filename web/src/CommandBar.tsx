@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, COLUMNS, type Profile, type Ticket, type TicketRow } from "./api";
 import { avatarColor, avatarLetter } from "./avatar";
-import { fuzzyMatch, highlightRuns, rankTickets } from "./fuzzy";
+import { fuzzyMatch, highlightRuns, rankTickets, type Snippet } from "./fuzzy";
 import { CheckIcon, SearchIcon } from "./icons";
 import { useFocusTrap, useLayer } from "./layers";
 
@@ -17,20 +17,23 @@ export interface CommandAction {
 }
 
 type Item =
-  | { kind: "ticket"; key: string; row: TicketRow; at: number[] }
+  | { kind: "ticket"; key: string; row: TicketRow; at: number[]; snippet?: Snippet }
   | { kind: "action"; key: string; action: CommandAction; at: number[] }
   | { kind: "board"; key: string; profile: Profile; num: number | null; at: number[] };
 
 const GROUP_TITLE = { ticket: "Tickets", action: "Actions", board: "Boards" } as const;
 const SWITCH = "Switch to ";
+const SNIPPET_LABEL = { summary: "Result", body: "Description", pr: "Pull request" } as const;
 
 function Marked({ text, at, offset = 0 }: { text: string; at: number[]; offset?: number }) {
   if (!at.length) return <>{text}</>;
   return <>{highlightRuns(text, at.map((i) => i + offset)).map((r, i) => (r.hit ? <mark key={i}>{r.text}</mark> : <span key={i}>{r.text}</span>))}</>;
 }
 
-const rowOf = (p: Profile, t: Ticket): TicketRow => ({
+// The live list has no result summaries; they come from the all-boards rows.
+const rowOf = (p: Profile, t: Ticket, summary: string): TicketRow => ({
   profile: p.slug, profileName: p.name, id: t.id, title: t.title, status: t.status, running: !!t.running, updatedAt: t.updatedAt,
+  body: t.body, summary, prUrl: t.prUrl,
 });
 
 /**
@@ -59,15 +62,18 @@ export function CommandBar({ profiles, current, tickets, needYou, actions, onOpe
   }, []);
 
   const here = profiles.find((p) => p.slug === current) ?? null;
-  const rows = useMemo(() => [
-    ...(here ? tickets.map((t) => rowOf(here, t)) : []),
-    ...(others ?? []).filter((r) => r.profile !== current),
-  ], [here, tickets, others, current]);
+  const rows = useMemo(() => {
+    const summaries = new Map((others ?? []).filter((r) => r.profile === current).map((r) => [r.id, r.summary]));
+    return [
+      ...(here ? tickets.map((t) => rowOf(here, t, summaries.get(t.id) ?? "")) : []),
+      ...(others ?? []).filter((r) => r.profile !== current),
+    ];
+  }, [here, tickets, others, current]);
 
   const items = useMemo<Item[]>(() => {
     const query = q.trim();
     const ticketItems: Item[] = rankTickets(rows, query, current, query ? 15 : 8)
-      .map(({ row, at }) => ({ kind: "ticket", key: `t:${row.profile}/${row.id}`, row, at }));
+      .map(({ row, at, snippet }) => ({ kind: "ticket", key: `t:${row.profile}/${row.id}`, row, at, snippet }));
     // Keep the list order when nothing is typed; otherwise best match first.
     const matched = <T,>(list: T[], text: (x: T) => string) => {
       const out = list.flatMap((x, i) => {
@@ -135,7 +141,14 @@ export function CommandBar({ profiles, current, tickets, needYou, actions, onOpe
                   ref={(el) => { if (el && on) el.scrollIntoView({ block: "nearest" }); }}>
                   {item.kind === "ticket" && (
                     <>
-                      <span className="cmdbar-title"><Marked text={item.row.title} at={item.at} /></span>
+                      <span className="cmdbar-title">
+                        <Marked text={item.row.title} at={item.at} />
+                        {item.snippet && (
+                          <span className="cmdbar-snippet">
+                            <span className="cmdbar-snippet-label">{SNIPPET_LABEL[item.snippet.field]}</span> <Marked text={item.snippet.text} at={item.snippet.at} />
+                          </span>
+                        )}
+                      </span>
                       <span className={`cmdbar-board${item.row.profile === current ? " here" : ""}`}>{item.row.profileName}</span>
                       <span className={`cmdbar-status st-${item.row.running ? "running" : item.row.status}`}>{status(item.row)}</span>
                     </>
@@ -165,7 +178,7 @@ export function CommandBar({ profiles, current, tickets, needYou, actions, onOpe
           <span><kbd>↑</kbd> <kbd>↓</kbd> move</span>
           <span><kbd>↵</kbd> open</span>
           <span><kbd>esc</kbd> close</span>
-          <span className="cmdbar-foot-note">Searches ticket titles on every board, actions and boards</span>
+          <span className="cmdbar-foot-note">Searches tickets (title, description, last result, PR) on every board, actions and boards</span>
         </div>
       </div>
     </div>

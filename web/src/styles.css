@@ -1241,6 +1241,8 @@ textarea.drop-target { border-color: var(--accent); box-shadow: 0 0 0 3px var(--
 .cmdbar-item.active { background: var(--accent-soft); }
 .cmdbar-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmdbar-title mark { background: none; color: var(--accent); font-weight: 650; }
+.cmdbar-snippet { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmdbar-snippet-label { font-weight: 600; }
 .cmdbar-icon { width: 14px; flex: none; display: flex; justify-content: center; color: var(--muted); }
 .cmdbar-board { flex: none; font-size: 12px; color: var(--muted); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmdbar-board.here { font-weight: 600; }

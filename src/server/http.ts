@@ -351,13 +351,16 @@ export function createServer(deps: ServerDeps) {
     }
 
     if (parts[0] === "tickets" && parts.length === 1 && m === "GET") {
-      // ⌘K command bar: a light row per ticket on every board (title search runs in the browser).
+      // ⌘K command bar: a light row per ticket on every board (search runs in the browser). Long texts are
+      // capped: the bar only needs enough to find a word and show a snippet around it.
+      const cap = (s: string | null) => (s && s.length > 4000 ? s.slice(0, 4000) : s ?? "");
       const out = [];
       for (const p of store.listProfiles()) {
         for (const t of store.listTickets(p.slug)) {
           out.push({
             profile: p.slug, profileName: p.name, id: t.id, title: t.title, status: t.status,
             running: board.isRunning(p.slug, t.id), updatedAt: t.updatedAt,
+            body: cap(t.body), summary: cap(store.lastAiComment(p.slug, t.id)), prUrl: t.prUrl,
           });
         }
       }

@@ -55,17 +55,86 @@ export interface RankRow {
   status: string;
   running: boolean;
   updatedAt: string;
+  body?: string;
+  /** Its last result summary (Claude's last comment). */
+  summary?: string;
+  prUrl?: string | null;
+}
+
+/** Where a ticket matched when it wasn't its title: a short excerpt with the match marked. */
+export interface Snippet {
+  field: "summary" | "body" | "pr";
+  text: string;
+  at: number[];
 }
 
 export interface TicketHit<R extends RankRow> {
   row: R;
   at: number[];
+  snippet?: Snippet;
+}
+
+const SNIPPET_BEFORE = 40;
+const SNIPPET_LEN = 140;
+
+/**
+ * The query's words, in order, as a phrase in longer text (any whitespace between them), on one line
+ * around the match. Null when the text doesn't contain it. score: lower is better, like fuzzyMatch.
+ */
+export function findSnippet(text: string, query: string): { score: number; text: string; at: number[] } | null {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  if (!words.length || !text) return null;
+  const re = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"), "i");
+  const m = re.exec(text);
+  if (!m) return null;
+  const start = m.index;
+  const wordStart = start === 0 || /\W/.test(text[start - 1]);
+  // Flatten whitespace, keeping track of where the match lands.
+  let from = Math.max(0, start - SNIPPET_BEFORE);
+  if (from > 0) {
+    const space = text.slice(from, start).search(/\s/);
+    if (space >= 0) from += space + 1;
+  }
+  const end = Math.min(text.length, Math.max(start + m[0].length, from + SNIPPET_LEN));
+  let out = from > 0 ? "…" : "";
+  const at: number[] = [];
+  for (let i = from; i < end; i++) {
+    const inMatch = i >= start && i < start + m[0].length;
+    const ch = /\s/.test(text[i]) ? " " : text[i];
+    if (ch === " " && (!out || out.endsWith(" "))) continue;
+    if (inMatch) at.push(out.length);
+    out += ch;
+  }
+  if (end < text.length) out = out.trimEnd() + "…";
+  return { score: (wordStart ? -1000 : -500) + Math.min(start, 499), text: out, at };
+}
+
+/** The PR number from a GitHub pull request URL. */
+export function prNumber(url: string | null | undefined): string | null {
+  return url?.match(/\/pull\/(\d+)/)?.[1] ?? null;
+}
+
+/** Best non-title match: the PR number, then the result summary, then the description. */
+function otherMatch(row: RankRow, query: string): (Snippet & { score: number }) | null {
+  const pr = prNumber(row.prUrl);
+  const num = query.trim().replace(/^#/, "");
+  if (pr && /^\d+$/.test(num) && pr === num) {
+    const text = `PR #${pr}`;
+    return { field: "pr", text, at: Array.from({ length: text.length - 3 }, (_, i) => i + 3), score: -2000 };
+  }
+  let best: (Snippet & { score: number }) | null = null;
+  for (const field of ["summary", "body"] as const) {
+    const m = findSnippet(row[field] ?? "", query);
+    if (m && (!best || matchTier(m.score) < matchTier(best.score))) best = { field, ...m };
+  }
+  return best;
 }
 
 /**
- * ⌘K ticket results. With a query: better match first, and within the same kind of match the current
- * board's tickets first. Without one: tickets still in play (not Done), running ones first, then the
- * most recently touched, current board first.
+ * ⌘K ticket results. With a query: the title first (word start, then anywhere), then the PR number,
+ * result summary or description (shown as a snippet), then titles holding the letters in order. Within
+ * the same kind of match the current board's tickets come first. Without a query: tickets still in play
+ * (not Done), running ones first, then the most recently touched, current board first.
  */
 export function rankTickets<R extends RankRow>(rows: R[], query: string, current: string | null, limit = 30): TicketHit<R>[] {
   const here = (r: R) => (r.profile === current ? 0 : 1);
@@ -76,14 +145,24 @@ export function rankTickets<R extends RankRow>(rows: R[], query: string, current
       .slice(0, limit)
       .map((row) => ({ row, at: [] }));
   }
-  const hits: (TicketHit<R> & { score: number })[] = [];
+  // Ranks: 0-1 title substring, 2 PR/summary/description, 3 title letters in order.
+  const hits: (TicketHit<R> & { rank: number; score: number })[] = [];
   for (const row of rows) {
     const m = fuzzyMatch(row.title, query);
-    if (m) hits.push({ row, at: m.at, score: m.score });
+    const tier = m ? matchTier(m.score) : null;
+    if (m && tier !== 2) {
+      hits.push({ row, at: m.at, rank: tier!, score: m.score });
+      continue;
+    }
+    const other = otherMatch(row, query);
+    if (other) {
+      const { score, ...snippet } = other;
+      hits.push({ row, at: [], snippet, rank: 2, score });
+    } else if (m) hits.push({ row, at: m.at, rank: 3, score: m.score });
   }
   return hits
-    .sort((a, b) => matchTier(a.score) - matchTier(b.score) || here(a.row) - here(b.row) || a.score - b.score
+    .sort((a, b) => a.rank - b.rank || here(a.row) - here(b.row) || a.score - b.score
       || b.row.updatedAt.localeCompare(a.row.updatedAt))
     .slice(0, limit)
-    .map(({ row, at }) => ({ row, at }));
+    .map(({ row, at, snippet }) => (snippet ? { row, at, snippet } : { row, at }));
 }
