@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Fake `claude` CLI for tests. Behaviour controlled by env:
-// FAKE_MODE=ok|fail|slow|partial|blocked|noresult|background|bgsilent|asks|nosession, FAKE_PR=<url>, FAKE_ARGS_FILE=<path to append argv JSON>
+// FAKE_MODE=ok|fail|limit|slow|partial|blocked|noresult|background|bgsilent|asks|nosession, FAKE_PR=<url>, FAKE_ARGS_FILE=<path to append argv JSON>
 // FAKE_HEARD_FILE=<path>: appends {session, text} for every user message it reads (huddle routing tests).
 // FAKE_NO_SAVE=1: stopped before the session transcript is saved (under CLAUDE_CONFIG_DIR, like the real CLI).
 // FAKE_TRANSCRIPT=1: it also thinks, runs a Bash call and posts to its huddle, and writes what it emits to the transcript.
@@ -103,6 +103,14 @@ if (process.env.CLAUDE_CONFIG_DIR && sessionId !== "none" && !process.env.FAKE_N
   appendFileSync(`${dir}/${sessionId}.jsonl`, JSON.stringify({ type: "user", sessionId, cwd: process.cwd(), message: { role: "user", content: first ?? "" } }) + "\n");
 }
 if (first !== null) take(first);
+
+// The real CLI when the account's spend limit is hit: a synthetic API-error message, an is_error result, exit 1.
+if (mode === "limit") {
+  const text = process.env.FAKE_LIMIT_TEXT ?? "You've hit your individual spend limit · run /usage-credits to raise it, or visit claude.ai/admin-settings/usage · your session limit resets 4am (Asia/Kuala_Lumpur)";
+  emit({ type: "assistant", message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text }] }, error: "rate_limit", is_api_error_message: true });
+  emit({ type: "result", subtype: "success", is_error: true, api_error_status: 429, result: text, session_id: sessionId });
+  process.exit(1);
+}
 
 // one event split across two chunks to exercise line buffering
 const split = JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Edit", input: { file_path: `${process.cwd()}/src/app.ts` } }] } }) + "\n";

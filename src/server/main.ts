@@ -8,6 +8,7 @@ import { withUtf8Locale } from "./locale";
 import { McpManager } from "./mcp";
 import { startPoller } from "./prpoller";
 import { Scheduler } from "./scheduler";
+import { LimitWatcher } from "./limit";
 import { startHuddleSessionWatcher } from "./huddle-session";
 import { SessionCache, startSessionWatcher } from "./session";
 import { ShellManager } from "./shell";
@@ -50,6 +51,7 @@ export async function startDaemon(): Promise<void> {
   const stopPoller = startPoller(board, store, config.prPollMinutes);
   // After recover(): a missed run's ticket must not be mistaken for an interrupted one.
   const stopScheduler = scheduler.start();
+  const stopLimits = new LimitWatcher(board, store).start();
   const stopWatcher = startSessionWatcher(store, bus, sessions);
   const stopHuddleWatcher = startHuddleSessionWatcher(store, bus, (id) => sessions.version(id));
   const stopTerminals = terminals.start();
@@ -59,6 +61,7 @@ export async function startDaemon(): Promise<void> {
     console.log("ckanban shutting down");
     stopPoller();
     stopScheduler();
+    stopLimits();
     stopWatcher();
     stopHuddleWatcher();
     stopTerminals();

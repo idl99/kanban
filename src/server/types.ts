@@ -1,7 +1,8 @@
 import type { TeammateProposal } from "./teammate-proposal";
 
 export type Status = "backlog" | "planning" | "ready" | "in_progress" | "review" | "done";
-export type Outcome = null | "done" | "blocked" | "failed" | "stopped" | "needs_input";
+/** limit: the run ended because the Claude usage/spend limit was hit (see Ticket.limit). */
+export type Outcome = null | "done" | "blocked" | "failed" | "stopped" | "needs_input" | "limit";
 /** interview: Claude asks clarifying questions before doing the work. auto: just do it. */
 export type TicketMode = "interview" | "auto";
 
@@ -106,6 +107,12 @@ export interface Ticket {
    * Ready tickets. from: where the card was, so Stop puts it back.
    */
   slotWait?: { at: string; from: Pick<Ticket, "status" | "outcome"> } | null;
+  /** Set with outcome "limit": when the limit resets and whether the board sends "continue" then (see limit.ts). */
+  limit?: LimitHit | null;
+  /** false: the user turned automatic continues off for this ticket ("Don't auto-continue"). Missing: on. */
+  autoContinue?: boolean;
+  /** Automatic continues sent on day (local YYYY-MM-DD), for the per-day cap. */
+  autoContinued?: { day: string; count: number } | null;
   /** Output files the user published as claude.ai pages from the Outputs tab, one link per file. */
   shareLinks?: ShareLink[];
   /** Teammate cards in this ticket's chat (propose_teammate) the user answered, by entry uuid (the tool_use id). */
@@ -113,6 +120,20 @@ export interface Ticket {
   createdAt: string;
   updatedAt: string;
   body: string;
+}
+
+/** A run hit the Claude usage/spend limit. */
+export interface LimitHit {
+  /** When the limit resets (from the message, else the next full hour). */
+  resetAt: string;
+  /** The board sends "continue" at resetAt + 1 minute. */
+  auto: boolean;
+  /** Auto is off because the ticket already used its automatic continues today. */
+  capped?: boolean;
+  /** When the run hit it. */
+  at: string;
+  /** Claude's limit message, as shown in the run. */
+  message: string;
 }
 
 export interface PrCheck {

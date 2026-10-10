@@ -1241,8 +1241,6 @@ textarea.drop-target { border-color: var(--accent); box-shadow: 0 0 0 3px var(--
 .cmdbar-item.active { background: var(--accent-soft); }
 .cmdbar-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmdbar-title mark { background: none; color: var(--accent); font-weight: 650; }
-.cmdbar-snippet { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cmdbar-snippet-label { font-weight: 600; }
 .cmdbar-icon { width: 14px; flex: none; display: flex; justify-content: center; color: var(--muted); }
 .cmdbar-board { flex: none; font-size: 12px; color: var(--muted); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmdbar-board.here { font-weight: 600; }
@@ -1887,3 +1885,10 @@ button.hd-mode:disabled { cursor: default; }
 .huddle-body:has(.hd-session) .huddle-feed { min-width: 220px; }
 @media (max-width: 900px) { .hd-session { width: auto; border-left: 0; border-top: 1px solid var(--border); max-height: 55%; } }
 
+
+/* Usage limit hit: amber badge, and "Continue now" / auto-continue on the card and in the drawer banner. */
+.badge.limit { background: var(--warn-soft); color: var(--warn); }
+.limit-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.limit-banner { display: flex; align-items: center; gap: 12px; justify-content: space-between; }
+.limit-banner .limit-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.limit-banner .limit-actions { margin-top: 0; flex: none; }

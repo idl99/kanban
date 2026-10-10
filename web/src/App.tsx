@@ -738,7 +738,7 @@ export function App() {
             )}
           </div>
           <Board tickets={shownTickets} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending}
-            huddles={huddles} onOpenHuddle={openHuddle} />
+            huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} />
         </>
       )}
 

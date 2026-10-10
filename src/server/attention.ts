@@ -3,7 +3,7 @@ import type { SessionSummary } from "./session";
 import type { Store } from "./store";
 import type { Ticket } from "./types";
 
-export type AttentionKind = "failed" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
+export type AttentionKind = "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
 
 /**
  * Why a ticket is waiting on the user, or null if it isn't. This one rule drives every "needs you": the card's
@@ -70,6 +70,8 @@ export function attentionFor(
   if (ask) return { kind: "huddle", label: ask, since: o.huddle!.since ?? since };
   if (huddleBusy(o.huddle)) return null;
   if (t.outcome === "failed") return { kind: "failed", label: "Run failed", since };
+  // Hit the usage limit: it waits for the reset and continues by itself, unless that is off or used up for today.
+  if (t.outcome === "limit") return t.limit?.auto ? null : { kind: "limit", label: "Limit hit", since };
   if (t.outcome === "blocked") return { kind: "blocked", label: "Blocked", since };
   const q = s?.openQuestions ?? 0;
   if (q > 0) return { kind: "questions", label: `Answer ${q} question${q === 1 ? "" : "s"}`, since };

@@ -351,16 +351,13 @@ export function createServer(deps: ServerDeps) {
     }
 
     if (parts[0] === "tickets" && parts.length === 1 && m === "GET") {
-      // ⌘K command bar: a light row per ticket on every board (search runs in the browser). Long texts are
-      // capped: the bar only needs enough to find a word and show a snippet around it.
-      const cap = (s: string | null) => (s && s.length > 4000 ? s.slice(0, 4000) : s ?? "");
+      // ⌘K command bar: a light row per ticket on every board (title search runs in the browser).
       const out = [];
       for (const p of store.listProfiles()) {
         for (const t of store.listTickets(p.slug)) {
           out.push({
             profile: p.slug, profileName: p.name, id: t.id, title: t.title, status: t.status,
             running: board.isRunning(p.slug, t.id), updatedAt: t.updatedAt,
-            body: cap(t.body), summary: cap(store.lastAiComment(p.slug, t.id)), prUrl: t.prUrl,
           });
         }
       }
@@ -1044,6 +1041,21 @@ export function createServer(deps: ServerDeps) {
       if (!ids?.length) throw new HttpError(400, "ids must be a non-empty list of ticket ids");
       const r = board.adoptTickets(slug, id, ids);
       return json({ adopted: r.adopted.map((t) => view(profile, t)), skipped: r.skipped });
+    }
+    // Usage limit: "Continue now" (action: continue), or "Don't auto-continue" / "Auto-continue" (auto: boolean).
+    if (m === "POST" && action === "limit") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can continue a ticket after the usage limit or change its auto-continue");
+      const b = await body(req);
+      if (b.action === "continue") {
+        try {
+          return json(view(profile, await board.continueAfterLimit(slug, id)), 202);
+        } catch (e) {
+          if (e instanceof ConflictError) throw e;
+          throw new HttpError(400, (e as Error).message);
+        }
+      }
+      if (typeof b.auto !== "boolean") throw new HttpError(400, "send {action: \"continue\"} or {auto: true|false}");
+      return json(view(profile, board.setAutoContinue(slug, id, b.auto)));
     }
     if (m === "POST" && action === "check-pr") {
       const state = await checkPr(board, store, slug, id);

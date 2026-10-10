@@ -109,6 +109,9 @@ export interface PlanStepOptions {
   waitingOnUser?: (t: Ticket) => string | null;
 }
 
+/** Hit the usage limit and the board continues it automatically once the limit resets. */
+export const waitsOnLimit = (t: Ticket): boolean => t.outcome === "limit" && !!t.limit?.auto;
+
 function lastError(t: Ticket): string {
   const e = (t.error ?? "").trim().split("\n").slice(-2).join(" ").slice(0, 300);
   return e ? `: ${e}` : "";
@@ -121,14 +124,16 @@ export function planStep(plan: Plan, children: Ticket[], running: (id: string) =
   let active = 0;
   let awaitingMerge = 0;
   for (const t of children) {
-    const busy = running(t.id) || t.status === "ready" || t.status === "in_progress";
+    // Waiting for a usage limit to reset with an automatic continue coming: still at work, not failed.
+    const busy = running(t.id) || t.status === "ready" || t.status === "in_progress" || waitsOnLimit(t);
     if (busy) {
       active++;
       continue;
     }
     let ev: PlanEvent | null = null;
-    if (t.outcome === "failed" || t.outcome === "blocked" || t.outcome === "needs_input") {
-      const what = t.outcome === "needs_input" ? "is asking questions" : t.outcome === "failed" ? "failed" : "is blocked";
+    if (t.outcome === "failed" || t.outcome === "blocked" || t.outcome === "needs_input" || t.outcome === "limit") {
+      const what = t.outcome === "needs_input" ? "is asking questions" : t.outcome === "failed" ? "failed"
+        : t.outcome === "limit" ? "hit the usage limit and won't continue on its own" : "is blocked";
       ev = { childId: t.id, sig: `${t.runCount}:${t.outcome}`, line: `${t.id} "${t.title}" ${what} (${t.status})${lastError(t)}` };
     } else if (t.status === "review" && t.outcome === "done" && t.prUrl) {
       ev = { childId: t.id, sig: `${t.runCount}:pr:${t.prUrl}`, line: `${t.id} "${t.title}" finished with an open PR: ${t.prUrl}` };

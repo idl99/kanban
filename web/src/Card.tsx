@@ -3,6 +3,8 @@ import { safeHref, waitsForSlot, type SessionMessage, type Ticket } from "./api"
 import { type CardHuddleBadge, digestPreview } from "./huddleText";
 import { ClockIcon } from "./icons";
 import { KeyHint } from "./KeyHint";
+import { LimitActions } from "./LimitActions";
+import { limitLabel, limitWait } from "./limitText";
 import { ResourceChip, resourceWait } from "./Needs";
 import { currentPr, prChips } from "./prText";
 import { elapsed, fullTime, plainPreview, timeAgo, useNow } from "./time";
@@ -37,6 +39,7 @@ export function outcomeBadge(t: Ticket) {
     case "needs_input": return <span className="badge blocked">Needs your input</span>;
     case "failed": return <span className="badge failed">Failed</span>;
     case "stopped": return <span className="badge stopped">Stopped</span>;
+    case "limit": return <span className="badge limit" title={t.limit?.message ?? t.error ?? undefined}>{limitLabel(t)}</span>;
     case "done": return t.status === "review" ? <span className="badge ok">Ready for review</span> : null;
     default: return null;
   }
@@ -66,10 +69,12 @@ function HuddleBadge({ badge, onOpen }: { badge: CardHuddleBadge; onOpen?: (tick
 /**
  * queued: 1-based place in the queue for a free run slot (status `ready`, or a reply waiting for one). held: a pending daemon restart holds it.
  * huddle: what the card says about huddles; onOpenHuddle opens a ticket's Huddle tab.
+ * limit: the board's slug and error toast, for the usage-limit buttons ("Continue now", auto-continue).
  */
-export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHuddle }: {
+export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHuddle, limit }: {
   ticket: Ticket; onClick?: () => void; dragging?: boolean; queued?: number; held?: boolean;
   huddle?: CardHuddleBadge | null; onOpenHuddle?: (ticketId: string) => void;
+  limit?: { slug: string; onError: (msg: string) => void };
 }) {
   const working = (ticket.status === "in_progress" && !waitsForSlot(ticket)) || !!ticket.running;
   const att = ticket.attention ?? null;
@@ -93,7 +98,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
         <div className={`your-turn att-${att.kind}`}>
           <span className="yt-dot" aria-hidden />
           <span className="yt-label">Your turn</span>
-          <span className="yt-why" title={ticket.error ?? undefined}>{att.label}</span>
+          <span className="yt-why" title={ticket.error ?? undefined}>{att.kind === "limit" ? limitLabel(ticket) : att.label}</span>
         </div>
       )}
       <KeyHint inset className="card-keys" keys={ticket.status === "review" ? "↵ open · D done · Space move" : "↵ open · Space move"} />
@@ -137,6 +142,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           )}
         </div>
       )}
+      {limit && !dragging && limitWait(ticket) && <LimitActions slug={limit.slug} ticket={ticket} onError={limit.onError} small />}
     </article>
   );
 }

@@ -4,7 +4,8 @@ import type { Status } from "./columns";
 import type { PrStatus } from "./prText";
 export type { PrCheck, PrStatus } from "./prText";
 export type { Status } from "./columns";
-export type Outcome = null | "done" | "blocked" | "failed" | "stopped" | "needs_input";
+/** limit: the run hit the Claude usage/spend limit (see Ticket.limit). */
+export type Outcome = null | "done" | "blocked" | "failed" | "stopped" | "needs_input" | "limit";
 export type TicketMode = "interview" | "auto";
 
 export { BOARD_COLUMNS, COLUMNS, waitsForSlot } from "./columns";
@@ -80,7 +81,7 @@ export interface QuickChat {
   title: string | null;
 }
 
-export type AttentionKind = "failed" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
+export type AttentionKind = "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
 /** Why a ticket needs you (one server rule for cards, counts and the Inbox); since: when it started waiting. */
 export interface Attention {
   kind: AttentionKind;
@@ -163,6 +164,10 @@ export interface Ticket {
   interrupted?: { at: string; partial?: string; held?: boolean } | null;
   /** A chat reply waiting for a free run slot: shown queued in In Progress. */
   slotWait?: { at: string; from: { status: Status; outcome: Outcome } } | null;
+  /** Set with outcome "limit": when it resets and whether the board sends "continue" then. */
+  limit?: { resetAt: string; auto: boolean; capped?: boolean; at: string; message: string } | null;
+  /** false: automatic continues after the usage limit are off for this ticket. */
+  autoContinue?: boolean;
   /** Its run takes one of the board's maxParallel slots. */
   holdsSlot?: boolean;
   createdAt: string;
@@ -765,10 +770,6 @@ export interface TicketRow {
   status: Status;
   running: boolean;
   updatedAt: string;
-  body: string;
-  /** Its last result summary (Claude's last comment), capped. */
-  summary: string;
-  prUrl: string | null;
 }
 
 export type BugBlockId = "env" | "ticket" | "log";
@@ -986,6 +987,10 @@ export const api = {
   prRefresh: (slug: string, id: string, force = false) => req<{ pr: PrStatus | null; ticket: Ticket }>("POST", `${t(slug, id)}/pr/refresh`, { force }),
   prSendFailures: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/send-failures`),
   prMerge: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/merge`),
+  /** Usage limit: send "continue" now. */
+  limitContinue: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/limit`, { action: "continue" }),
+  /** Usage limit: turn the automatic continue at the reset on or off for this ticket. */
+  limitAuto: (slug: string, id: string, auto: boolean) => req<Ticket>("POST", `${t(slug, id)}/limit`, { auto }),
   planningCommand: (slug: string, id: string) => req<{ command: string }>("POST", `${t(slug, id)}/planning-command`),
   /** Raw image bytes; the server saves them and returns the URL to put in markdown. */
   uploadImage: async (file: Blob) => {

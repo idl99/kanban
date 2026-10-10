@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, COLUMNS, safeHref, startWorkTarget, subscribe, type ClaudeSession, type Profile, type Status, type Ticket } from "./api";
 import { outcomeBadge } from "./Card";
+import { LimitActions } from "./LimitActions";
+import { limitHint, limitLabel, limitWait } from "./limitText";
 import { branchTicket } from "./branch";
 import { BugReportDialog } from "./BugReportDialog";
 import { Changes, useTicketDiff } from "./Changes";
@@ -459,7 +461,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           </span>
           {att && (
             <span className={`your-turn inline att-${att.kind}`}>
-              <span className="yt-dot" aria-hidden /><span className="yt-label">Your turn</span><span className="yt-why">{att.label}</span>
+              <span className="yt-dot" aria-hidden /><span className="yt-label">Your turn</span><span className="yt-why">{att.kind === "limit" ? limitLabel(ticket) : att.label}</span>
             </span>
           )}
           {!att && !ticket.huddleBusy && outcomeBadge(ticket)}
@@ -621,6 +623,16 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               <div className="banner error inline panel-error" role="alert">
                 <span>{panelError}</span>
                 <button className="icon-btn" aria-label="Dismiss" onClick={() => setPanelError(null)}><CloseIcon /></button>
+              </div>
+            )}
+            {limitWait(ticket) && (
+              <div className="banner warn inline limit-banner" role="status">
+                <div className="limit-text">
+                  <strong>{limitLabel(ticket)}</strong>
+                  <span>{limitHint(ticket)}</span>
+                  {ticket.limit?.message && <span className="muted small">{ticket.limit.message}</span>}
+                </div>
+                <LimitActions slug={slug} ticket={ticket} onError={onError} small />
               </div>
             )}
             <nav className="tabs" role="tablist" aria-label="Ticket">

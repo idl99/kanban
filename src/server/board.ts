@@ -17,13 +17,14 @@ import {
 } from "./plan";
 import { run as runCmd } from "./git";
 import { parseResult } from "./result";
+import { AUTO_CONTINUE_PER_DAY, clockTime, CONTINUE_TEXT, dayKey, limitMessage, parseReset } from "./limit";
 import { DraftTracker } from "./draft";
 import { buildArgs, startRun, type RunHandle } from "./runner";
 import { BOARD_COMMANDS, commandText, listCommands, MODEL_HELP, parseSlash, REFUSED_COMMANDS, rememberInit, slashMessage, useBundledFile, validModel, type SlashCommand } from "./commands";
 import { mcpConfig } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
-import type { Interrupted, Plan, PrStatus, Profile, QueuedMessage, Status, Ticket, TicketMode } from "./types";
+import type { Interrupted, LimitHit, Plan, PrStatus, Profile, QueuedMessage, Status, Ticket, TicketMode } from "./types";
 import { CLEANUP_TIMEOUT_MS, prepareWorktree, runShell, withSetup, type SetupResult } from "./worktree-setup";
 import { nowIso, slugify } from "./util";
 
@@ -41,6 +42,8 @@ export interface BoardOptions {
   planWakeDelayMs?: number;
   /** The ticket's Claude session as the board UI sees it (open questions, pending proposal); a plan skips children waiting on the user. */
   sessionSummary?: (sessionId: string) => SessionSummary | null;
+  /** The clock for usage-limit resets and the daily auto-continue cap (tests pass a fake one). */
+  now?: () => Date;
 }
 
 /** macOS notification; silently nothing elsewhere or when osascript fails. */
@@ -379,6 +382,8 @@ export class Board {
       if (slash && BOARD_COMMANDS.has(slash.command.name)) return this.boardCommand(slug, id, slash.command.name, slash.args);
       if (slash) [text, opts] = [slash.text, { ...opts, slash: slash.command.local ? "local" : "prompt" }];
     }
+    // The user (or the board's automatic continue) picks the conversation up again: the limit wait is over.
+    if (t.limit && !opts.peer) this.patch(slug, id, { limit: null });
     if (active) {
       if (active.stopRequested || this.shuttingDown) throw new ConflictError("Claude is stopping; send your message once it has stopped");
       // Saved on the ticket until Claude reads it, so closing the chat, Stop or a restart can't lose it.
@@ -545,7 +550,7 @@ export class Board {
       ? { error: null, lastActivity: "Claude is replying…", runStartedAt: nowIso(), waitingOn: null }
       : run.chat?.mode === "refine"
       ? { error: null, lastActivity: "Claude is replying…", refineStarted: true, runStartedAt: nowIso(), waitingOn: null }
-      : { status: "in_progress", outcome: null, error: null, lastActivity: "Starting…", runStartedAt: nowIso(), waitingOn: null });
+      : { status: "in_progress", outcome: null, error: null, limit: null, lastActivity: "Starting…", runStartedAt: nowIso(), waitingOn: null });
   }
 
   /** One claude run, then a chat reply for each message that came in too late for it. */
@@ -747,6 +752,12 @@ export class Board {
       this.patch(slug, id, { ...base, outcome: "stopped", error: null, lastActivity: null });
       return;
     }
+    // The account hit its usage limit: not a failure of the work, it continues once the limit resets.
+    const limited = quiet || result ? null : limitMessage(out.events, out.code !== 0 ? out.stderr : "");
+    if (limited) {
+      this.limitHit(slug, id, base, limited);
+      return;
+    }
     if (out.code !== 0) {
       const error = out.stderr.trim() || finalText.trim() || `claude exited with code ${out.code}`;
       // Claude can't find the session (stopped before it was saved, cleaned up, or saved for another folder):
@@ -794,6 +805,63 @@ export class Board {
       prUrl: run.chat?.raw ? current.prUrl : result?.prUrl ?? current.prUrl,
       error: null,
     });
+  }
+
+  private now(): Date {
+    return this.opts.now?.() ?? new Date();
+  }
+
+  /** A run ended on the usage limit: wait for the reset, then continue on its own unless turned off or capped. */
+  private limitHit(slug: string, id: string, base: Partial<Ticket>, message: string): void {
+    const t = this.store.getTicket(slug, id)!;
+    const now = this.now();
+    const resetAt = parseReset(message, now);
+    const used = t.autoContinued?.day === dayKey(now) ? t.autoContinued.count : 0;
+    const capped = used >= AUTO_CONTINUE_PER_DAY;
+    const auto = t.autoContinue !== false && !capped;
+    const limit: LimitHit = { resetAt: resetAt.toISOString(), auto, at: now.toISOString(), message, ...(capped && t.autoContinue !== false ? { capped: true } : {}) };
+    const when = clockTime(resetAt, now);
+    const next = auto ? `It continues automatically at ${when}.`
+      : limit.capped ? `It resets at ${when}; it already continued automatically ${AUTO_CONTINUE_PER_DAY} times today, so continue it yourself.`
+      : `It resets at ${when}.`;
+    this.store.addComment(slug, id, "ai", `Usage limit hit: ${message}\n${next}`);
+    this.patch(slug, id, { ...base, outcome: "limit", error: message, limit });
+  }
+
+  /**
+   * Continue a ticket that hit the usage limit: "continue" to the same session through the normal chat path (run
+   * slots, restart hold). auto: the board's own continue at the reset; it counts toward the daily cap.
+   */
+  async continueAfterLimit(slug: string, id: string, opts: { auto?: boolean } = {}): Promise<Ticket> {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    if (opts.auto) {
+      if (t.outcome !== "limit" || !t.limit?.auto || this.isRunning(slug, id)) return t;
+      const day = dayKey(this.now());
+      const count = (t.autoContinued?.day === day ? t.autoContinued.count : 0) + 1;
+      this.patch(slug, id, { autoContinued: { day, count } });
+      this.store.addComment(slug, id, "ai", "The usage limit has reset: sent \"continue\".");
+    }
+    return this.chat(slug, id, CONTINUE_TEXT);
+  }
+
+  /** "Don't auto-continue" / "Auto-continue": for the current wait and later limit hits of this ticket. */
+  setAutoContinue(slug: string, id: string, auto: boolean): Ticket {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    const limit = t.limit ? { ...t.limit, auto, capped: undefined } : t.limit;
+    const out = this.patch(slug, id, { autoContinue: auto, ...(limit ? { limit } : {}) });
+    if (t.parentId) this.advancePlans(slug);
+    return out;
+  }
+
+  /** Tickets waiting for a usage limit to reset whose automatic continue is due (see LimitWatcher). */
+  dueContinues(slug: string, delayMs: number): string[] {
+    const now = this.now().getTime();
+    return this.store.listTickets(slug)
+      .filter((t) => t.outcome === "limit" && t.limit?.auto && !this.isRunning(slug, t.id) && t.status !== "done"
+        && new Date(t.limit.resetAt).getTime() + delayMs <= now)
+      .map((t) => t.id);
   }
 
   /** Planning replies carry mockups as blocks (plan mode can't write files); save them for the Outputs tab. */
@@ -1004,6 +1072,8 @@ export class Board {
     }
     // The store places the ticket in its new column unless the patch carries a drop position.
     if (status && status !== current.status) clean.status = status;
+    // Moved by hand: the user takes it from here, no automatic continue.
+    if (clean.status && current.limit) clean.limit = null;
     let t = this.patch(slug, id, clean);
 
     if (clean.status === "done") t = await this.cleanupWorktree(slug, t);
@@ -1181,6 +1251,12 @@ export class Board {
     // The planner's last wake-up has finished: its outcome decides whether we go on.
     if (plan.awaiting && !plannerBusy) {
       const o = planner.outcome;
+      // Waiting for a usage limit to reset: the planner's automatic continue picks the wake-up up again.
+      if (o === "limit" && planner.limit?.auto) return false;
+      if (o === "limit") {
+        this.stuck(slug, planner, plan, "the planner's run hit the usage limit");
+        return false;
+      }
       if (o === "blocked" || o === "needs_input" || o === "failed" || o === "stopped") {
         this.stuck(slug, planner, plan, o === "needs_input" ? "the planner has questions for you" : `the planner's run ${o === "blocked" ? "is blocked" : o}`);
         return false;
