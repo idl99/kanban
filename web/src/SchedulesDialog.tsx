@@ -7,7 +7,8 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { Modal } from "./Modal";
 import { ModeToggle } from "./ModeToggle";
-import { timeAgo, timeUntil, useNow } from "./time";
+import { timeAgo, timeUntil } from "./time";
+import { useNow } from "./useNow";
 
 export const CRON_PRESETS: { label: string; cron: string }[] = [
   { label: "Hourly", cron: "0 * * * *" },

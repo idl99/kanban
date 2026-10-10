@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { useLayer } from "./layers";
-import { fullTime, timeAgo, useNow } from "./time";
+import { fullTime, timeAgo } from "./time";
+import { useNow } from "./useNow";
 import { pillText, resetText, usageTone, worstTone, type UsageResult } from "./usage";
 
 /** Header pill with Claude plan usage; loads once on page open, then only on Refresh. */

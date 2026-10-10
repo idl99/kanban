@@ -13,6 +13,7 @@ What changed in each ckanban release. Get the latest with `ckanban update`.
 - Switch between a ticket's huddle rounds; each huddle gets its own summary.
 - Teammates propose lessons when they finish; you review them in the **🎓 Learnings** drawer and save them as notes that every future teammate of that role gets.
 - Whole-huddle templates (roster, rounds, budget, report format), including a built-in *Design review*.
+- **Auto huddles**: in unattended runs, Claude starts a review huddle on its own before landing important or risky work, fixes the MUST findings, gets a re-check, then lands. Mark a ticket **⭐ Important** (new-ticket dialog, ticket header, or ask Claude) for the bigger review roster. One auto huddle runs per board at a time; others wait for the slot and resume on their own. Turn it off in *Board settings → Auto huddles*.
 - Huddle badges on board cards and a *Huddles* list in the dock.
 - **Team tab** in the dock (header *Team* button or `T`): every teammate with its prompt, notes, usage and recent huddles, plus templates and notes for all roles. Teammates and templates can be saved for all boards or just one, and *Start huddle* starts one from there.
 - **Claude proposes new teammates** as a card in the chat; save it with one click, or edit it first.

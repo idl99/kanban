@@ -3,7 +3,8 @@ import { api, copy, safeHref, type AgentStatus, type McpAddInput, type McpConfig
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CloseIcon, CopyIcon, TerminalIcon } from "./icons";
 import { Modal } from "./Modal";
-import { timeAgo, useNow } from "./time";
+import { timeAgo } from "./time";
+import { useNow } from "./useNow";
 
 const STATUS_LABEL: Record<McpServer["status"], [string, string]> = {
   connected: ["Connected", "ok"],

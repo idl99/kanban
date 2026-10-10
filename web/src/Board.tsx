@@ -10,7 +10,7 @@ import { Card } from "./Card";
 import { groupByColumn } from "./columns";
 import { cardHuddleBadge } from "./huddleText";
 import { CollapseIcon, PlusIcon, SparkIcon } from "./icons";
-import { useNow } from "./time";
+import { useNow } from "./useNow";
 import { toast } from "./toast";
 
 const COLLAPSED_KEY = "ckanban.collapsedColumns";

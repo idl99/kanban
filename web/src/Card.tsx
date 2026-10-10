@@ -8,7 +8,8 @@ import { limitLabel, limitWait } from "./limitText";
 import { ResourceChip, resourceWait } from "./Needs";
 import { currentPr, prChips } from "./prText";
 import { ImportantStar } from "./StarToggle";
-import { elapsed, fullTime, plainPreview, timeAgo, useNow } from "./time";
+import { elapsed, fullTime, plainPreview, timeAgo } from "./time";
+import { useNow } from "./useNow";
 
 /** Live running time: ticks every second for the first minute, then every 30s. */
 function Elapsed({ since }: { since: string }) {

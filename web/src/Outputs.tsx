@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, subscribe, type OutputFile, type Ticket } from "./api";
 import { ChevronDownIcon, ChevronRightIcon, CloseIcon, FileCodeIcon, FileIcon, FileImageIcon, FileTextIcon, FolderIcon, FolderOpenIcon } from "./icons";
-import { fullTime, timeAgo, useNow } from "./time";
+import { fullTime, timeAgo } from "./time";
+import { useNow } from "./useNow";
 import { Markdown } from "./Transcript";
 import { baseName, BINARY, dragFile, HTML, IMAGE, MARKDOWN } from "./share";
 import { ShareMenu } from "./ShareMenu";

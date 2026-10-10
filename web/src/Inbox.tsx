@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { InboxItem } from "./api";
 import { useLayer } from "./layers";
-import { fullTime, OLD_WAIT_MS, useNow, waitedFor } from "./time";
+import { fullTime, OLD_WAIT_MS, waitedFor } from "./time";
+import { useNow } from "./useNow";
 
 /**
  * Top-bar "N need you" across every board, oldest wait first, each with how long it has waited (marked after 8h);

@@ -3,7 +3,8 @@ import { api, safeHref, type PrCheck, type Profile, type Ticket } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ExternalIcon, RefreshIcon } from "./icons";
 import { currentPr, mergeBlock, reviewText } from "./prText";
-import { fullTime, timeAgo, useNow } from "./time";
+import { fullTime, timeAgo } from "./time";
+import { useNow } from "./useNow";
 import { toast } from "./toast";
 
 const MARK: Record<PrCheck["state"], { sym: string; tone: string; verb: string }> = {

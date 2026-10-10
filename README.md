@@ -18,7 +18,7 @@
 - 🤖 **Tickets run by headless Claude.** Move a card to Ready and a `claude -p` session works it in its own git worktree and branch, up to 5 at once per board.
 - 💬 **Planning chat.** Claude interviews you with a clickable question form, draws HTML mockups for UI work and proposes a clear ticket. *Apply & start work* is one click.
 - 🗺️ **Plans.** Split a big ticket into child tickets that run unattended in dependency order; Claude is only woken when one needs it.
-- 🗣️ **Huddles.** A team of Claude teammates (reviewer, QA, researcher, UX critic, facilitator, ...) discuss one ticket in a shared room, tag each other and pin findings, with a budget you set.
+- 🗣️ **Huddles.** A team of Claude teammates (reviewer, QA, researcher, UX critic, facilitator, ...) discuss one ticket in a shared room, tag each other and pin findings, with a budget you set. While you're away, Claude starts a review huddle on its own before landing ⭐ Important or risky work.
 - ✅ **Review with PR checks.** See the diff, comment on lines, watch the PR's checks on the card, send failures back to Claude, or **Merge & done**.
 - 👥 **Team tab.** Your teammates, their prompts and the notes they've learned, for every board or just one.
 - ⌘ **`⌘K` everywhere.** Jump to any ticket on any board by title, description, result or PR number, or run any action.

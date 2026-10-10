@@ -175,9 +175,14 @@ test("children that need the emulator run one at a time; a child without needs r
   expect(kids[0].needs).toEqual(["emulator"]);
   const seen = liveTracker();
   board.startPlan("p", planner.id, { maxConcurrent: 3 });
-  // Right away: E1 holds the emulator, E2 and E3 wait for it in Backlog.
-  expect(board.resourceState("p", store.getTicket("p", kids[1].id)!)).toEqual({ holding: false, waitingFor: ["emulator"] });
-  expect(store.getTicket("p", kids[1].id)!.status).toBe("backlog");
+  // Right away: one E child holds the emulator (whichever the plan picked first), the other two wait for it in Backlog.
+  const emuKids = kids.slice(0, 3).map((k) => store.getTicket("p", k.id)!);
+  const holders = emuKids.filter((t) => board.resourceState("p", t).holding);
+  expect(holders.length).toBe(1);
+  for (const t of emuKids.filter((t) => t.id !== holders[0].id)) {
+    expect(board.resourceState("p", t)).toEqual({ holding: false, waitingFor: ["emulator"] });
+    expect(t.status).toBe("backlog");
+  }
   await settle();
   const emu = (s: string[]) => s.filter((t) => t.startsWith("E")).length;
   expect(Math.max(...seen.map(emu))).toBe(1);

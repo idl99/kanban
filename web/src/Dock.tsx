@@ -6,7 +6,8 @@ import { TeamTab, type HuddleSeed, type TeamRequest } from "./Team";
 import { brakeLabel, guestTickets, huddleCost, huddleTitle, members, quietLabel, roundTag, sortHuddles } from "./huddle";
 import { CloseIcon, RefreshIcon } from "./icons";
 import { TerminalView } from "./TerminalView";
-import { fullTime, timeAgo, useNow } from "./time";
+import { fullTime, timeAgo } from "./time";
+import { useNow } from "./useNow";
 import { toast } from "./toast";
 import { costText } from "./usage";
 
