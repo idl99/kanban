@@ -22,6 +22,7 @@ import { BugReportError, draftReport, submitReport, type BugBlockId, type BugSou
 import { AttachmentError, attachmentFile, attachmentType, IMAGE_TYPES, saveAttachment } from "./attachments";
 import { FileError, listDir, openWithSystem, readFileForView } from "./files";
 import { McpError, McpManager } from "./mcp";
+import { Notifier } from "./notify";
 import { LISTENER_HEADER, LOGIN_HEADER, qrSvg, RemoteAccess, RemoteError, remoteUrl, type RemoteConfig } from "./remote";
 import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
 import { SessionCache } from "./session";
@@ -70,6 +71,8 @@ export interface ServerDeps {
   remote?: RemoteAccess;
   /** Loopback port `tailscale serve` points at (remote.ts); 0 picks a free one; omitted: no phone access listener. */
   remotePort?: number;
+  /** "Needs you" notifications (notify.ts); the daemon passes its started one. */
+  notifier?: Notifier;
 }
 
 /** A Share menu publish in progress, or the error of the last one, per output file. Not persisted. */
@@ -179,6 +182,10 @@ export function createServer(deps: ServerDeps) {
   // The listener each request came in on, for the routes that care (WebSocket upgrades, /api/remote).
   const via = new WeakMap<Request, { listener: Listener; srv: import("bun").Server<ShellSocket> }>();
   const listenerOf = (req: Request): Listener => via.get(req)?.listener ?? "local";
+  const notifier = deps.notifier ?? new Notifier(store, bus, {
+    root: store.root, sessionSummary: (id) => sessions.summary(id), isRunning: (s, id) => board.isRunning(s, id),
+    hostHuddles: (s) => board.hostHuddles(s), baseUrl: () => (remote.active() ? remoteUrl(remote.active()!.host) : `http://localhost:${server.port ?? deps.port}`),
+  });
   // "<profile>/<ticket>" -> jobs by output file.
   const shareJobs = new Map<string, Map<string, ShareJob>>();
 
@@ -378,6 +385,23 @@ export function createServer(deps: ServerDeps) {
         if (typeof b?.enabled !== "boolean") throw new HttpError(400, "enabled must be true or false");
         const st = b.enabled ? await remote.on() : await remote.off();
         return json({ ...st, qrSvg: st.url ? qrSvg(st.url) : null, local: true });
+      }
+    }
+
+    // "Needs you" notifications (notify.ts). Runs can't read or change them: the webhook URL is the user's channel.
+    if (parts[0] === "notify") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "board runs can't use notification settings");
+      if (parts.length === 1 && m === "GET") return json(notifier.state());
+      if (parts.length === 1 && m === "POST") {
+        try {
+          return json(notifier.update(await body(req)));
+        } catch (e) {
+          throw new HttpError(400, (e as Error).message);
+        }
+      }
+      if (parts[1] === "test" && m === "POST") {
+        const b = await body(req);
+        return json({ ...(await notifier.test(typeof b?.profile === "string" ? b.profile : undefined)), state: notifier.state() });
       }
     }
 

@@ -99,7 +99,8 @@ test("children failing together wake the planner once; an unresolved dead end ma
   expect(p.plan?.wakeups).toBe(1);
   expect(p.plan?.state).toBe("stuck");
   expect(p.plan?.reason).toContain("nothing can run");
-  expect(notes).toEqual(["Plan stuck: Plan"]);
+  // A stuck plan needs the user: the Notifier (notify.ts) tells them, not a board banner.
+  expect(notes).toEqual([]);
   const wake = store.listComments("p", planner.id).find((c) => c.text.startsWith("Plan stuck"));
   expect(wake).toBeDefined();
 });

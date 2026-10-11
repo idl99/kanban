@@ -9,6 +9,7 @@ import { addWorktree, branchesWithPrefix, branchExists, isGitRepo, listWorktrees
 import { MOVE_TO_PLANNING_RE, STAY_RE } from "./session";
 import { forkSessionFile } from "./fork";
 import { saveMockups } from "./mockups";
+import { macBanner } from "./notify";
 import { type HostHuddle, ticketAttention, userWaitReason } from "./attention";
 import type { SessionSummary } from "./session";
 import { chatPrompt, firstRunPrompt, freshSessionPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
@@ -36,7 +37,7 @@ export interface BoardOptions {
   isSessionLive?: (sessionId: string, title: string | null) => Promise<boolean>;
   /** The ticket's session open in one of the board's own terminals (the dock), which the board can close (Take over here). */
   findOwnedSession?: (sessionId: string) => Promise<OwnedSession | null>;
-  /** Tells the user something needs them while they're away (default: a macOS notification). */
+  /** Tells the user about board events that aren't "needs you", e.g. a plan done (default: a macOS banner, see notify.ts). */
   notify?: (title: string, body: string) => void;
   /** Child events that arrive within this window wake the planner once (default 3s). */
   planWakeDelayMs?: number;
@@ -44,13 +45,6 @@ export interface BoardOptions {
   sessionSummary?: (sessionId: string) => SessionSummary | null;
   /** The clock for usage-limit resets and the daily auto-continue cap (tests pass a fake one). */
   now?: () => Date;
-}
-
-/** macOS notification; silently nothing elsewhere or when osascript fails. */
-export function systemNotify(title: string, body: string): void {
-  if (process.platform !== "darwin") return;
-  const q = (s: string) => JSON.stringify(s.replace(/\s+/g, " ").slice(0, 240));
-  runCmd(["osascript", "-e", `display notification ${q(body)} with title ${q(title)}`], homedir()).catch(() => {});
 }
 
 interface ActiveRun {
@@ -221,7 +215,7 @@ export class Board {
     this.sessionSummary = opts.sessionSummary ?? (() => null);
     this.sessionExists = opts.sessionExists ?? claudeSessionExists;
     this.isSessionLive = opts.isSessionLive ?? psSessionLive;
-    this.notify = opts.notify ?? systemNotify;
+    this.notify = opts.notify ?? macBanner;
     useBundledFile(join(store.root, "claude-commands.json"));
   }
 
@@ -1442,8 +1436,8 @@ export class Board {
 
   private stuck(slug: string, planner: Ticket, plan: Plan, reason: string) {
     this.patch(slug, planner.id, { plan: { ...plan, state: "stuck", awaiting: null, reason } });
+    // The stuck planner now needs the user (attention.ts): the Notifier tells them.
     this.store.addComment(slug, planner.id, "ai", `Plan stuck: ${reason}. Fix what's needed, then press Resume plan.`);
-    this.notify(`Plan stuck: ${planner.title}`, reason);
   }
 
   private async cleanupWorktree(slug: string, t: Ticket): Promise<Ticket> {

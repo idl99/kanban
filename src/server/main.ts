@@ -7,7 +7,8 @@ import { Huddles } from "./huddle";
 import { withUtf8Locale } from "./locale";
 import { McpManager } from "./mcp";
 import { startPoller } from "./prpoller";
-import { remoteListenPort } from "./remote";
+import { Notifier } from "./notify";
+import { RemoteAccess, remoteListenPort, remoteUrl } from "./remote";
 import { Scheduler } from "./scheduler";
 import { LimitWatcher } from "./limit";
 import { startHuddleSessionWatcher } from "./huddle-session";
@@ -32,6 +33,17 @@ export async function startDaemon(): Promise<void> {
     claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude",
     sessionSummary: (id) => sessions.summary(id),
     findOwnedSession: (id) => shells.findSession(id),
+    notify: (title, body) => notifier.macOnly(title, body),
+  });
+  // Links in notifications open the ticket on the phone when phone access is on (remote.json), else on this Mac.
+  const remoteConfig = new RemoteAccess(store.root, () => 0);
+  const notifier: Notifier = new Notifier(store, bus, {
+    root: store.root, sessionSummary: (id) => sessions.summary(id), isRunning: (slug, id) => board.isRunning(slug, id),
+    hostHuddles: (slug) => board.hostHuddles(slug),
+    baseUrl: () => {
+      const r = remoteConfig.active();
+      return r ? remoteUrl(r.host) : `http://localhost:${server.port}`;
+    },
   });
   const webDir = join(import.meta.dir, "..", "..", "web", "dist");
   const embedded = Object.keys(WEB_ASSETS).length > 0;
@@ -43,7 +55,7 @@ export async function startDaemon(): Promise<void> {
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
   const remotePort = remoteListenPort(port, config.remotePort);
-  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, huddles, assets: WEB_ASSETS, restart });
+  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, huddles, assets: WEB_ASSETS, restart, notifier });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   board.recover();
   huddles.recover();
@@ -58,6 +70,8 @@ export async function startDaemon(): Promise<void> {
   const stopHuddleWatcher = startHuddleSessionWatcher(store, bus, (id) => sessions.version(id));
   const stopTerminals = terminals.start();
   const stopMcp = mcp.start();
+  // After recover(): what already waits when the daemon starts doesn't notify again.
+  const stopNotifier = notifier.start();
 
   const shutdown = async () => {
     console.log("ckanban shutting down");
@@ -69,6 +83,7 @@ export async function startDaemon(): Promise<void> {
     stopTerminals();
     shells.killAll();
     stopMcp();
+    stopNotifier();
     await Promise.all([board.shutdown(), huddles.shutdown()]);
     server.stop(true);
     server.remoteServer?.stop(true);

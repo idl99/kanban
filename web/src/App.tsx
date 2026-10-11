@@ -4,9 +4,10 @@ import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu, type MenuItem } from "./HeaderMenu";
-import { AtIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, DeviceIcon, GearIcon, KeyboardIcon, Logo, PlugIcon, PlusIcon, SearchIcon, TeamIcon, TerminalIcon } from "./icons";
+import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, DeviceIcon, GearIcon, KeyboardIcon, Logo, PlugIcon, PlusIcon, SearchIcon, TeamIcon, TerminalIcon } from "./icons";
 import { Inbox } from "./Inbox";
 import { NowView } from "./NowView";
+import { NotificationsDialog } from "./NotificationsDialog";
 import { PhoneAccessDialog } from "./PhoneAccessDialog";
 import { MoreSheet, PhoneNav, type PhoneTab } from "./PhoneNav";
 import { usePhone } from "./usePhone";
@@ -187,6 +188,7 @@ export function App() {
   const [phoneTab, setPhoneTab] = useState<PhoneTab>("now");
   const [moreOpen, setMoreOpen] = useState(false);
   const [phoneAccess, setPhoneAccess] = useState(false);
+  const [notifications, setNotifications] = useState(false);
   const [version, setVersion] = useState<{ version: string; latest: string | null; updateAvailable: boolean } | null>(null);
 
   const loadProfiles = useCallback(async () => {
@@ -594,6 +596,7 @@ export function App() {
           },
           ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
           { label: "Phone access", icon: <DeviceIcon />, onSelect: () => setPhoneAccess(true), title: "Open this board from your phone over Tailscale" },
+          { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotifications(true), title: "Get told on your phone (ntfy / webhook) when a ticket needs you" },
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
   ];
@@ -657,6 +660,7 @@ export function App() {
     { id: "usage", label: "Usage", run: () => setUsageRequest(Date.now()) },
     ...(profile ? [{ id: "settings", label: "Board settings", icon: <GearIcon size={14} />, run: () => setProfileDialog("edit") }] : []),
     { id: "new-board", label: "New board", run: () => setProfileDialog("new") },
+    { id: "notifications", label: "Notifications", icon: <BellIcon size={14} />, hint: "ntfy / webhook when a ticket needs you", run: () => setNotifications(true) },
     { id: "phone", label: "Phone access", icon: <DeviceIcon size={14} />, hint: "open the board from your phone", run: () => setPhoneAccess(true) },
     { id: "shortcuts", label: "Keyboard shortcuts", keys: ["?"], icon: <KeyboardIcon size={14} />, run: () => setShortcuts(true) },
     { id: "bug", label: "Report a bug", icon: <BugIcon size={14} />, run: () => setBugReport(true) },
@@ -847,6 +851,7 @@ export function App() {
       )}
       {moreOpen && <MoreSheet items={menuItems.filter((i) => i.label !== "Schedules" && i.label !== "Keyboard shortcuts")} footer={menuFooter} onClose={() => setMoreOpen(false)} />}
       {phoneAccess && <PhoneAccessDialog onClose={() => setPhoneAccess(false)} />}
+      {notifications && <NotificationsDialog profile={profile?.slug ?? null} onClose={() => setNotifications(false)} />}
 
       {dockOpen && profile && (
         <Suspense fallback={null}>

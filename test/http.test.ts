@@ -680,3 +680,20 @@ test("spending: card cost, today's spend and caps set by the user only", async (
   });
   expect(r.status).toBe(403);
 });
+
+test("notification settings: read, update, validate; board runs are refused", async () => {
+  let r = await fetch(`${base}/api/notify`);
+  expect(r.status).toBe(200);
+  expect(((await r.json()) as any).webhookUrl).toBe("");
+  r = await fetch(`${base}/api/notify`, json("POST", { webhookUrl: "https://ntfy.sh/abc", kinds: { review: false } }));
+  const s = (await r.json()) as any;
+  expect(s.webhookUrl).toBe("https://ntfy.sh/abc");
+  expect(s.kinds.review).toBe(false);
+  expect(s.kinds.questions).toBe(true);
+  r = await fetch(`${base}/api/notify`, json("POST", { webhookUrl: "javascript:alert(1)" }));
+  expect(r.status).toBe(400);
+  r = await fetch(`${base}/api/notify`, { headers: { "x-ckanban-run": "p/t_1" } });
+  expect(r.status).toBe(403);
+  r = await fetch(`${base}/api/notify`, json("POST", { webhookUrl: "" }));
+  expect(((await r.json()) as any).webhookUrl).toBe("");
+});

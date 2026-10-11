@@ -2113,3 +2113,9 @@ button.hd-mode:disabled { cursor: default; }
   .hd-learnings { width: 100%; border-left: 0; z-index: 7; }
   .hd-learnings-list { padding-bottom: env(safe-area-inset-bottom); }
 }
+
+/* Notifications dialog (NotificationsDialog.tsx) */
+.notify-form p { margin: 0; }
+.notify-kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.notify-kinds label.board-switch { font-weight: 500; }
+@media (max-width: 640px) { .notify-kinds { grid-template-columns: 1fr; } }

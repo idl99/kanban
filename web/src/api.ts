@@ -795,6 +795,17 @@ export interface RemoteState {
   local: boolean;
 }
 
+/** "Needs you" notifications (src/server/notify.ts): webhook (ntfy or JSON), macOS banner, per-kind toggles. */
+export type NotifyKind = "questions" | "proposal" | "review" | "failed" | "limit" | "blocked" | "huddle" | "reply";
+export interface NotifyState {
+  webhookUrl: string;
+  format: "auto" | "ntfy" | "json";
+  mac: boolean;
+  kinds: Record<NotifyKind, boolean>;
+  lastSentAt: string | null;
+  lastError: string | null;
+}
+
 export interface InboxItem {
   profile: string;
   profileName: string;
@@ -870,6 +881,10 @@ export const api = {
   /** pending: a daemon restart holds new runs until the `waiting` active runs finish. */
   remote: () => req<RemoteState>("GET", "/api/remote"),
   setRemote: (enabled: boolean) => req<RemoteState>("POST", "/api/remote", { enabled }),
+  notify: () => req<NotifyState>("GET", "/api/notify"),
+  setNotify: (patch: Partial<Pick<NotifyState, "webhookUrl" | "format" | "mac">> & { kinds?: Partial<Record<NotifyKind, boolean>> }) => req<NotifyState>("POST", "/api/notify", patch),
+  testNotify: (profile: string | null) =>
+    req<{ ok: boolean; error: string | null; webhook: boolean; state: NotifyState }>("POST", "/api/notify/test", profile ? { profile } : {}),
   restartState: () => req<{ pending: boolean; waiting: number }>("GET", "/api/restart"),
   bugDraft: (ref: { profile: string; ticketId: string } | null) =>
     req<{ blocks: BugBlock[]; screenshots: string[] }>("POST", "/api/bug-report/draft", ref ?? {}),
