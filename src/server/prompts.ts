@@ -476,7 +476,9 @@ export function huddleAgentSystemPrompt(
   h: Huddle, p: HuddleParticipant, host: Ticket, outputDir: string, workdir: string, baseBranch?: string, lessons = "",
 ): string {
   const snap = p.snapshot;
-  const edit = p.canEdit
+  const edit = p.canEdit && p.workspace === "own" && !p.worktree
+    ? `You work in the host ticket's folder (${workdir}), shared with @main, because the repo has no commits yet. Tell @main before you change a file, and don't commit, push or switch branches.`
+    : p.canEdit
     ? `You work in your own git worktree (${workdir}) on branch ${p.branch ?? "(your branch)"}: edit and commit there. Never push to or edit the host ticket's worktree.`
     : `You must NOT edit tracked files in this repository (Edit, Write and NotebookEdit are disabled; don't change files through the shell either). You may run the app, tests and read-only commands. Put reports, notes and test scripts in your outputs folder: ${outputDir}${snap ? `
 - Your working folder is a read-only snapshot: a detached git worktree at the host branch ${snap.branch ?? "(detached)"}, commit ${snap.sha}. The board resets it to the host's latest commit at every wake, dropping any change made in it; never commit, push or switch branches there.

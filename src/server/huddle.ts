@@ -39,7 +39,7 @@ import { summarizeEvent } from "./activity";
 import { mcpConfig } from "./agents";
 import { claudeSessionExists, type Board } from "./board";
 import type { Bus } from "./events";
-import { addWorktree, branchExists, isGitRepo, removeWorktree, run as git, worktreeDir } from "./git";
+import { addWorktree, branchExists, hasCommits, isGitRepo, removeWorktree, run as git, worktreeDir } from "./git";
 import {
   DEFAULT_MAX_PARTICIPANTS, handleBase, HUDDLE_AGENT_ENV, LEGACY_SUMMARY_FILE, MAIN_HANDLE, NO_EDIT_TOOLS, parseMentions, RESERVED_HANDLES,
   rosterEntryError, rosterError, summaryFile, USER_HANDLE, type RosterEntry,
@@ -1580,7 +1580,9 @@ export class Huddles {
     run.promise = this.executeAgent(slug, hid, handle, run, input)
       .catch((e) => {
         console.error(`huddle ${slug}/${hid} @${handle} crashed`, e);
-        this.updateP(slug, hid, handle, { status: "failed", error: String((e as Error)?.message ?? e) });
+        const error = String((e as Error)?.message ?? e);
+        this.updateP(slug, hid, handle, { status: "failed", error });
+        if (this.load(slug, hid)) this.system(slug, hid, `@${handle} failed: ${error}`);
       })
       .finally(() => {
         this.runs.delete(key);
@@ -1594,14 +1596,20 @@ export class Huddles {
 
   /**
    * Where an agent works: (workspace own) a worktree of its own off the host's branch; a read-only agent, a detached
-   * snapshot of the host's HEAD (see snapshot); anyone else the host ticket's worktree.
+   * snapshot of the host's HEAD (see snapshot); anyone else the host ticket's worktree. In a repo with no commits yet
+   * there is nothing to branch or snapshot, so everyone works in the host's folder (as the host ticket does).
    */
   private async workspace(slug: string, h: Huddle, p: HuddleParticipant): Promise<string> {
     const host = await this.board.ensureSession(slug, h.hostTicket);
-    if (p.workspace === "shared") return isSnapshot(p) && host.isGit ? this.snapshot(slug, h, p, host.dir) : host.dir;
+    const committed = host.isGit && (await hasCommits(host.dir));
+    if (p.workspace === "shared") return isSnapshot(p) && committed ? this.snapshot(slug, h, p, host.dir) : host.dir;
     const profile = this.store.getProfile(slug)!;
     if (!(await isGitRepo(profile.path))) throw new Error("workspace own needs a git repository");
     if (p.worktree && existsSync(p.worktree)) return p.worktree;
+    if (!committed) {
+      if (!p.sessionId) this.system(slug, h.id, `@${p.handle} works in the host's folder ${host.dir}, shared with @main, instead of a worktree of its own: this repo has no commits yet. Make a first commit to give new agents their own worktree.`);
+      return host.dir;
+    }
     const t = this.store.getTicket(slug, h.hostTicket)!;
     const dir = agentDir(profile, h, p);
     const branch = p.branch ?? `ck/${h.hostTicket}-${p.handle}`;

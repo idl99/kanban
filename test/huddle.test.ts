@@ -424,6 +424,45 @@ test("read-only agents work in a detached snapshot of the host's HEAD, refreshed
   expect((await git(store.getProfile("p")!.path, "worktree", "list")).includes(p.worktree!)).toBe(false);
 }, 30000);
 
+test("in a repo with no commits yet, agents work in the host's folder instead of failing", async () => {
+  const empty = tempDir("ck-empty-");
+  await git(empty, "init", "-q", "-b", "main");
+  store.saveProfile({ ...store.getProfile("p")!, path: empty });
+  const t = await host();
+  const h = huddles.create("p", t.id, [{ preset: "reviewer" }, { role: "Fixer", prompt: "Fix it", workspace: "own", canEdit: true }]);
+  await idle();
+  for (const a of ["reviewer", "fixer"]) {
+    expect(participant(h, a)).toMatchObject({ status: "idle", error: null });
+    expect(participant(h, a).worktree ?? null).toBeNull();
+    expect(heardBy(a)[0]).toContain(`You just joined the huddle as @${a}`);
+  }
+  expect(participant(h, "reviewer").snapshot ?? null).toBeNull();
+  expect(processes().map((x) => x.cwd)).toEqual([empty, empty]);
+  expect(processes().some((x) => x.args.join(" ").includes("shared with @main, because the repo has no commits yet"))).toBe(true);
+  expect(messages(h).filter((m) => m.kind === "system" && m.text.includes("no commits yet")).map((m) => m.text)).toEqual([
+    expect.stringContaining("@fixer works in the host's folder"),
+  ]);
+  // A later wake uses the folder again, without another note.
+  huddles.post("p", h.id, you(h), "@reviewer @fixer again");
+  await idle();
+  expect(heardBy("reviewer").at(-1)).toContain("again");
+  expect(processes().every((x) => x.cwd === empty)).toBe(true);
+  expect(messages(h).filter((m) => m.text.includes("no commits yet")).length).toBe(1);
+}, 30000);
+
+test("an agent that can't start shows why: failed with the error, and a line in the huddle", async () => {
+  const t = await host();
+  // The host's linked folder is gone, so no agent can get a workspace.
+  store.updateTicket("p", t.id, { workdir: join(tempDir("ck-gone-"), "gone") });
+  const h = huddles.create("p", t.id, [{ preset: "reviewer" }]);
+  await idle();
+  const p = participant(h, "reviewer");
+  expect(p.status).toBe("failed");
+  expect(p.error).toContain("linked session folder no longer exists");
+  expect(messages(h).at(-1)).toMatchObject({ kind: "system", text: `@reviewer failed: ${p.error}` });
+  expect(processes()).toEqual([]);
+}, 30000);
+
 test("a live monitor-mode snapshot is reset to the host's latest commit before new messages go in", async () => {
   await Promise.all([board.shutdown(), huddles.shutdown()]);
   server.stop(true);

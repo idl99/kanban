@@ -41,6 +41,11 @@ async function isCommit(repo: string, ref: string): Promise<boolean> {
   return (await run(["git", "rev-parse", "--verify", "--quiet", `${ref}^{commit}`], repo)).code === 0;
 }
 
+/** False in a fresh `git init` with no commits yet: HEAD names a branch that doesn't exist. */
+export async function hasCommits(dir: string): Promise<boolean> {
+  return isCommit(dir, "HEAD");
+}
+
 /**
  * The ref new worktrees branch from: the saved base branch if it still points at a commit, else the
  * first of the detected default branch, its origin/ copy, main, master or HEAD that does.

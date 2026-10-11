@@ -925,7 +925,7 @@ function Roster({ slug, huddle: h, onError, viewing, onView }: {
         const human = p.kind === "human";
         const st = ["working", "failed", "stopped", "done", "blocked"].includes(p.status) ? p.status : "idle";
         const restartable = !closed && !human && (p.status === "failed" || p.status === "stopped");
-        const activity = human ? "human" : p.status === "failed" ? "failed" : participantActivity(p, closed);
+        const activity = human ? "human" : participantActivity(p, closed);
         // Long statuses wrap to two lines; the tooltip has all of it.
         const detail = [...new Set([participantActivity(p, closed), p.error, p.statusReason, p.lastActivity].filter((x): x is string => !!x))].join("\n");
         return (
