@@ -33,11 +33,13 @@ const TASK_DONE = new Set(["completed", "failed", "killed", "stopped"]);
 
 const STDERR_TAIL = 2048;
 
-function killGroup(pid: number, signal: "TERM" | "KILL") {
-  const r = Bun.spawnSync(["kill", `-${signal}`, "--", `-${pid}`], { stdout: "ignore", stderr: "ignore" });
+/** Once claude has exited its pid may belong to another process (a git command, another run), so it is left alone. */
+function killGroup(p: { pid: number; exitCode: number | null; signalCode: unknown; kill(signal?: NodeJS.Signals): void }, signal: "TERM" | "KILL") {
+  if (p.exitCode !== null || p.signalCode !== null) return;
+  const r = Bun.spawnSync(["kill", `-${signal}`, "--", `-${p.pid}`], { stdout: "ignore", stderr: "ignore" });
   if (r.exitCode !== 0) {
     try {
-      process.kill(pid, `SIG${signal}`);
+      p.kill(`SIG${signal}`);
     } catch {}
   }
 }
@@ -360,8 +362,8 @@ export function startRun(opts: {
       stopped = true;
       closeInput();
       const p = proc;
-      killGroup(p.pid, "TERM");
-      const timer = setTimeout(() => killGroup(p.pid, "KILL"), 5000);
+      killGroup(p, "TERM");
+      const timer = setTimeout(() => killGroup(p, "KILL"), 5000);
       p.exited.then(() => clearTimeout(timer));
     },
   };

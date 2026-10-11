@@ -881,10 +881,10 @@ test("ping-pong: two agents answering each other stop waking each other and thei
   const s = store.getHuddle("p", h.id)!;
   expect(s.held).toEqual(["reviewer-1", "reviewer-2"]);
   expect(s.status).toBe("live");
-  const warn = messages(h).at(-1)!;
-  expect(warn.kind).toBe("system");
+  // Found by its text: on a slow machine a line about a snapshot refresh can follow it.
+  const warn = messages(h).findLast((m) => m.kind === "system" && m.text.includes("answered each other"))!;
   expect(warn.mentions.sort()).toEqual(["main", "qa-lead"]);
-  expect(heardBy("qa-lead").at(-1)).toContain("answered each other 6 times");
+  await until(() => heardBy("qa-lead").some((x) => x.includes("answered each other 6 times")));
   // They no longer wake each other...
   const r2 = heardBy("reviewer-2").length;
   huddles.post("p", h.id, participant(h, "reviewer-1"), "@reviewer-2 still no");
