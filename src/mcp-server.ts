@@ -946,6 +946,7 @@ const HUDDLE_TOOLS: Tool[] = [
         reason: { type: "string", description: "One line: why this work needs a review (⭐ important, or the risk: user-facing, data, security, payments, migrations)." },
         template: { type: "string", description: "auto-review, or auto-review-important for ⭐ tickets and security/data/payments/migration risks." },
         roster: { type: "array", minItems: 1, items: ROSTER_ENTRY, description: "Optional custom roster instead of a template." },
+        maxCostUsd: { type: "number", description: "Optional budget in USD when the ticket asks for one (capped at $100). Default: the template's budget." },
         profile: PROFILE,
       },
       required: ["reason"],
@@ -960,14 +961,15 @@ const HUDDLE_TOOLS: Tool[] = [
         const e = rosterError(args.roster, undefined, undefined);
         if (e) throw new ClientError(`${e}. Fix it and call start_huddle again.`);
       }
+      const maxCostUsd = args?.maxCostUsd === undefined || args?.maxCostUsd === null ? undefined : Number(args.maxCostUsd);
       const slug = await slugFor(args, ctx);
-      const r = await ctx.client.startAutoHuddle(slug, { reason, template, roster: args?.roster }, huddleCaller(ctx.env));
+      const r = await ctx.client.startAutoHuddle(slug, { reason, template, roster: args?.roster, maxCostUsd }, huddleCaller(ctx.env));
       if (r.waiting) {
         return "Another auto huddle is running on this board, so this ticket waits for the huddle slot. End your turn now with a short note (no landing); " +
           "the board keeps the ticket In Progress and wakes you when the slot frees.";
       }
       const h = r.huddle!;
-      return `Auto huddle ${h.id} started (${r.template}) with ${h.participants.filter((p) => p.kind === "agent").map((p) => `@${p.handle}`).join(", ")}; you are @main. ` +
+      return `Auto huddle ${h.id} started (${r.template}${h.maxCostUsd !== undefined ? `, budget $${h.maxCostUsd.toFixed(2)}` : ""}) with ${h.participants.filter((p) => p.kind === "agent").map((p) => `@${p.handle}`).join(", ")}; you are @main. ` +
         "Don't land yet: end your turn now with a short note. The board keeps the ticket In Progress and wakes you with the QA lead's consolidated findings.";
     },
   },

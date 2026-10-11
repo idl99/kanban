@@ -1178,6 +1178,7 @@ export function createServer(deps: ServerDeps) {
         reason: typeof b.reason === "string" ? b.reason : "",
         template: typeof b.template === "string" && b.template.trim() ? b.template.trim() : undefined,
         roster: Array.isArray(b.roster) ? b.roster : undefined,
+        maxCostUsd: b.maxCostUsd === undefined || b.maxCostUsd === null ? undefined : Number(b.maxCostUsd),
       });
       return json({ waiting: out.waiting, template: out.template, huddle: out.huddle ? huddles.view(slug, out.huddle) : null }, out.waiting ? 202 : 201);
     }

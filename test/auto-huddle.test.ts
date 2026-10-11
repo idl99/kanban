@@ -6,7 +6,7 @@ import { callTool, type ToolContext } from "../src/mcp-server";
 import { Board, type ChatOptions } from "../src/server/board";
 import { Bus } from "../src/server/events";
 import { createServer } from "../src/server/http";
-import { Huddles, summaryFile } from "../src/server/huddle";
+import { AUTO_MAX_COST_USD, Huddles, summaryFile } from "../src/server/huddle";
 import { chatPrompt, firstRunPrompt, freshSessionPrompt, planningPrompt, resumePrompt } from "../src/server/prompts";
 import { Store } from "../src/server/store";
 import { autoHuddlesOn, type Profile, type Ticket } from "../src/server/types";
@@ -166,6 +166,55 @@ test("start_huddle starts the important roster for a ⭐ ticket, once per run; t
   expect(text(c)).toContain("Closed the auto huddle");
   expect(store.getHuddle("p", h.id)!.status).toBe("closed");
   expect(ticket(t.id).autoHuddle ?? null).toBeNull();
+});
+
+test("start_huddle budget: the template default, a budget the ticket asks for, capped at $100", async () => {
+  const startMsg = (hid: string) => store.readHuddleMessages("p", hid)[0].text;
+  const close = async (id: string) => {
+    const hid = ticket(id).autoHuddle!.huddleId!;
+    writeSummary(id, hid);
+    await callTool("huddle_close", { reason: "landed" }, runCtx(id));
+  };
+  const [a, b, c, d] = [await inProgress("A"), await inProgress("B"), await inProgress("C"), await inProgress("D")];
+  unattended(a.id, b.id, c.id, d.id);
+  // Without a budget: the template's.
+  let r = await callTool("start_huddle", { reason: "user-facing" }, runCtx(a.id));
+  expect(text(r)).toContain("budget $20.00");
+  let h = store.getHuddle("p", ticket(a.id).autoHuddle!.huddleId!)!;
+  expect(h.maxCostUsd).toBe(20);
+  expect(startMsg(h.id)).toContain("Budget $20.00 (template default).");
+  await close(a.id);
+  // The ticket asks for $40: the cost brake is at $40.
+  r = await callTool("start_huddle", { reason: "user-facing", maxCostUsd: 40 }, runCtx(b.id));
+  expect(text(r)).toContain("budget $40.00");
+  h = store.getHuddle("p", ticket(b.id).autoHuddle!.huddleId!)!;
+  expect(h.maxCostUsd).toBe(40);
+  expect(startMsg(h.id)).toContain("Budget $40.00 (asked by the ticket's run).");
+  await close(b.id);
+  // Above the ceiling: capped.
+  await callTool("start_huddle", { reason: "user-facing", maxCostUsd: 250 }, runCtx(c.id));
+  h = store.getHuddle("p", ticket(c.id).autoHuddle!.huddleId!)!;
+  expect(h.maxCostUsd).toBe(AUTO_MAX_COST_USD);
+  expect(startMsg(h.id)).toContain("Budget $100.00 (asked $250.00, capped at $100.00).");
+  await close(c.id);
+  // Not a positive amount: refused.
+  r = await callTool("start_huddle", { reason: "user-facing", maxCostUsd: -5 }, runCtx(d.id));
+  expect(r.isError).toBe(true);
+  expect(text(r)).toContain("maxCostUsd must be a positive amount");
+});
+
+test("a ticket waiting for the slot keeps the budget it asked for in its wake", async () => {
+  const a = await inProgress("A");
+  const b = await inProgress("B");
+  unattended(a.id, b.id);
+  await callTool("start_huddle", { reason: "user-facing" }, runCtx(a.id));
+  const ha = ticket(a.id).autoHuddle!.huddleId!;
+  await callTool("start_huddle", { reason: "data migration", maxCostUsd: 500 }, runCtx(b.id));
+  expect(ticket(b.id).autoHuddle).toMatchObject({ state: "waiting", maxCostUsd: AUTO_MAX_COST_USD });
+  writeSummary(a.id, ha);
+  await callTool("huddle_close", { reason: "landed" }, runCtx(a.id));
+  await until(() => sent.some((m) => m.id === b.id));
+  expect(sent.find((m) => m.id === b.id)!.text).toContain(`maxCostUsd ${AUTO_MAX_COST_USD}`);
 });
 
 test("one auto huddle per board: the second ticket waits for the slot and is woken when it frees", async () => {

@@ -44,6 +44,8 @@ export interface AutoHuddle {
   template: string;
   at: string;
   huddleId?: string | null;
+  /** Budget the run asked for (already capped); the slot wake passes it back to start_huddle. */
+  maxCostUsd?: number;
 }
 
 /** Worktree setup values detected from the board folder (see worktree-setup.ts). */

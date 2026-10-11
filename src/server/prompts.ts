@@ -69,9 +69,9 @@ export function autoHuddleRule(t: Pick<Ticket, "important">): string {
   return `# Auto huddle (review before landing)
 ${t.important ? "This ticket is marked ⭐ Important, so it gets a review huddle before you land it." : "Start a review huddle before you land this work if the change is risky: user-facing behaviour, data, security, payments or migrations. Small, low-risk changes don't need one; heavy tasks are split into tickets, not huddled."}
 - When: after the work is done and committed, BEFORE landing it (before pushing it, opening a PR or moving it on). At most once per run; never from a Planning chat (there, propose one with propose_huddle).
-- How: call the ckanban \`start_huddle\` tool with a one-line reason (it is posted on the ticket) and a template: \`auto-review-important\` when the ticket is ⭐ or the risk is security, data, payments or migrations; otherwise \`auto-review\`. Then end your turn with a short note, no result line needed: the board keeps the ticket In Progress and wakes you with the QA lead's consolidated findings. If the board says another auto huddle is running, end your turn the same way; the board wakes you when the slot frees.
+- How: call the ckanban \`start_huddle\` tool with a one-line reason (it is posted on the ticket) and a template: \`auto-review-important\` when the ticket is ⭐ or the risk is security, data, payments or migrations; otherwise \`auto-review\`. If the ticket asks for a huddle budget (e.g. "~$40"), pass it as \`maxCostUsd\` (capped at $100); without it the template's budget applies. Then end your turn with a short note, no result line needed: the board keeps the ticket In Progress and wakes you with the QA lead's consolidated findings. If the board says another auto huddle is running, end your turn the same way; the board wakes you when the slot frees.
 - Then: fix every MUST finding and commit, ask the same reviewer for one short re-check, then land the work as usual, write the huddle summary and close the huddle with \`huddle_close\`. List the SHOULD and COULD findings in your result summary.
-- Budget: the huddle stops at its cap. If it stops while MUST findings are still open, do NOT land: end with status "blocked" and a summary like "Auto huddle hit its $20 cap with N MUST findings open; not landed."`;
+- Budget: the huddle stops at its cap. If it stops while MUST findings are still open, do NOT land: end with status "blocked" and a summary like "Auto huddle hit its $N cap with N MUST findings open; not landed."`;
 }
 
 /** The section above, when the board has auto huddles on (absent: nothing). */
@@ -607,8 +607,8 @@ ${RESULT_RULE}`, { huddle: h.id })}`;
 }
 
 /** The board wakes a ticket that waited for the auto-huddle slot. */
-export function autoHuddleSlotPrompt(reason: string, template: string): string {
-  return context("Auto huddle slot free", `The other auto huddle on this board has ended, so the slot is free. If the work still needs its review, call the ckanban \`start_huddle\` tool now (template ${template}, reason: ${reason}) and end your turn; otherwise land it as usual.
+export function autoHuddleSlotPrompt(reason: string, template: string, maxCostUsd?: number): string {
+  return context("Auto huddle slot free", `The other auto huddle on this board has ended, so the slot is free. If the work still needs its review, call the ckanban \`start_huddle\` tool now (template ${template}${maxCostUsd !== undefined ? `, maxCostUsd ${maxCostUsd}` : ""}, reason: ${reason}) and end your turn; otherwise land it as usual.
 
 ${RESULT_RULE}`);
 }

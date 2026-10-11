@@ -160,6 +160,7 @@ export interface HuddleInfo {
   hostTitle: string | null;
   status: string;
   maxParticipants: number;
+  maxCostUsd?: number;
   participants: HuddleParticipantInfo[];
   findings: HuddleFinding[];
   seq: number;
@@ -336,7 +337,7 @@ export class BoardClient {
   huddleStatus = (slug: string, hid: string, status: HuddleStatusChange, reason: string | undefined, c: HuddleCaller, lessons?: HuddleLesson[]) =>
     this.req<HuddleParticipantInfo>("POST", `${this.h(slug, hid)}/status`, { status, reason, ...(lessons?.length ? { lessons } : {}) }, this.as(c));
   /** start_huddle: the host ticket's own unattended run starts its auto huddle, or waits for the board's slot. */
-  startAutoHuddle = (slug: string, input: { reason: string; template?: string; roster?: RosterEntry[] }, c: HuddleCaller) =>
+  startAutoHuddle = (slug: string, input: { reason: string; template?: string; roster?: RosterEntry[]; maxCostUsd?: number }, c: HuddleCaller) =>
     this.req<{ waiting: boolean; template: string; huddle: HuddleInfo | null }>("POST", `/api/profiles/${encodeURIComponent(slug)}/huddles/auto`, input, this.as(c));
   huddleCloseRequest = (slug: string, hid: string, reason: string, c: HuddleCaller) =>
     this.req<HuddleInfo>("POST", `${this.h(slug, hid)}/close-request`, { reason }, this.as(c));

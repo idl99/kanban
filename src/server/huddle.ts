@@ -82,6 +82,8 @@ export const BRIEF_MAX = 2000;
 const FINDING_TITLE = 100;
 const ACTIVITY_THROTTLE_MS = 1000;
 export const DEFAULT_MAX_COST_USD = 20;
+/** Most an auto huddle (start_huddle) may ask for; a run asking for more gets this. */
+export const AUTO_MAX_COST_USD = 100;
 export const DEFAULT_MAX_MESSAGES = 150;
 /** Messages (not system ones) since the user last posted or resumed before routing pauses. */
 export const AGENT_ONLY_MAX = 30;
@@ -837,7 +839,7 @@ export class Huddles {
    */
   create(
     slug: string, hostId: string, roster: RosterEntry[],
-    opts: { maxParticipants?: number; maxCostUsd?: number; template?: string; auto?: { reason: string } } = {},
+    opts: { maxParticipants?: number; maxCostUsd?: number; template?: string; auto?: { reason: string; askedCostUsd?: number } } = {},
   ): Huddle {
     const host = this.store.getTicket(slug, hostId);
     if (!host) throw new HuddleError(404, `ticket ${hostId} not found`);
@@ -851,6 +853,10 @@ export class Huddles {
     const max = Math.max(2, Math.min(32, Math.round(opts.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS)));
     if (opts.maxCostUsd !== undefined && !(Number.isFinite(opts.maxCostUsd) && opts.maxCostUsd > 0)) throw new HuddleError(400, "maxCostUsd must be a positive amount");
     const maxCostUsd = opts.maxCostUsd ?? tpl?.maxCostUsd ?? DEFAULT_MAX_COST_USD;
+    const asked = opts.auto?.askedCostUsd;
+    const budgetNote = opts.maxCostUsd === undefined ? (tpl?.maxCostUsd !== undefined ? " (template default)" : " (default)")
+      : asked !== undefined && asked > maxCostUsd ? ` (asked ${money(asked)}, capped at ${money(maxCostUsd)})`
+      : opts.auto ? " (asked by the ticket's run)" : "";
     const open = this.store.listHuddles(slug).find((h) => h.hostTicket === hostId && h.status !== "closed");
     if (open) throw new HuddleError(409, `ticket ${hostId} already has an open huddle (${open.id}); close it first`);
     const presets = this.presetMap(slug);
@@ -880,7 +886,7 @@ export class Huddles {
     }
     this.save(slug, h);
     this.bus.emit({ type: "huddle.updated", profile: slug, huddle: this.view(slug, h) });
-    this.system(slug, h.id, `${opts.auto ? "Auto huddle" : "Huddle"} started on ticket ${hostId} "${host.title}"${opts.auto ? ` by its own run (${opts.auto.reason})` : ""}${tpl ? ` from template ${tpl.label}` : ""} with ${agents.map((p) => `@${p.handle} (${p.role})`).join(", ")}. @main coordinates. Budget ${money(maxCostUsd)}.`);
+    this.system(slug, h.id, `${opts.auto ? "Auto huddle" : "Huddle"} started on ticket ${hostId} "${host.title}"${opts.auto ? ` by its own run (${opts.auto.reason})` : ""}${tpl ? ` from template ${tpl.label}` : ""} with ${agents.map((p) => `@${p.handle} (${p.role})`).join(", ")}. @main coordinates. Budget ${money(maxCostUsd)}${budgetNote}.`);
     for (const p of agents) this.kickoff(slug, h.id, p.handle);
     return this.get(slug, h.id);
   }
@@ -894,7 +900,7 @@ export class Huddles {
    * the card stays In Progress and freeSlot() wakes it when that one ends.
    */
   startAuto(
-    slug: string, hostId: string, input: { reason: string; template?: string; roster?: RosterEntry[] },
+    slug: string, hostId: string, input: { reason: string; template?: string; roster?: RosterEntry[]; maxCostUsd?: number },
   ): { huddle: Huddle | null; waiting: boolean; template: string } {
     const profile = this.store.getProfile(slug);
     const host = this.store.getTicket(slug, hostId);
@@ -902,6 +908,9 @@ export class Huddles {
     const reason = input.reason.trim().replace(/\s+/g, " ").slice(0, 200);
     if (!reason) throw new HuddleError(400, "reason is required: one line on why this work needs a review huddle");
     const propose = "; use propose_huddle to propose one to the user instead";
+    const asked = input.maxCostUsd;
+    if (asked !== undefined && !(Number.isFinite(asked) && asked > 0)) throw new HuddleError(400, "maxCostUsd must be a positive amount");
+    const maxCostUsd = asked === undefined ? undefined : Math.min(asked, AUTO_MAX_COST_USD);
     if (!autoHuddlesOn(profile)) throw new HuddleError(403, `auto huddles are off on board ${slug}${propose}`);
     if (!this.board.unattendedRun(slug, hostId)) {
       throw new HuddleError(403, `start_huddle only works in an unattended run of the ticket (Ready / In Progress work, a plan child, a schedule run), not in a chat${propose}`);
@@ -915,14 +924,14 @@ export class Huddles {
     const busy = this.liveAuto(slug).find((h) => h.hostTicket !== hostId);
     if (busy) {
       const at = host.autoHuddle?.state === "waiting" ? host.autoHuddle.at : nowIso();
-      this.board.setAutoHuddle(slug, hostId, { state: "waiting", reason, template: template || "custom", at, huddleId: null });
+      this.board.setAutoHuddle(slug, hostId, { state: "waiting", reason, template: template || "custom", at, huddleId: null, ...(maxCostUsd !== undefined ? { maxCostUsd } : {}) });
       if (host.autoHuddle?.state !== "waiting") this.store.addComment(slug, hostId, "ai", `Auto huddle wanted (${reason}); waiting for huddle slot: ticket ${busy.hostTicket} has the board's auto huddle.`);
       return { huddle: null, waiting: true, template: template || "custom" };
     }
     if (!this.board.claimAutoHuddle(slug, hostId)) {
       throw new HuddleError(409, "this run already started an auto huddle (one per run); finish with the findings you have");
     }
-    const h = this.create(slug, hostId, input.roster ?? [], { template: template || undefined, auto: { reason } });
+    const h = this.create(slug, hostId, input.roster ?? [], { template: template || undefined, maxCostUsd, auto: { reason, askedCostUsd: asked } });
     if (this.slotWoken.get(slug) === hostId) this.slotWoken.delete(slug);
     this.board.setAutoHuddle(slug, hostId, { state: "live", reason, template: template || "custom", at: h.createdAt, huddleId: h.id });
     this.store.addComment(slug, hostId, "ai", `Auto huddle started (${template || "custom roster"}): ${reason}`);
@@ -978,7 +987,7 @@ export class Huddles {
     this.slotWoken.set(slug, next.id);
     // It no longer waits: its run takes the slot with start_huddle, or lands without one.
     this.board.setAutoHuddle(slug, next.id, null, { lastActivity: "Huddle slot free: resuming" });
-    this.board.chat(slug, next.id, autoHuddleSlotPrompt(a.reason, a.template), { hostWake: true }).catch((e) => {
+    this.board.chat(slug, next.id, autoHuddleSlotPrompt(a.reason, a.template, a.maxCostUsd), { hostWake: true }).catch((e) => {
       this.slotWoken.delete(slug);
       this.board.setAutoHuddle(slug, next.id, a);
       console.error(`couldn't wake ${slug}/${next.id} for the auto-huddle slot`, e);
