@@ -82,7 +82,15 @@ const idle = async () => {
 /** What each session read, by huddle agent handle (or session id for ticket sessions). */
 function heard(): { who: string; text: string }[] {
   if (!existsSync(heardFile)) return [];
-  return readFileSync(heardFile, "utf8").trim().split("\n").map((l) => JSON.parse(l)).map((x) => ({ who: x.env?.split("/")[1] ?? x.session, text: x.text }));
+  // A line still being written (fake claudes append concurrently) is skipped until it's complete.
+  const parse = (l: string) => {
+    try {
+      return [JSON.parse(l)];
+    } catch {
+      return [];
+    }
+  };
+  return readFileSync(heardFile, "utf8").trim().split("\n").flatMap(parse).map((x) => ({ who: x.env?.split("/")[1] ?? x.session, text: x.text }));
 }
 const heardBy = (who: string) => heard().filter((x) => x.who === who).map((x) => x.text);
 const processes = () => (existsSync(argsFile) ? readFileSync(argsFile, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
