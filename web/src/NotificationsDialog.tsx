@@ -10,6 +10,7 @@ const KINDS: { kind: NotifyKind; label: string }[] = [
   { kind: "proposal", label: "Proposal to review" },
   { kind: "review", label: "Ready for review" },
   { kind: "failed", label: "Run failed" },
+  { kind: "stalled", label: "Run stalled (no output)" },
   { kind: "limit", label: "Usage limit hit" },
   { kind: "blocked", label: "Blocked / plan stuck" },
   { kind: "huddle", label: "Huddle asks you" },

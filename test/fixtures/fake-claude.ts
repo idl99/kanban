@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 // Fake `claude` CLI for tests. Behaviour controlled by env:
-// FAKE_MODE=ok|fail|limit|budget|slow|partial|blocked|noresult|background|bgsilent|asks|nosession, FAKE_PR=<url>, FAKE_ARGS_FILE=<path to append argv JSON>
+// FAKE_MODE=ok|fail|limit|budget|slow|partial|blocked|noresult|background|bgsilent|asks|nosession|overloaded|badrequest|silent, FAKE_PR=<url>, FAKE_ARGS_FILE=<path to append argv JSON>
+// FAKE_ONCE_FILE=<path>: overloaded/silent only misbehave on the first run (the file marks it); later runs are ok.
+// FAKE_SILENT_MS: how long silent mode goes quiet after init before carrying on (default 30s).
 // FAKE_HEARD_FILE=<path>: appends {session, text} for every user message it reads (huddle routing tests).
 // FAKE_NO_SAVE=1: stopped before the session transcript is saved (under CLAUDE_CONFIG_DIR, like the real CLI).
 // FAKE_TRANSCRIPT=1: it also thinks, runs a Bash call and posts to its huddle, and writes what it emits to the transcript.
@@ -118,6 +120,21 @@ if (mode === "budget" && args.includes("--max-budget-usd")) {
   emit({ type: "result", subtype: "error_max_budget_usd", is_error: true, terminal_reason: "budget_exhausted", total_cost_usd: 0.06, session_id: sessionId, errors: [`Reached maximum budget ($${cap})`] });
   process.exit(1);
 }
+// First run only with FAKE_ONCE_FILE (later runs behave): a passing API error or a silence.
+const onceFile = process.env.FAKE_ONCE_FILE;
+const firstTime = !onceFile || !existsSync(onceFile);
+if (onceFile && firstTime) appendFileSync(onceFile, "1");
+// The real CLI giving up on an overloaded API (or a lasting 400): a synthetic API-error message, an is_error result, exit 1.
+if ((mode === "overloaded" && firstTime) || mode === "badrequest") {
+  const [text, status] = mode === "overloaded"
+    ? ["API Error: 529 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}", 529]
+    : ["API Error: 400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"prompt is too long\"}}", 400];
+  emit({ type: "assistant", message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text }] }, error: "unknown", is_api_error_message: true });
+  emit({ type: "result", subtype: "success", is_error: true, api_error_status: status, result: text, session_id: sessionId });
+  process.exit(1);
+}
+// A hung tool call: no output at all for a while.
+if (mode === "silent" && firstTime) await Bun.sleep(Number(process.env.FAKE_SILENT_MS ?? 30000));
 
 // one event split across two chunks to exercise line buffering
 const split = JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Edit", input: { file_path: `${process.cwd()}/src/app.ts` } }] } }) + "\n";

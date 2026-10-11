@@ -35,7 +35,7 @@ export const DEFAULT_NOTIFY: NotifySettings = {
   webhookUrl: "",
   format: "auto",
   mac: true,
-  kinds: { questions: true, proposal: true, review: true, failed: true, limit: true, blocked: true, huddle: true, reply: false },
+  kinds: { stalled: true, questions: true, proposal: true, review: true, failed: true, limit: true, blocked: true, huddle: true, reply: false },
 };
 
 /** Settings in `<root>/notify.json`; defaults for anything missing or invalid. */
@@ -109,7 +109,7 @@ export function headerValue(s: string): string {
 }
 
 const NTFY_TAGS: Record<AttentionKind, string> = {
-  questions: "question", proposal: "memo", review: "eyes", failed: "x", limit: "hourglass", blocked: "no_entry", huddle: "speech_balloon", reply: "speech_balloon",
+  stalled: "warning", questions: "question", proposal: "memo", review: "eyes", failed: "x", limit: "hourglass", blocked: "no_entry", huddle: "speech_balloon", reply: "speech_balloon",
 };
 
 /** The webhook request: ntfy (plain text body, Title/Click/Tags headers) or JSON {board, ticketId, title, kind, url}. */

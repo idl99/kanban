@@ -20,7 +20,8 @@ import { run as runCmd } from "./git";
 import { parseResult } from "./result";
 import { AUTO_CONTINUE_PER_DAY, clockTime, CONTINUE_TEXT, dayKey, limitMessage, parseReset } from "./limit";
 import { DraftTracker } from "./draft";
-import { buildArgs, startRun, type RunHandle } from "./runner";
+import { buildArgs, DEFAULT_STALL_MINUTES, startRun, type RunHandle } from "./runner";
+import { RETRY_DELAY_MS, RETRY_TEXT, transientError } from "./retry";
 import { BOARD_COMMANDS, commandText, listCommands, MODEL_HELP, parseSlash, REFUSED_COMMANDS, rememberInit, slashMessage, useBundledFile, validModel, type SlashCommand } from "./commands";
 import { mcpConfig } from "./agents";
 import type { OwnedSession } from "./shell";
@@ -45,6 +46,10 @@ export interface BoardOptions {
   sessionSummary?: (sessionId: string) => SessionSummary | null;
   /** The clock for usage-limit resets and the daily auto-continue cap (tests pass a fake one). */
   now?: () => Date;
+  /** Pause before the one automatic retry after a passing API error (default RETRY_DELAY_MS; tests pass a short one). */
+  retryDelayMs?: number;
+  /** Stall watchdog time in ms, overriding the board's stallMinutes (tests). */
+  stallMs?: number;
 }
 
 interface ActiveRun {
@@ -70,6 +75,10 @@ interface ActiveRun {
     /** A wake for the ticket's own auto huddle (see QueuedMessage.hostWake): a full prompt, run as the ticket's work. */
     hostWake?: boolean;
   };
+  /** This message's run already got its one automatic retry after a passing API error. */
+  retried?: boolean;
+  /** The user chose Restart on a stalled run: once it is stopped, it resumes in the same session. */
+  restartRequested?: boolean;
   /** This run started an auto huddle (start_huddle): one per run. */
   autoHuddleStarted?: boolean;
   /** Queued messages (ticket.queued) written to this claude process, keyed by id, with the text it was given. */
@@ -149,6 +158,8 @@ function takesSlot(chat?: ActiveRun["chat"]): boolean {
 }
 
 const ACTIVITY_THROTTLE_MS = 1000;
+/** What a stalled run's session is told when the user restarts it. */
+const STALL_RESTART_TEXT = "Your previous run stopped responding and the user restarted it. Continue where you left off.";
 /** A requested restart waits this long for active runs to finish, then restarts anyway (recover() resumes them). */
 export const RESTART_MAX_WAIT_MS = 10 * 60_000;
 const DRAFT_THROTTLE_MS = 120;
@@ -559,7 +570,7 @@ export class Board {
         // Tell the UI the run is over (earlier updates were sent while it was still registered).
         const now = this.store.getTicket(slug, id);
         if (now && !this.shuttingDown) {
-          if (now.runStartedAt || now.interrupted || now.waitingOn) this.patch(slug, id, { runStartedAt: null, interrupted: null, waitingOn: null });
+          if (now.runStartedAt || now.interrupted || now.waitingOn || now.stalled) this.patch(slug, id, { runStartedAt: null, interrupted: null, waitingOn: null, stalled: null });
           else this.emitTicket(slug, now);
         }
         // When the user moved the card, updateTicket() writes the new status and dispatches itself.
@@ -570,10 +581,10 @@ export class Board {
 
   private begin(run: ActiveRun) {
     this.patch(run.slug, run.id, run.chat?.quiet
-      ? { error: null, lastActivity: "Claude is replying…", runStartedAt: nowIso(), waitingOn: null }
+      ? { error: null, lastActivity: "Claude is replying…", runStartedAt: nowIso(), waitingOn: null, stalled: null }
       : run.chat?.mode === "refine"
-      ? { error: null, lastActivity: "Claude is replying…", refineStarted: true, runStartedAt: nowIso(), waitingOn: null }
-      : { status: "in_progress", outcome: null, error: null, limit: null, capHit: null, lastActivity: "Starting…", runStartedAt: nowIso(), waitingOn: null });
+      ? { error: null, lastActivity: "Claude is replying…", refineStarted: true, runStartedAt: nowIso(), waitingOn: null, stalled: null }
+      : { status: "in_progress", outcome: null, error: null, limit: null, capHit: null, lastActivity: "Starting…", runStartedAt: nowIso(), waitingOn: null, stalled: null });
   }
 
   /** One claude run, then a chat reply for each message that came in too late for it. */
@@ -597,6 +608,8 @@ export class Board {
         return;
       }
       run.chat = chat;
+      run.retried = false;
+      run.restartRequested = false;
       run.promptMsgId = next.id;
       run.inFlight = new Map();
       run.handle = null;
@@ -611,8 +624,13 @@ export class Board {
     return { status: run.targetStatus ?? run.chat?.returnTo ?? "review" };
   }
 
-  /** healed: this is the one retry in a new session after Claude could not find the old one. */
-  private async executeOnce(run: ActiveRun, healed = false): Promise<void> {
+  /**
+   * healed: this is the one retry in a new session after Claude could not find the old one.
+   * resume: the board continues this run's own work in its session (a passing API error, a stall restart) with this
+   * text as the whole prompt; the run otherwise ends as the one it continues (result line, column, card). Without a
+   * saved session (it hung before Claude saved one) there is nothing to continue: the run starts over with its prompt.
+   */
+  private async executeOnce(run: ActiveRun, healed = false, resumeText?: string): Promise<void> {
     const { slug, id } = run;
     const startedAt = nowIso();
     let session: { dir: string; sessionId: string; existed: boolean; isGit: boolean };
@@ -644,6 +662,7 @@ export class Board {
     }
 
     const t = this.store.getTicket(slug, id)!;
+    const resume = session.existed ? resumeText : undefined;
     const refine = run.chat?.mode === "refine";
     // A reply to another ticket's Claude: not a run of this ticket's own work.
     const quiet = !!run.chat?.quiet;
@@ -653,7 +672,7 @@ export class Board {
     const outputDir = this.store.outputsDir(slug, id);
     // Start fresh session: a work run in a new session that picks up from the branch (until that session exists).
     const fresh = !!t.freshSession && !run.chat;
-    let prompt = withSetup(localizeImages(run.chat?.raw
+    let prompt = resume ?? withSetup(localizeImages(run.chat?.raw
       ? run.chat.text
       : run.chat
       ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir, !!profile.artifacts)
@@ -670,7 +689,7 @@ export class Board {
     // it as arguments (the board's note too). So the command goes alone and the board's instructions go in
     // the system prompt for this run.
     let systemPrompt: string | undefined;
-    if (run.chat?.slash) {
+    if (run.chat?.slash && !resume) {
       const cut = prompt.indexOf("\n\n<ckanban-context");
       if (cut >= 0) {
         systemPrompt = `The user's message in this turn is a slash command sent from the kanban board's ticket chat. The board's instructions for this run:\n\n${prompt.slice(cut + 2)}`;
@@ -693,13 +712,14 @@ export class Board {
     const cap = refine || quiet ? null : runCapFor(t, profile);
     if (!refine && !quiet && t.capNextUsd) this.patch(slug, id, { capNextUsd: null });
     // Marks where this run starts in the log and what it was (the Usage tab lists runs by kind).
-    this.store.appendActivity(slug, id, runNo, { type: "ckanban_run", kind: refine ? "planning" : quiet ? "reply" : run.chat ? "chat" : "work" });
+    // A resumed attempt (retry, stall restart) continues the same run in the log.
+    if (!resumeText) this.store.appendActivity(slug, id, runNo, { type: "ckanban_run", kind: refine ? "planning" : quiet ? "reply" : run.chat ? "chat" : "work" });
     run.handle = startRun({
       bin: this.opts.claudeBin,
       cwd: session.dir,
       args: buildArgs(session.sessionId, session.existed, t.model ?? profile.model, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, cap),
       input: prompt,
-      inputLocal: run.chat?.slash === "local",
+      inputLocal: run.chat?.slash === "local" && !resume,
       planning: refine,
       // CKANBAN_TICKET marks board runs: the ckanban MCP/CLI refuses board changes there (no runs starting runs).
       env: { CKANBAN_OUTPUT_DIR: outputDir, CKANBAN_TICKET: `${slug}/${id}` },
@@ -736,6 +756,18 @@ export class Board {
           this.patch(slug, id, { lastActivity: s });
         }
       },
+      stallMs: this.stallMs(profile),
+      onStall: (stalled) => {
+        if (this.shuttingDown || !this.store.getTicket(slug, id)) return;
+        if (!stalled) {
+          if (this.store.getTicket(slug, id)?.stalled) this.patch(slug, id, { stalled: null });
+          return;
+        }
+        if (run.stopRequested) return;
+        const minutes = Math.max(1, Math.round(this.stallMs(profile) / 60_000));
+        // The Notifier sees the new "stalled" attention and tells the user (webhook / macOS banner).
+        this.patch(slug, id, { stalled: { at: nowIso(), minutes } });
+      },
       onWaiting: (tasks) => {
         if (run.stopRequested || this.shuttingDown) return;
         const what = !tasks ? null : tasks.length === 1 ? `Waiting for background task: ${tasks[0].description}` : `Waiting for ${tasks.length} background tasks`;
@@ -745,7 +777,7 @@ export class Board {
     });
 
     // A local command is never echoed back: it was read once it was written.
-    if (run.chat?.slash === "local" && run.promptMsgId) {
+    if (run.chat?.slash === "local" && !resume && run.promptMsgId) {
       this.dropQueued(slug, id, [run.promptMsgId]);
       run.promptMsgId = undefined;
     }
@@ -768,12 +800,20 @@ export class Board {
       || out.events.some((e) => (e?.type === "system" && e.subtype === "init") || e?.type === "assistant");
     const base: Partial<Ticket> = {
       ...this.endStatus(run),
+      stalled: null,
       sessionStarted: started,
       ...(fresh && started ? { freshSession: false } : {}),
       ...(refine || quiet ? {} : { lastRunAt: startedAt, runCount: runNo }),
       lastActivity: pendingActivity ?? this.store.getTicket(slug, id)?.lastActivity ?? null,
     };
 
+    // Restart on a stalled run: the stuck process is gone, now the same session picks the work up again.
+    if (run.handle.stopped && run.restartRequested && !run.stopRequested) {
+      run.restartRequested = false;
+      this.store.addComment(slug, id, "ai", "Restarted the stalled run: it continues in the same session.");
+      this.patch(slug, id, { sessionStarted: started, stalled: null, lastActivity: "Restarting…" });
+      return this.executeOnce(run, healed, STALL_RESTART_TEXT);
+    }
     if (run.handle.stopped) {
       this.store.addComment(slug, id, "ai", "Run stopped by user.");
       this.patch(slug, id, { ...base, outcome: "stopped", error: null, lastActivity: null, ...this.dropAutoWait(slug, id) });
@@ -797,6 +837,23 @@ export class Board {
         console.log(`ticket ${slug}/${id}: session ${session.sessionId} not found, starting a new one`);
         this.patch(slug, id, { sessionId: crypto.randomUUID(), sessionStarted: false, error: null });
         return this.executeOnce(run, true);
+      }
+      // A passing API problem (overloaded, a 5xx, a dropped connection): resume the same session once after a pause.
+      const transient = run.retried || run.stopRequested ? null : transientError(out.events, out.stderr);
+      if (transient) {
+        run.retried = true;
+        const delay = this.opts.retryDelayMs ?? RETRY_DELAY_MS;
+        const line = transient.split("\n").findLast((l) => l.trim())?.trim().slice(0, 200) ?? transient;
+        this.store.addComment(slug, id, "ai", `Run hit a temporary API error (${line}). Retrying once in ${Math.max(1, Math.round(delay / 1000))}s in the same session.`);
+        this.patch(slug, id, { sessionStarted: started, error: null, lastActivity: "Temporary API error, retrying shortly…" });
+        await Bun.sleep(delay);
+        if (this.shuttingDown) return;
+        if (run.stopRequested) {
+          this.store.addComment(slug, id, "ai", "Run stopped by user.");
+          this.patch(slug, id, { ...base, outcome: "stopped", error: null, lastActivity: null, ...this.dropAutoWait(slug, id) });
+          return;
+        }
+        return this.executeOnce(run, healed, RETRY_TEXT);
       }
       // Claude reports a lost session only in its result event: keep it in the error so the UI offers Start fresh session.
       const shown = sessionMissing(error, out.events) && !sessionMissing(error, []) ? `No conversation found with session ID: ${session.sessionId}` : error;
@@ -845,6 +902,41 @@ export class Board {
       prUrl: run.chat?.raw && !run.chat.hostWake ? current.prUrl : result?.prUrl ?? current.prUrl,
       error: null,
     });
+  }
+
+  /** The watchdog time for this board's runs in ms (0: off). */
+  private stallMs(profile: Profile): number {
+    if (this.opts.stallMs !== undefined) return this.opts.stallMs;
+    const m = profile.stallMinutes ?? DEFAULT_STALL_MINUTES;
+    return m > 0 ? m * 60_000 : 0;
+  }
+
+  /**
+   * The Inbox's answer to a stalled run. stop: as Stop. wait: clear the flag, the watchdog counts again. restart: stop the
+   * stuck process and resume the same session.
+   */
+  stallAction(slug: string, id: string, action: "stop" | "wait" | "restart"): Ticket {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    const run = this.runs.get(this.key(slug, id));
+    if (!run?.handle) {
+      if (t.stalled) return this.patch(slug, id, { stalled: null });
+      throw new Error("this ticket has no running run");
+    }
+    // A stale card (or a second click) must not stop or restart a run that is working again.
+    if (!t.stalled || run.restartRequested) throw new Error("this run is not stalled anymore");
+    if (action === "stop") {
+      this.stopRun(run);
+    } else if (action === "wait") {
+      run.handle.keepWaiting();
+      this.store.addComment(slug, id, "ai", "Kept waiting on the stalled run.");
+      if (t.stalled) this.patch(slug, id, { stalled: null });
+    } else {
+      run.restartRequested = true;
+      this.patch(slug, id, { lastActivity: "Restarting…" });
+      run.handle.stop();
+    }
+    return this.store.getTicket(slug, id)!;
   }
 
   private now(): Date {

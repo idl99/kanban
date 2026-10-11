@@ -6,6 +6,7 @@ import { KeyHint } from "./KeyHint";
 import { CapActions } from "./CapActions";
 import { capWait } from "./capText";
 import { LimitActions } from "./LimitActions";
+import { StallActions, stallWait } from "./StallActions";
 import { limitLabel, limitWait } from "./limitText";
 import { ResourceChip, resourceWait } from "./Needs";
 import { currentPr, prChips } from "./prText";
@@ -90,7 +91,8 @@ function HuddleBadge({ badge, onOpen }: { badge: CardHuddleBadge; onOpen?: (tick
 /**
  * queued: 1-based place in the queue for a free run slot (status `ready`, or a reply waiting for one). held: a pending daemon restart holds it.
  * huddle: what the card says about huddles; onOpenHuddle opens a ticket's Huddle tab.
- * limit: the board's slug and error toast, for the usage-limit buttons ("Continue now", auto-continue).
+ * limit: the board's slug and error toast, for the usage-limit buttons ("Continue now", auto-continue) and a stalled
+ * run's Stop / Keep waiting / Restart.
  */
 export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHuddle, limit }: {
   ticket: Ticket; onClick?: () => void; dragging?: boolean; queued?: number; held?: boolean;
@@ -174,6 +176,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
       )}
       {limit && !dragging && limitWait(ticket) && <LimitActions slug={limit.slug} ticket={ticket} onError={limit.onError} small />}
       {limit && !dragging && capWait(ticket) && <CapActions slug={limit.slug} ticket={ticket} onError={limit.onError} small />}
+      {limit && !dragging && stallWait(ticket) && <StallActions slug={limit.slug} ticket={ticket} onError={limit.onError} small />}
     </article>
   );
 }

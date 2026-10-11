@@ -615,6 +615,11 @@ export function createServer(deps: ServerDeps) {
           next.runCapUsd = capValue(b.runCapUsd, true) || null;
         }
         if (b.artifacts !== undefined) next.artifacts = !!b.artifacts;
+        if (b.stallMinutes !== undefined) {
+          const n = b.stallMinutes;
+          if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > 1440) throw new HttpError(400, "stallMinutes must be a whole number of minutes from 0 (off) to 1440");
+          next.stallMinutes = n;
+        }
         if (b.setupDetected !== undefined) next.setupDetected = b.setupDetected && typeof b.setupDetected === "object" ? b.setupDetected : null;
         if (next.path !== profile.path) shells.kill(slug);
         store.saveProfile(next);
@@ -1154,6 +1159,17 @@ export function createServer(deps: ServerDeps) {
       } catch (e) {
         if (e instanceof ConflictError) throw e;
         throw new HttpError(400, (e as Error).message);
+      }
+    }
+    // Stalled run (no output for the board's stall time): Stop, Keep waiting or Restart in the same session.
+    if (m === "POST" && action === "stall") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can stop, keep waiting on or restart a stalled run");
+      const b = await body(req);
+      if (b.action !== "stop" && b.action !== "wait" && b.action !== "restart") throw new HttpError(400, "action must be stop, wait or restart");
+      try {
+        return json(view(profile, board.stallAction(slug, id, b.action)));
+      } catch (e) {
+        throw new HttpError(409, (e as Error).message);
       }
     }
     // Usage limit: "Continue now" (action: continue), or "Don't auto-continue" / "Auto-continue" (auto: boolean).

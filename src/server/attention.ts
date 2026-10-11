@@ -3,7 +3,7 @@ import type { SessionSummary } from "./session";
 import type { Store } from "./store";
 import type { Ticket } from "./types";
 
-export type AttentionKind = "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
+export type AttentionKind = "stalled" | "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
 
 /**
  * Why a ticket is waiting on the user, or null if it isn't. This one rule drives every "needs you": the card's
@@ -63,6 +63,8 @@ export function attentionFor(
   // Done means accepted as-is; Backlog means parked. Neither waits on the user, whatever the session holds.
   if (t.status === "done") return null;
   const since = lastChange(t, s);
+  // A run that went silent: still running, but only the user can tell a hung tool from a slow one.
+  if (t.stalled && running) return { kind: "stalled", label: `Stalled · no output for ${t.stalled.minutes} min`, since: t.stalled.at };
   if (t.plan?.state === "stuck" && !o.planComplete) return { kind: "blocked", label: "Plan stuck", since: t.updatedAt };
   if (running || t.status === "in_progress") return null;
   // A running plan's planner and children are handled unattended; the plan pings the user when stuck.

@@ -37,6 +37,9 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
   const cap = parseCap(capText);
   const capError = cap === undefined ? "An amount in $, e.g. 5 (empty: no cap)" : null;
   const [artifacts, setArtifacts] = useState(!!profile?.artifacts);
+  const [stallText, setStallText] = useState(String(profile?.stallMinutes ?? 20));
+  const stallMinutes = Number(stallText);
+  const stallError = /^\d+$/.test(stallText.trim()) && stallMinutes <= 1440 ? null : "Minutes from 0 (off) to 1440";
   const [claudeModel, setClaudeModel] = useState<string | null>(null);
   const [recent, setRecent] = useState<ClaudeProject[] | null>(null);
   const [filter, setFilter] = useState("");
@@ -86,12 +89,12 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (saving || maxParallelError || capError) return;
+    if (saving || maxParallelError || capError || (profile && stallError)) return;
     setSaving(true);
     try {
       const p = profile
         ? await api.updateProfile(profile.slug, {
-          name, path, maxParallel, model: model || null, autoHuddles, runCapUsd: cap || null, artifacts,
+          name, path, maxParallel, model: model || null, autoHuddles, runCapUsd: cap || null, artifacts, stallMinutes,
           // A file typed but not yet added with Enter still counts.
           copyFiles: newFile.trim() && !copyFiles.includes(newFile.trim()) ? [...copyFiles, newFile.trim()] : copyFiles,
           setupCommand: setupCommand.trim(), cleanupCommand: cleanupCommand.trim(), setupDetected: detected,
@@ -235,6 +238,14 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
                 aria-invalid={!!capError} aria-describedby={capError ? "cap-error" : undefined} />
               {capError && <span id="cap-error" className="field-error">{capError}</span>}
             </label>
+            <label>
+              Flag a run as stalled after (minutes without output)
+              <input type="number" min={0} max={1440} step={1} value={stallText} onChange={(e) => setStallText(e.target.value)}
+                aria-invalid={!!stallError} aria-describedby={stallError ? "stall-error" : "stall-hint"} />
+              {stallError
+                ? <span id="stall-error" className="field-error">{stallError}</span>
+                : <span id="stall-hint" className="muted small">A silent run lands in the Inbox with Stop / Keep waiting / Restart; nothing is killed. Runs waiting on background tasks don't count. 0: off.</span>}
+            </label>
             <div className="form-section">
               <span>Worktree setup</span>
               <button type="button" className="btn small ghost link" onClick={detectAgain} disabled={detecting}>
@@ -293,7 +304,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
           )}
           <div className="spacer" />
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={saving || !name.trim() || !path.trim() || !!maxParallelError || !!capError}>
+          <button type="submit" className="btn primary" disabled={saving || !name.trim() || !path.trim() || !!maxParallelError || !!capError || (!!profile && !!stallError)}>
             {saving ? (profile ? "Saving…" : "Creating…") : profile ? "Save" : "Create board"}
           </button>
         </div>

@@ -4,6 +4,7 @@ import { outcomeBadge } from "./Card";
 import { CapActions } from "./CapActions";
 import { capLabel, capWait } from "./capText";
 import { LimitActions } from "./LimitActions";
+import { StallActions, stallWait } from "./StallActions";
 import { limitHint, limitLabel, limitWait } from "./limitText";
 import { branchTicket } from "./branch";
 import { BugReportDialog } from "./BugReportDialog";
@@ -671,6 +672,15 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                   <span>The run spent its budget before it finished. Continue it in the same session with more, or change the cap in ⋯.</span>
                 </div>
                 <CapActions slug={slug} ticket={ticket} onError={onError} small />
+              </div>
+            )}
+            {stallWait(ticket) && (
+              <div className="banner warn inline limit-banner" role="status">
+                <div className="limit-text">
+                  <strong>Stalled · no output for {ticket.stalled!.minutes} min</strong>
+                  <span>A tool call may be stuck, or it's just a long step. Nothing is killed unless you choose to.</span>
+                </div>
+                <StallActions slug={slug} ticket={ticket} onError={onError} small />
               </div>
             )}
             <nav className="tabs" role="tablist" aria-label="Ticket">

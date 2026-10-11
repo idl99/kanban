@@ -18,6 +18,8 @@ export interface RunHandle {
   send(text: string, opts?: { local?: boolean }): boolean;
   /** A run started with idleMs: stop keeping input open, and end it now if Claude is idle. */
   endWhenIdle(): void;
+  /** A stalled run (see stallMs): the user chose Keep waiting, so the watchdog starts counting again. */
+  keepWaiting(): void;
   readonly stopped: boolean;
 }
 
@@ -25,6 +27,8 @@ export interface RunHandle {
 export const BACKGROUND_GRACE_MS = 10_000;
 /** How long a monitor-mode huddle session stays open between turns before it exits (later messages resume it). */
 export const MONITOR_IDLE_MS = 30 * 60_000;
+/** Board setting "Stall after": minutes without stream output before a run counts as stalled (0: never). */
+export const DEFAULT_STALL_MINUTES = 20;
 const TASK_DONE = new Set(["completed", "failed", "killed", "stopped"]);
 
 const STDERR_TAIL = 2048;
@@ -139,6 +143,12 @@ export function startRun(opts: {
    * mode); then end it. 0/undefined: end input as soon as Claude is idle with nothing unread.
    */
   idleMs?: number;
+  /**
+   * Watchdog: no stream output for this long marks the run stalled (onStall(true)); output resumes it (onStall(false)).
+   * Nothing is killed. A run waiting on background tasks or idling between turns (idleMs) is exempt. 0/undefined: off.
+   */
+  stallMs?: number;
+  onStall?: (stalled: boolean) => void;
 }): RunHandle {
   let stopped = false;
   let proc: ReturnType<typeof Bun.spawn> | null = null;
@@ -164,6 +174,30 @@ export function startRun(opts: {
     idleTimer = null;
   };
   const quiet = () => idle && unread === 0 && !tasks.size;
+  let stalled = false;
+  let stallTimer: ReturnType<typeof setTimeout> | null = null;
+  const clearStall = () => {
+    if (stallTimer) clearTimeout(stallTimer);
+    stallTimer = null;
+  };
+  /** (Re)start the watchdog: called on every line of output, and when the user chose Keep waiting. */
+  const armStall = () => {
+    if (!opts.stallMs) return;
+    clearStall();
+    stallTimer = setTimeout(() => {
+      stallTimer = null;
+      // Declared background tasks and an open idle window are silent on purpose: keep watching, don't flag them.
+      if (tasks.size || idleTimer || !proc) return armStall();
+      stalled = true;
+      opts.onStall?.(true);
+    }, opts.stallMs);
+  };
+  const outputSeen = () => {
+    armStall();
+    if (!stalled) return;
+    stalled = false;
+    opts.onStall?.(false);
+  };
   /** Claude is done and nothing is waiting: end input (so the process exits), or wait idleMs for more messages first. */
   const finish = () => {
     if (!keepMs) return closeInput();
@@ -219,6 +253,7 @@ export function startRun(opts: {
       return { code: -1, stderr: `failed to start ${opts.bin}: ${(e as Error).message}`, events };
     }
     const p = proc;
+    armStall();
     if (opts.input !== undefined) {
       stdin = p.stdin as import("bun").FileSink;
       write(opts.input, opts.inputLocal);
@@ -244,6 +279,7 @@ export function startRun(opts: {
       let buf = "";
       const handleLine = (line: string) => {
         if (!line.trim()) return;
+        outputSeen();
         let ev: any;
         try {
           ev = JSON.parse(line);
@@ -293,6 +329,11 @@ export function startRun(opts: {
 
     const stderrText = new Response(p.stderr as ReadableStream).text();
     const [code, stderr] = await Promise.all([p.exited, stderrText, readStdout]);
+    clearStall();
+    if (stalled) {
+      stalled = false;
+      opts.onStall?.(false);
+    }
     closeInput();
     idle = false;
     report();
@@ -305,6 +346,11 @@ export function startRun(opts: {
     endWhenIdle() {
       keepMs = 0;
       if (idleTimer && quiet()) closeInput();
+    },
+    keepWaiting() {
+      if (!stalled) return;
+      stalled = false;
+      armStall();
     },
     get stopped() {
       return stopped;

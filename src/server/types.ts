@@ -33,6 +33,8 @@ export interface Profile {
   runCapUsd?: number | null;
   /** Runs are taught the claude.ai artifact helper (publish/read artifacts). Missing: off. */
   artifacts?: boolean;
+  /** Minutes without stream output before a run counts as stalled (the Inbox asks what to do). 0: off. Missing: 20. */
+  stallMinutes?: number;
 }
 
 /** Board setting "Auto huddles": on unless turned off. */
@@ -97,6 +99,11 @@ export interface Ticket {
   lastRunAt: string | null;
   /** When the current run or chat reply started; null when Claude is not working. Missing on old tickets. */
   runStartedAt?: string | null;
+  /**
+   * The current run has sent no output for the board's stallMinutes (and waits on no background task): the Inbox asks
+   * the user to Stop, Keep waiting or Restart. Cleared when output resumes or the run ends.
+   */
+  stalled?: { at: string; minutes: number } | null;
   /** Claude ended its turn and waits for these background tasks; it resumes when they finish. */
   waitingOn?: BackgroundTask[] | null;
   runCount: number;

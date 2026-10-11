@@ -81,7 +81,7 @@ export interface QuickChat {
   title: string | null;
 }
 
-export type AttentionKind = "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
+export type AttentionKind = "stalled" | "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
 /** Why a ticket needs you (one server rule for cards, counts and the Inbox); since: when it started waiting. */
 export interface Attention {
   kind: AttentionKind;
@@ -110,6 +110,8 @@ export interface Profile {
   /** Spending cap per run in USD for its tickets' work runs; missing/null: none. */
   runCapUsd?: number | null;
   artifacts?: boolean;
+  /** Minutes without output before a run counts as stalled; 0: off. Missing: 20. */
+  stallMinutes?: number;
   pathExists?: boolean;
   running?: number;
 }
@@ -169,6 +171,8 @@ export interface Ticket {
   interrupted?: { at: string; partial?: string; held?: boolean } | null;
   /** A chat reply waiting for a free run slot: shown queued in In Progress. */
   slotWait?: { at: string; from: { status: Status; outcome: Outcome } } | null;
+  /** The run has sent no output for the board's stall time: Stop, Keep waiting or Restart. */
+  stalled?: { at: string; minutes: number } | null;
   /** Set with outcome "limit": when it resets and whether the board sends "continue" then. */
   limit?: { resetAt: string; auto: boolean; capped?: boolean; at: string; message: string } | null;
   /** false: automatic continues after the usage limit are off for this ticket. */
@@ -796,7 +800,7 @@ export interface RemoteState {
 }
 
 /** "Needs you" notifications (src/server/notify.ts): webhook (ntfy or JSON), macOS banner, per-kind toggles. */
-export type NotifyKind = "questions" | "proposal" | "review" | "failed" | "limit" | "blocked" | "huddle" | "reply";
+export type NotifyKind = "stalled" | "questions" | "proposal" | "review" | "failed" | "limit" | "blocked" | "huddle" | "reply";
 export interface NotifyState {
   webhookUrl: string;
   format: "auto" | "ntfy" | "json";
@@ -1058,6 +1062,8 @@ export const api = {
   prSendFailures: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/send-failures`),
   prResolveConflicts: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/resolve-conflicts`),
   prMerge: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/merge`),
+  /** Stalled run: stop it, keep waiting, or restart it in the same session. */
+  stall: (slug: string, id: string, action: "stop" | "wait" | "restart") => req<Ticket>("POST", `${t(slug, id)}/stall`, { action }),
   /** Usage limit: send "continue" now. */
   /** "Continue with +$Y" after a run stopped at its spending cap. */
   capContinue: (slug: string, id: string, addUsd: number) => req<Ticket>("POST", `${t(slug, id)}/cap-continue`, { addUsd }),
