@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resetTitle, scopeChip, usageText } from "../web/src/teamText";
 import {
-  applyTemplate, brakeLabel, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity,
+  applyTemplate, brakeLabel, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity, contextText, BIG_CONTEXT_TOKENS,
 } from "../web/src/huddleText";
 import { mergeSteps, modelLabel, sessionMeta, sessionState, shortSession, toolIcon } from "../web/src/sessionText";
 
@@ -251,4 +251,16 @@ test("team tab: usage text, scope chips only for exceptions, reset target", () =
   expect(scopeChip({ source: "board", base: null, builtin: false })).toEqual({ text: "this board only", tone: "" });
   expect(resetTitle({ base: "global" })).toBe("Back to the all-boards version");
   expect(resetTitle({ base: "builtin" })).toBe("Back to the built-in version");
+});
+
+test("context tag: size text, warn threshold, and live updates through huddle.activity", () => {
+  expect(contextText(850)).toBe("850 ctx");
+  expect(contextText(42_400)).toBe("42k ctx");
+  expect(contextText(1_200_000)).toBe("1.2M ctx");
+  expect(contextText(2_000_000)).toBe("2M ctx");
+  expect(BIG_CONTEXT_TOKENS).toBe(120_000);
+  const h = { participants: [{ handle: "qa", lastActivity: "x", contextTokens: 1000 }] };
+  expect(withActivity(h, "qa", "x", undefined, 1000)).toBe(h);
+  expect(withActivity(h, "qa", "x", undefined, 2000).participants[0].contextTokens).toBe(2000);
+  expect(withActivity(h, "qa", "y").participants[0].contextTokens).toBe(1000);
 });

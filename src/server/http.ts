@@ -273,8 +273,8 @@ export function createServer(deps: ServerDeps) {
       snoozed,
       /** Its own huddle is working on it: the card shows "Huddle · n working" instead of an outcome badge. */
       huddleBusy: !running && t.status !== "in_progress" && huddleBusy(huddle) && !huddleAsk(huddle),
-      /** API-equivalent $ so far (the Usage tab's total), for In Progress and Review cards. */
-      costUsd: running || t.status === "in_progress" || t.status === "review" ? spend.ticket(p.slug, t.id).costUsd : null,
+      /** API-equivalent $ so far (the Usage tab's total: its runs and its huddles' teammates), for In Progress and Review cards. */
+      costUsd: running || t.status === "in_progress" || t.status === "review" ? spend.ticket(p.slug, t.id).costUsd + huddles.ticketSpend(p.slug, t.id).costUsd : null,
       /** Spending cap its next work run gets (null: none). */
       runCap: runCapFor(t, p),
     };
@@ -930,6 +930,7 @@ export function createServer(deps: ServerDeps) {
       if (needed.length) await claudeLogs.refresh(Math.min(...needed.map((w) => Date.parse(w.start))));
       return json(ticketUsage({
         activity, windows, machineCost: (a, b) => claudeLogs.costBetween(a, b), windowError: "error" in plan ? plan.error : null,
+        teammates: huddles.ticketSpend(slug, id),
       }));
     }
     if (action === "outputs" && m === "POST" && parts.length > 5) {

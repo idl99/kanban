@@ -3,7 +3,7 @@ import { api, onReconnect, subscribe, type Huddle, type HuddleMessage } from "./
 import { AVATAR_COLORS } from "./avatar";
 import { mergeMessages, pickHuddle, ticketHuddles, upsertHuddle, withActivity } from "./huddleText";
 
-export { brakeLabel, cardHuddleBadge, dollars, guestTickets, huddleRound, huddleTitle, idleFor, quietLabel, roundTag, sortHuddles, type CardHuddleBadge } from "./huddleText";
+export { BIG_CONTEXT_TOKENS, brakeLabel, cardHuddleBadge, contextText, dollars, guestTickets, huddleRound, huddleTitle, idleFor, quietLabel, roundTag, sortHuddles, type CardHuddleBadge } from "./huddleText";
 export { handleInitials, isForYou, mentionCandidates, mentionQuery, participantActivity, sourceLabel, untaggedHint } from "./huddleText";
 
 /** Participants that count toward the cap (everyone but the user). */
@@ -120,9 +120,9 @@ export function useHuddle(slug: string, ticketId: string, huddleId: string | nul
     } else if (e.type === "huddle.message" && e.profile === slug && e.huddleId === idRef.current) {
       setMessages((ms) => mergeMessages(ms, [e.message]));
     } else if (e.type === "huddle.activity" && e.profile === slug) {
-      if (e.huddleId === idRef.current) setHuddle((h) => h && withActivity(h, e.handle, e.lastActivity, e.liveCostUsd));
+      if (e.huddleId === idRef.current) setHuddle((h) => h && withActivity(h, e.handle, e.lastActivity, e.liveCostUsd, e.contextTokens));
       if (listRef.current?.some((h) => h.id === e.huddleId)) {
-        listRef.current = listRef.current.map((h) => (h.id === e.huddleId ? withActivity(h, e.handle, e.lastActivity, e.liveCostUsd) : h));
+        listRef.current = listRef.current.map((h) => (h.id === e.huddleId ? withActivity(h, e.handle, e.lastActivity, e.liveCostUsd, e.contextTokens) : h));
         setList(listRef.current);
       }
     }
@@ -158,7 +158,7 @@ export function useBoardHuddles(slug: string | null): Huddle[] {
   }, [reload]);
   useEffect(() => subscribe((e) => {
     if (e.type === "huddle.updated" && e.profile === slug) setList((hs) => upsertHuddle(hs, e.huddle));
-    else if (e.type === "huddle.activity" && e.profile === slug) setList((hs) => hs.map((h) => (h.id === e.huddleId ? withActivity(h, e.handle, e.lastActivity, e.liveCostUsd) : h)));
+    else if (e.type === "huddle.activity" && e.profile === slug) setList((hs) => hs.map((h) => (h.id === e.huddleId ? withActivity(h, e.handle, e.lastActivity, e.liveCostUsd, e.contextTokens) : h)));
   }), [slug]);
   useEffect(() => onReconnect(reload), [reload]);
   return list;

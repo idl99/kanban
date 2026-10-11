@@ -585,6 +585,8 @@ export interface HuddleParticipant {
   costUsd?: number;
   /** ≈ cost of the turn it is in now, not yet in costUsd. */
   liveCostUsd?: number;
+  /** Its conversation's size at its latest step (tokens Claude re-reads every step). */
+  contextTokens?: number;
   error?: string | null;
   running: boolean;
   /** Read-only agent: the host branch and commit its snapshot shows. */
@@ -784,7 +786,7 @@ export type BusEvent =
   | { type: "restart.updated"; pending: boolean; waiting: number }
   | { type: "huddle.updated"; profile: string; huddle: Huddle }
   | { type: "huddle.message"; profile: string; huddleId: string; message: HuddleMessage }
-  | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number }
+  | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number; contextTokens?: number }
   | { type: "huddle.session"; profile: string; huddleId: string; handle: string };
 
 /** Phone access over Tailscale (src/server/remote.ts). local: this page is open on the Mac, not the phone. */

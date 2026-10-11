@@ -51,6 +51,12 @@ export function messageCost(model: string, usage: any): number {
   return (dollars / 1e6) * (usage.speed === "fast" ? 2 : 1);
 }
 
+/** Conversation size at one assistant message: everything it read (input, cache read, cache write); 0 without usage. */
+export function contextTokens(usage: any): number {
+  if (!usage || typeof usage !== "object") return 0;
+  return num(usage.input_tokens) + num(usage.cache_read_input_tokens) + num(usage.cache_creation_input_tokens);
+}
+
 // ---------- machine-wide Claude Code cost ----------
 
 export function claudeProjectsDir(): string {
@@ -284,9 +290,18 @@ export function ticketRuns(activity: ActivityEntry[]): TicketRun[] {
 
 // ---------- ticket usage ----------
 
+/** What the agents of a ticket's huddles spent (huddle.ts teammateSpend); counted in the ticket's total cost. */
+export interface TeammateUsage {
+  costUsd: number;
+  huddles: { id: string; status: string; createdAt: string; costUsd: number; teammates: { handle: string; role: string; costUsd: number }[] }[];
+}
+
 export interface TicketUsage {
   runs: { run: number; kind: RunKind; startedAt: string; model: string | null; tokens: number; costUsd: number; pct5h: number | null }[];
+  /** costUsd: the ticket's runs plus its huddle teammates; tokens and % are its runs only. */
   totals: { costUsd: number; tokens: number; pctCurrentWindow: number | null; pctLifetime: number | null };
+  /** Its huddles' teammates, null when they spent nothing. */
+  teammates: TeammateUsage | null;
   /** The current 5h window, as last seen. */
   window: { utilization: number; resetsAt: string; seenAt: string } | null;
   /** Why there is no current window (usage endpoint error), if known. */
@@ -300,6 +315,7 @@ export interface UsageInputs {
   machineCost: (start: number, end: number) => number;
   now?: number;
   windowError?: string | null;
+  teammates?: TeammateUsage;
 }
 
 /** Windows the ticket's runs fall in (and the current one): what the machine-wide index must cover. */
@@ -353,11 +369,12 @@ export function ticketUsage(i: UsageInputs): TicketUsage {
   return {
     runs: outRuns,
     totals: {
-      costUsd: runs.reduce((s, r) => s + r.costUsd, 0),
+      costUsd: runs.reduce((s, r) => s + r.costUsd, 0) + (i.teammates?.costUsd ?? 0),
       tokens: runs.reduce((s, r) => s + r.tokens, 0),
       pctCurrentWindow: pctCurrent,
       pctLifetime,
     },
+    teammates: i.teammates?.costUsd ? i.teammates : null,
     window: current ? { utilization: current.utilization, resetsAt: current.end, seenAt: current.seenAt } : null,
     windowError: current ? null : i.windowError ?? null,
   };

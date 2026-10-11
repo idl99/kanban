@@ -468,6 +468,16 @@ const huddleTools = (h: Huddle) => `- \`huddle_post\`: post a message. Tag who s
 - \`huddle_close\`: leads and @main, once the work is done: write outputs/${summaryFile(h.id)} in the host ticket's outputs first; it asks the user, who alone closes the huddle.
 (ckanban MCP tools; if they are deferred, load them with ToolSearch first.)`;
 
+/** Characters of the host ticket's description a huddle agent's system prompt carries. */
+export const HUDDLE_DESCRIPTION_MAX = 8000;
+
+/** The host ticket's description for a huddle agent, cut at HUDDLE_DESCRIPTION_MAX with a pointer to get_ticket. */
+export function hostDescription(text: string | undefined): string {
+  const d = (text ?? "").trim();
+  if (!d) return "(no description)";
+  return d.length > HUDDLE_DESCRIPTION_MAX ? `${d.slice(0, HUDDLE_DESCRIPTION_MAX).trimEnd()}\n\n(truncated; use get_ticket for the full text)` : d;
+}
+
 /**
  * System prompt of a huddle agent's run: who it is, the room's rules, and what it may change. lessons: the notes the
  * user saved from past huddles for this role (see lessonsSection), "" when there are none.
@@ -486,6 +496,9 @@ export function huddleAgentSystemPrompt(
 - You see committed code only; ask @main to commit WIP.` : ""}`;
   return `# Huddle
 You are @${p.handle} (${p.role}) in a huddle: a shared message room where several Claude sessions work together on ticket ${host.id} "${host.title}". @main is that ticket's own session and coordinates; @you is the user.
+
+## The ticket (${host.id} "${host.title}")
+${hostDescription(host.body)}
 
 ## Your job
 ${p.prompt}${p.focus ? `\n\nFocus: ${p.focus}` : ""}

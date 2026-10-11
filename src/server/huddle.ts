@@ -60,7 +60,7 @@ import { autoHuddleSlotPrompt, autoHuddleStoppedPrompt, huddleAgentPrompt, huddl
 import { buildArgs, MONITOR_IDLE_MS, startRun, type RunHandle } from "./runner";
 import { addHuddleSpend } from "./spend";
 import type { Store } from "./store";
-import { messageCost } from "./ticket-usage";
+import { contextTokens, messageCost } from "./ticket-usage";
 import { proposalPreset, teammateProposal, type TeammateProposal } from "./teammate-proposal";
 import { autoHuddlesOn } from "./types";
 import type {
@@ -103,6 +103,31 @@ const IDLE_SWEEP_MS = 30_000;
 
 /** What the huddle spent so far: every participant's runs (agents) and huddle replies (@main and invited tickets). */
 export const huddleCost = (h: Huddle) => h.participants.reduce((s, p) => s + (p.costUsd ?? 0), 0);
+
+/** What one huddle's teammates (its agents) spent, for the host ticket's cost. */
+export interface HuddleTeammateSpend {
+  id: string;
+  status: Huddle["status"];
+  createdAt: string;
+  costUsd: number;
+  teammates: { handle: string; role: string; costUsd: number }[];
+}
+
+/**
+ * What the agents of a ticket's huddles spent: it counts on the host ticket's card and Usage tab. Ticket sessions
+ * (@main, invited tickets) are left out, their huddle replies are runs of their own ticket and counted there.
+ */
+export function teammateSpend(huddles: Huddle[], ticketId: string): { costUsd: number; huddles: HuddleTeammateSpend[] } {
+  const out: HuddleTeammateSpend[] = [];
+  for (const h of huddles) {
+    if (h.hostTicket !== ticketId) continue;
+    const teammates = h.participants
+      .filter((p) => p.kind === "agent" && (p.costUsd ?? 0) > 0)
+      .map((p) => ({ handle: p.handle, role: p.role, costUsd: p.costUsd ?? 0 }));
+    if (teammates.length) out.push({ id: h.id, status: h.status, createdAt: h.createdAt, costUsd: teammates.reduce((a, t) => a + t.costUsd, 0), teammates });
+  }
+  return { costUsd: out.reduce((a, h) => a + h.costUsd, 0), huddles: out };
+}
 
 /** A participant's cost after a result line reporting its session's running total. */
 function costAfter(p: HuddleParticipant | undefined, total: number): Pick<HuddleParticipant, "costUsd" | "sessionCostUsd"> {
@@ -214,6 +239,8 @@ interface AgentRun {
   fresh?: boolean;
   /** Estimated cost of the turn in progress by assistant message id (its result line gives the exact total). */
   turn?: Map<string, number>;
+  /** Its conversation's size at the latest assistant message (saved as contextTokens with the next activity write). */
+  ctx?: number;
 }
 
 const isCoordinator = (h: Huddle, p: HuddleParticipant) => p.kind === "ticket-main" && p.ticketId === h.hostTicket;
@@ -239,6 +266,8 @@ export class Huddles {
   private summaryOwed = new Set<string>();
   /** Ticket sessions by "<slug>/<ticket>": the huddle participant that last woke them (its peer runs' cost is that huddle's). */
   private mainWoken = new Map<string, { hid: string; handle: string }>();
+  /** A ticket session's latest conversation size ("slug/id" -> tokens), and when it was last written to its huddles. */
+  private ticketCtx = new Map<string, { tokens: number; savedAt: number; saved: number }>();
   private shuttingDown = false;
   private sessionExists: (id: string) => boolean;
   /** Background work whenIdle() waits for (worktree cleanup after a close). */
@@ -257,7 +286,10 @@ export class Huddles {
     board.onHostHuddles((slug) => this.hostStates(slug));
     // A monitor-mode ticket session gets what came in while it worked once its run is over.
     bus.on((e) => {
-      if (e.type === "activity") return this.mainResult(e.profile, e.id, e.event);
+      if (e.type === "activity") {
+        this.ticketContext(e.profile, e.id, e.event);
+        return this.mainResult(e.profile, e.id, e.event);
+      }
       if (e.type !== "ticket.updated" || this.shuttingDown) return;
       // The host ticket is done: so is its huddle.
       if (e.ticket.status === "done") {
@@ -307,6 +339,35 @@ export class Huddles {
     if (!h || !p || h.status === "closed") return;
     this.updateP(slug, h.id, p.handle, { ...costAfter(p, Number(ev.total_cost_usd) || 0), idleAt: nowIso() });
     this.checkBudget(slug, h.id);
+  }
+
+  /**
+   * A ticket session's conversation size, for the huddles it is a ticket-main in (@main or invited): from each
+   * assistant message's usage, written at most once a second while it works and at once on its result line.
+   */
+  private ticketContext(slug: string, ticketId: string, ev: any) {
+    if (this.shuttingDown) return;
+    const key = `${slug}/${ticketId}`;
+    const st = this.ticketCtx.get(key);
+    // A subagent's (Task) messages carry its own small context, not the session's.
+    if (ev?.type === "assistant") {
+      if (ev.parent_tool_use_id) return;
+      const tokens = contextTokens(ev.message?.usage);
+      if (!tokens) return;
+      if (st) st.tokens = tokens;
+      else this.ticketCtx.set(key, { tokens, savedAt: 0, saved: 0 });
+    } else if (ev?.type !== "result" || !st) return;
+    const cur = this.ticketCtx.get(key)!;
+    const now = Date.now();
+    if (cur.tokens === cur.saved || (ev.type !== "result" && now - cur.savedAt < ACTIVITY_THROTTLE_MS)) return;
+    cur.saved = cur.tokens;
+    cur.savedAt = now;
+    for (const h of this.store.listHuddles(slug)) {
+      if (h.status === "closed") continue;
+      for (const p of h.participants) {
+        if (p.kind === "ticket-main" && p.ticketId === ticketId && p.contextTokens !== cur.tokens) this.updateP(slug, h.id, p.handle, { contextTokens: cur.tokens });
+      }
+    }
   }
 
   // ---- Reading ----
@@ -470,6 +531,11 @@ export class Huddles {
     if (ps.some((p) => msgs.some((m) => m.seq > p.cursor && this.wakes(h, p, m) === "mention"))) return no;
     const times = [msgs.at(-1)?.ts, ...ps.map((p) => p.idleAt)].filter((t): t is string => !!t);
     return { quiet: true, idleSince: times.length ? times.reduce((a, b) => (a > b ? a : b)) : h.createdAt };
+  }
+
+  /** What the agents of a ticket's huddles spent (see teammateSpend). */
+  ticketSpend(slug: string, ticketId: string): { costUsd: number; huddles: HuddleTeammateSpend[] } {
+    return teammateSpend(this.store.listHuddles(slug), ticketId);
   }
 
   list(slug: string, ticketId?: string): HuddleView[] {
@@ -808,17 +874,23 @@ export class Huddles {
 
   private updateP(slug: string, hid: string, handle: string, patch: Partial<HuddleParticipant>): void {
     if (!this.load(slug, hid)) return;
-    // Only what it is doing now (many times a minute): saved, and sent as a small event instead of the whole view.
-    if (Object.keys(patch).every((k) => k === "lastActivity")) {
+    // Only what it is doing now and its conversation size (many times a minute): saved, and sent as a small event
+    // instead of the whole view.
+    if (Object.keys(patch).every((k) => k === "lastActivity" || k === "contextTokens")) {
       const h = this.get(slug, hid);
       const p = h.participants.find((x) => x.handle === handle);
       const liveCostUsd = this.turnCost(slug, hid, handle);
-      if (!p || (p.lastActivity === patch.lastActivity && !liveCostUsd)) return;
-      if (p.lastActivity !== patch.lastActivity) {
-        p.lastActivity = patch.lastActivity;
+      if (!p) return;
+      const changed = (Object.keys(patch) as ("lastActivity" | "contextTokens")[]).some((k) => p[k] !== patch[k]);
+      if (!changed && !liveCostUsd) return;
+      if (changed) {
+        Object.assign(p, patch);
         this.save(slug, h);
       }
-      this.bus.emit({ type: "huddle.activity", profile: slug, huddleId: hid, handle, lastActivity: patch.lastActivity ?? null, ...(liveCostUsd ? { liveCostUsd } : {}) });
+      this.bus.emit({
+        type: "huddle.activity", profile: slug, huddleId: hid, handle, lastActivity: p.lastActivity ?? null,
+        ...(liveCostUsd ? { liveCostUsd } : {}), ...(p.contextTokens ? { contextTokens: p.contextTokens } : {}),
+      });
       return;
     }
     this.update(slug, hid, (h) => {
@@ -1678,7 +1750,7 @@ export class Huddles {
           run.turn = undefined;
           const cur = this.get(slug, hid).participants.find((x) => x.handle === handle);
           const cost = costAfter(cur, Number(ev.total_cost_usd) || 0);
-          this.updateP(slug, hid, handle, { status: settled(cur) ? cur!.status : "idle", idleAt: nowIso(), ...cost });
+          this.updateP(slug, hid, handle, { status: settled(cur) ? cur!.status : "idle", idleAt: nowIso(), ...cost, ...(run.ctx ? { contextTokens: run.ctx } : {}) });
           try {
             addHuddleSpend(this.store.root, slug, (cost.costUsd ?? 0) - (cur?.costUsd ?? 0));
           } catch {}
@@ -1700,12 +1772,13 @@ export class Huddles {
         // Live cost on the roster: the turn's messages priced from their usage until the result line.
         if (ev?.type === "assistant" && ev.message?.id && ev.message.usage) {
           (run.turn ??= new Map()).set(ev.message.id, messageCost(String(ev.message.model ?? p.model ?? profile.model ?? ""), ev.message.usage));
+          if (!ev.parent_tool_use_id) run.ctx = contextTokens(ev.message.usage) || run.ctx;
         }
         const s = summarizeEvent(ev);
         const now = Date.now();
-        if (s && now - lastWrite >= ACTIVITY_THROTTLE_MS) {
+        if ((s || run.ctx) && now - lastWrite >= ACTIVITY_THROTTLE_MS) {
           lastWrite = now;
-          this.updateP(slug, hid, handle, { lastActivity: s });
+          this.updateP(slug, hid, handle, { ...(s ? { lastActivity: s } : {}), ...(run.ctx ? { contextTokens: run.ctx } : {}) });
         }
       },
     });

@@ -1729,6 +1729,7 @@ div.huddle { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .huddle-state.brake { color: var(--err); }
 .huddle-state.quiet { color: var(--ok); }
 .hd-budget { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.hd-budget-note { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .hd-meter { width: 90px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
 .hd-meter i { display: block; height: 100%; background: var(--warn); }
 .hd-meter.over i { background: var(--err); }
@@ -1862,6 +1863,9 @@ button.hd-mode:disabled { cursor: default; }
 .hd-p-st .hd-dot { margin-top: 4px; }
 .hd-p-st .hd-dot { flex: none; margin-right: 0; }
 .hd-redo { font-size: 11px; color: var(--info); flex: none; }
+/* Conversation size: what every step re-reads; warn-coloured once it is big (BIG_CONTEXT_TOKENS). */
+.hd-ctx { font-size: 11px; border-radius: 6px; padding: 1px 6px; background: var(--surface-2); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; cursor: help; }
+.hd-ctx.big { background: var(--warn-soft); color: var(--warn); }
 .hd-p-cost { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; width: 44px; text-align: right; flex: none; }
 .hd-mode-select .select-trigger { min-width: 0; padding: 1px 6px; font-size: 11px; }
 .hd-p-st.working { color: var(--text); }
@@ -2119,3 +2123,9 @@ button.hd-mode:disabled { cursor: default; }
 .notify-kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
 .notify-kinds label.board-switch { font-weight: 500; }
 @media (max-width: 640px) { .notify-kinds { grid-template-columns: 1fr; } }
+/* Ticket Usage tab: what its huddles' teammates spent (counted in the total). */
+.usage-teammates { margin: 10px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 12.5px; }
+.usage-teammates-head { margin-bottom: 4px; }
+.usage-teammates-huddle + .usage-teammates-huddle { margin-top: 6px; }
+.usage-teammate { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+.usage-teammate .n { font-variant-numeric: tabular-nums; }

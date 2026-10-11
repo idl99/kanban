@@ -417,6 +417,11 @@ export interface HuddleParticipant {
    */
   costUsd?: number;
   sessionCostUsd?: number;
+  /**
+   * Its conversation's size at its latest step (input + cache read + cache write tokens of the last assistant
+   * message): what Claude re-reads every step. Agents: their own session; a ticket-main: its ticket's session.
+   */
+  contextTokens?: number;
   error?: string | null;
   /** When its last run or turn ended (the huddle's idleSince). */
   idleAt?: string | null;

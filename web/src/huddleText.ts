@@ -52,16 +52,31 @@ export function mergeMessages<M extends { seq: number }>(a: M[], b: M[]): M[] {
   return [...bySeq.values()].sort((x, y) => x.seq - y.seq);
 }
 
-/** The huddle with one participant's lastActivity (and its turn's live cost, when given) changed (huddle.activity events). */
-export function withActivity<H extends { participants: { handle: string; lastActivity?: string | null; liveCostUsd?: number }[] }>(
-  h: H, handle: string, lastActivity: string | null, liveCostUsd?: number,
+/**
+ * The huddle with one participant's lastActivity (and its turn's live cost and its conversation size, when given)
+ * changed (huddle.activity events).
+ */
+export function withActivity<H extends { participants: { handle: string; lastActivity?: string | null; liveCostUsd?: number; contextTokens?: number }[] }>(
+  h: H, handle: string, lastActivity: string | null, liveCostUsd?: number, contextTokens?: number,
 ): H {
-  const same = (p: H["participants"][number]) => p.lastActivity === lastActivity && (liveCostUsd === undefined || p.liveCostUsd === liveCostUsd);
+  const same = (p: H["participants"][number]) => p.lastActivity === lastActivity && (liveCostUsd === undefined || p.liveCostUsd === liveCostUsd)
+    && (contextTokens === undefined || p.contextTokens === contextTokens);
   if (!h.participants.some((p) => p.handle === handle && !same(p))) return h;
   return {
     ...h,
-    participants: h.participants.map((p) => (p.handle === handle ? { ...p, lastActivity, ...(liveCostUsd !== undefined ? { liveCostUsd } : {}) } : p)),
+    participants: h.participants.map((p) => (p.handle === handle
+      ? { ...p, lastActivity, ...(liveCostUsd !== undefined ? { liveCostUsd } : {}), ...(contextTokens !== undefined ? { contextTokens } : {}) }
+      : p)),
   };
+}
+
+/** Context tag at or above this many tokens is warn-coloured: every step re-reads a big conversation. */
+export const BIG_CONTEXT_TOKENS = 120_000;
+
+/** "42k ctx", "850 ctx", "1.2M ctx". */
+export function contextText(tokens: number): string {
+  const n = tokens >= 1e6 ? `${(tokens / 1e6).toFixed(1).replace(/\.0$/, "")}M` : tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
+  return `${n} ctx`;
 }
 
 /** Where a post came in from, for its tooltip; null for system messages and old posts without a source. */

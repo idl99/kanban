@@ -6,13 +6,13 @@ import { callTool, type ToolContext } from "../src/mcp-server";
 import { Board } from "../src/server/board";
 import { Bus, type BusEvent } from "../src/server/events";
 import { createServer } from "../src/server/http";
-import { fallbackSummary, findingTitle, HUDDLE_IDLE_MS, Huddles, LEGACY_SUMMARY_FILE, POST_MAX, summaryFile } from "../src/server/huddle";
+import { fallbackSummary, findingTitle, HUDDLE_IDLE_MS, Huddles, LEGACY_SUMMARY_FILE, POST_MAX, summaryFile, teammateSpend } from "../src/server/huddle";
 import { BUILTIN_PRESETS, deletePreset, mergePresets, presetSourceText, savePreset } from "../src/server/huddle-presets";
 import { huddleUsage } from "../src/server/huddle-usage";
 import { cleanLessons, LESSON_MAX, noteRole, parseNotes, serializeNotes } from "../src/server/huddle-notes";
 import { HUDDLE_HEADER, parseMentions, rosterError } from "../src/server/huddle-roster";
 import { BUILTIN_TEMPLATES, deleteTemplate, mergeTemplates, saveTemplate } from "../src/server/huddle-templates";
-import { DIGEST_CLIP, huddleAgentPrompt, huddleDigest, huddleMainPrompt } from "../src/server/prompts";
+import { DIGEST_CLIP, HUDDLE_DESCRIPTION_MAX, hostDescription, huddleAgentPrompt, huddleDigest, huddleMainPrompt } from "../src/server/prompts";
 import { controlResponse } from "../src/server/runner";
 import { Store } from "../src/server/store";
 import type { Huddle, Profile, Ticket } from "../src/server/types";
@@ -1899,3 +1899,67 @@ test("idle watchdog: wakes @main once after 5 minutes of nobody working; not whi
   huddles.idleSweep(Date.now() + HUDDLE_IDLE_MS * 3);
   expect(nudges().length).toBe(1);
 }, 40000);
+
+test("a teammate's system prompt carries the host ticket's description, cut with a pointer to get_ticket when long", async () => {
+  expect(hostDescription("  ")).toBe("(no description)");
+  expect(hostDescription("![shot](a.png) **Build** it")).toBe("![shot](a.png) **Build** it");
+  const long = hostDescription("x".repeat(HUDDLE_DESCRIPTION_MAX + 500));
+  expect(long).toEndWith("(truncated; use get_ticket for the full text)");
+  expect(long.length).toBeLessThan(HUDDLE_DESCRIPTION_MAX + 60);
+
+  const t = await board.createTicket("p", { title: "Login page", body: `Build the login form.\n${"y".repeat(9000)}TAIL`, status: "review" });
+  huddles.create("p", t.id, [{ preset: "reviewer" }]);
+  await idle();
+  const args: string[] = processes().find((r) => r.env?.CKANBAN_HUDDLE_AGENT || r.args.includes("--disallowedTools"))!.args;
+  const system = args[args.indexOf("--append-system-prompt") + 1];
+  expect(system).toContain(`## The ticket (${t.id} "Login page")\nBuild the login form.`);
+  expect(system).toContain("(truncated; use get_ticket for the full text)");
+  expect(system).not.toContain("TAIL");
+}, 20000);
+
+test("context size: an agent's from its own session, @main's from the ticket session, saved with the participant", async () => {
+  process.env.FAKE_CTX = "42000";
+  try {
+    const t = await host();
+    const h = huddles.create("p", t.id, [{ preset: "reviewer" }]);
+    await idle();
+    expect(participant(h, "reviewer").contextTokens).toBe(42000);
+    expect(events.some((e) => e.type === "huddle.updated" && e.huddle.participants.some((p) => p.handle === "reviewer" && p.contextTokens === 42000))).toBe(true);
+    process.env.FAKE_CTX = "130000";
+    huddles.post("p", h.id, you(h), "@main status?");
+    await until(() => participant(h, "main").contextTokens === 130000);
+    await idle();
+    expect(participant(h, "reviewer").contextTokens).toBe(42000);
+  } finally {
+    delete process.env.FAKE_CTX;
+  }
+}, 20000);
+
+test("teammate spend counts on the host ticket's card and Usage tab, @main and today's total aren't counted twice", async () => {
+  const t = await host();
+  const h = huddles.create("p", t.id, [{ preset: "reviewer" }]);
+  await idle();
+  huddles.post("p", h.id, you(h), "@main status?");
+  await idle();
+  const main = participant(h, "main").costUsd ?? 0;
+  const reviewer = participant(h, "reviewer").costUsd ?? 0;
+  expect(main).toBeGreaterThan(0);
+  expect(reviewer).toBeCloseTo(0.01);
+  const spend = teammateSpend(store.listHuddles("p"), t.id);
+  expect(spend.costUsd).toBeCloseTo(reviewer);
+  expect(spend.huddles).toEqual([{ id: h.id, status: "live", createdAt: h.createdAt, costUsd: reviewer, teammates: [{ handle: "reviewer", role: "Code reviewer", costUsd: reviewer }] }]);
+  expect(teammateSpend(store.listHuddles("p"), "t_other").costUsd).toBe(0);
+
+  const base = `http://127.0.0.1:${server.port}/api`;
+  const runs = (await (await fetch(`${base}/profiles/p/tickets/${t.id}/usage`)).json()) as any;
+  const ticketRunsCost = runs.runs.reduce((s: number, r: any) => s + r.costUsd, 0);
+  // @main's reply is one of the ticket's own runs; only the reviewer is added on top.
+  expect(ticketRunsCost).toBeGreaterThanOrEqual(main - 1e-9);
+  expect(runs.totals.costUsd).toBeCloseTo(ticketRunsCost + reviewer);
+  expect(runs.teammates.costUsd).toBeCloseTo(reviewer);
+  expect(runs.teammates.huddles[0].teammates.map((x: any) => x.handle)).toEqual(["reviewer"]);
+  const card = (await (await fetch(`${base}/profiles/p/tickets/${t.id}`)).json()) as any;
+  expect(card.costUsd).toBeCloseTo(ticketRunsCost + reviewer);
+  const today = (await (await fetch(`${base}/spend`)).json()) as any;
+  expect(today.boards.find((b: any) => b.slug === "p").costUsd).toBeCloseTo(ticketRunsCost + reviewer);
+}, 20000);

@@ -5,7 +5,7 @@ import {
 import { ConfirmDialog } from "./ConfirmDialog";
 import { draftKey, formKey } from "./drafts";
 import {
-  dollars, handleColor, handleInitials, huddleCost, idleFor, isForYou, members, mentionCandidates, mentionQuery, participantActivity, sourceLabel, untaggedHint,
+  BIG_CONTEXT_TOKENS, contextText, dollars, handleColor, handleInitials, huddleCost, idleFor, isForYou, members, mentionCandidates, mentionQuery, participantActivity, sourceLabel, untaggedHint,
   type HuddleState,
 } from "./huddle";
 import { DEFAULT_MAX, draftError, RosterEditor, rosterDraft, startFromDraft, TemplatePicker, usePresets, useTemplates, type RosterDraft } from "./HuddleRoster";
@@ -251,10 +251,11 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
     <span className={`huddle-state ${h.status}`}>{STATE_LABEL[h.status]}</span>
   );
   const budget = (
-    <span className="hd-budget" title="What the huddle spent so far: its agents' runs and @main's huddle replies. It stops at the budget.">
+    <span className="hd-budget" title="What the huddle spent so far: its agents' runs and @main's huddle replies. It stops at the budget. The agents' spend is also counted on the ticket card and its Usage tab (@main's replies already are).">
       ·
       <span className={`hd-meter${overBudget ? " over" : ""}`} aria-hidden><i style={{ width: `${Math.min(100, (spent / max) * 100)}%` }} /></span>
       <span className={overBudget ? "hd-over" : undefined}>{money(spent)} / {dollars(max)}</span>
+      {!phone && <span className="hd-budget-note">also counted on the ticket card</span>}
     </span>
   );
   // The phone's ⋯ sheet: every bar action that applies now (a brake's Resume buttons stay in its banner).
@@ -925,7 +926,10 @@ function Roster({ slug, huddle: h, onError, viewing, onView }: {
         const human = p.kind === "human";
         const st = ["working", "failed", "stopped", "done", "blocked"].includes(p.status) ? p.status : "idle";
         const restartable = !closed && !human && (p.status === "failed" || p.status === "stopped");
-        const activity = human ? "human" : participantActivity(p, closed);
+        // An agent mid-turn: its cost climbs with every step until the turn's result settles it.
+        const climbing = p.kind === "agent" && p.status === "working" && !closed;
+        const activity = human ? "human" : climbing ? `${p.lastActivity || "thinking…"} (cost rises while it works)` : participantActivity(p, closed);
+        const big = (p.contextTokens ?? 0) >= BIG_CONTEXT_TOKENS;
         // Long statuses wrap to two lines; the tooltip has all of it.
         const detail = [...new Set([participantActivity(p, closed), p.error, p.statusReason, p.lastActivity].filter((x): x is string => !!x))].join("\n");
         return (
@@ -964,7 +968,15 @@ function Roster({ slug, huddle: h, onError, viewing, onView }: {
                 )}
               </span>
             )}
-            <span className="hd-p-cost" title={human ? undefined : `What @${p.handle} spent in this huddle${p.liveCostUsd ? `, with ≈${money(p.liveCostUsd)} for the turn it is in now` : ""}`}>
+            {!human && !!p.contextTokens && (
+              <span className={`hd-ctx${big ? " big" : ""}`}
+                title={`Conversation size Claude re-reads every step. Bigger = each step costs more.${big ? " This one is large." : ""}`}>
+                {contextText(p.contextTokens)}
+              </span>
+            )}
+            <span className="hd-p-cost" title={human ? undefined : `What @${p.handle} spent in this huddle${p.liveCostUsd
+              ? `, with ≈${money(p.liveCostUsd)} for the turn it is in now. That part is a live estimate: every step re-reads the whole conversation, so it climbs while @${p.handle} works and settles when the turn ends`
+              : ""}`}>
               {human ? "" : money((p.costUsd ?? 0) + (p.liveCostUsd ?? 0))}
             </span>
           </div>

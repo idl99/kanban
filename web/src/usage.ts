@@ -57,9 +57,17 @@ export function resetText(iso: string | null, now = Date.now()): string | null {
 
 export type RunKind = "work" | "planning" | "chat" | "reply" | "run";
 
+/** What the agents of a ticket's huddles spent (src/server/ticket-usage.ts TeammateUsage). */
+export interface TeammateUsage {
+  costUsd: number;
+  huddles: { id: string; status: string; createdAt: string; costUsd: number; teammates: { handle: string; role: string; costUsd: number }[] }[];
+}
+
 export interface TicketUsage {
   runs: { run: number; kind: RunKind; startedAt: string; model: string | null; tokens: number; costUsd: number; pct5h: number | null }[];
+  /** costUsd includes the huddle teammates; tokens and % are the ticket's runs only. */
   totals: { costUsd: number; tokens: number; pctCurrentWindow: number | null; pctLifetime: number | null };
+  teammates?: TeammateUsage | null;
   window: { utilization: number; resetsAt: string; seenAt: string } | null;
   windowError: string | null;
 }

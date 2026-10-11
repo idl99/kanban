@@ -215,7 +215,12 @@ for (const chunk of ["Work ", "complete."]) {
   if (process.env.FAKE_STREAM_DELAY) await Bun.sleep(Number(process.env.FAKE_STREAM_DELAY));
   emit({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: chunk } } });
 }
-emit({ type: "assistant", message: { content: [{ type: "text", text }] } });
+// FAKE_CTX: the message carries usage whose context (input + cache read + cache write) is FAKE_CTX tokens.
+const ctx = Number(process.env.FAKE_CTX ?? 0);
+const usage = ctx ? { usage: { input_tokens: 10, cache_read_input_tokens: ctx - 15, cache_creation_input_tokens: 5, output_tokens: 7 } } : {};
+emit({ type: "assistant", message: { ...(ctx ? { id: `msg_${sessionId}_${Date.now()}`, model: "claude-opus-5-5" } : {}), content: [{ type: "text", text }], ...usage } });
+// A subagent's message (its own small context) comes last: the session's size must not take it.
+if (ctx) emit({ type: "assistant", parent_tool_use_id: "tu_task", message: { id: `msg_sub_${Date.now()}`, model: "claude-opus-5-5", content: [{ type: "text", text: "sub" }], usage: { input_tokens: 3, cache_read_input_tokens: 500, output_tokens: 1 } } });
 emit({ type: "result", subtype: "success", is_error: false, result: text, total_cost_usd: 0.01, duration_ms: 100, session_id: sessionId });
 
 // The real CLI kills background tasks at end of input; otherwise it starts a turn when one finishes
