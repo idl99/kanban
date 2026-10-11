@@ -4,6 +4,31 @@ What changed in each ckanban release. Get the latest with `ckanban update`.
 
 ## Unreleased
 
+## [0.11.0] - 2026-10-11
+
+### Added
+- **Phone access** over Tailscale: `ckanban remote on` (or ⋯ → Phone access, with a QR code) opens the board on your phone, on your tailnet only. Phones get their own layout: a *Now* home with what needs you, a bottom tab bar, one column at a time, and an installable app.
+- **Notifications** when a ticket needs you, sent to ntfy, a webhook or a macOS banner, with a link straight to the ticket. Set them up under More → Notifications.
+- **Inbox triage**: *Mark done*, *Snooze (1 day)* and *Answer/Open* on each entry (keys `d`, `s`, `Enter`). A snoozed entry comes back when the time runs out or the ticket changes.
+- **Cost at a glance**: `$` on running and review cards, today's spend across all boards in the header, live costs for huddle agents, and a spending cap per run (per board, with a per-ticket override). A run that hits its cap waits in the Inbox with *Continue with +$Y*.
+- **Resolve conflicts** button next to a PR's conflict chip: Claude rebases onto the base branch, resolves the conflicts, runs the checks and pushes.
+- **Image** button in the description, chat and bug report boxes, to pick photos on phones.
+- First run: the New board dialog opens by itself, and a read-only sample ticket is offered after your first board. Downloads from `install.sh` and `ckanban update` are checked against the release's SHA256 checksums.
+- Auto huddles use the budget a ticket asks for (up to $100).
+- *claude.ai artifacts* is now a board setting (off by default).
+
+### Changed
+- Removed the unused ticket-to-ticket question tools, which makes run prompts shorter.
+- The ticket drawer shows the *Needs* editor only once a ticket has needs.
+- "Profile" is now called "board" everywhere in the UI.
+
+### Fixed
+- Huddles in a repo with no commits yet: every teammate failed at start. They now work in the board's folder.
+- A huddle teammate that fails to start shows the reason in the participant list and posts it in the huddle, instead of just "failed".
+- The huddle tab on phones scrolls and fits the screen.
+- The phone *Now* view shows the board you're on.
+- A planner's chat can tidy up a finished plan's tickets when you ask.
+
 ## [0.10.0] - 2026-10-11
 
 ### Added
@@ -165,6 +190,7 @@ First release.
 - Terminal & file explorer panel, Connections panel for MCP servers, scheduled tickets on a cron, claude.ai artifacts from runs.
 - Standalone binary, installer, `ckanban update` and a background service that starts at login.
 
+[0.11.0]: https://github.com/leoawesome/kanban/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/leoawesome/kanban/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/leoawesome/kanban/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/leoawesome/kanban/compare/v0.7.0...v0.8.0
