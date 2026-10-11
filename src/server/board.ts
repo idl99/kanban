@@ -927,8 +927,8 @@ export class Board {
 
   private async ensureSessionNow(slug: string, id: string): Promise<{ dir: string; sessionId: string; existed: boolean; isGit: boolean }> {
     const profile = this.store.getProfile(slug);
-    if (!profile) throw new Error(`profile ${slug} not found`);
-    if (!existsSync(profile.path)) throw new Error(`profile path does not exist: ${profile.path}`);
+    if (!profile) throw new Error(`board ${slug} not found`);
+    if (!existsSync(profile.path)) throw new Error(`board folder does not exist: ${profile.path}`);
     let t = this.store.getTicket(slug, id);
     if (!t) throw new Error(`ticket ${id} not found`);
     const isGit = await isGitRepo(profile.path);

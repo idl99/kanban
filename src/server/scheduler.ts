@@ -178,8 +178,8 @@ export class Scheduler {
     } else {
       try {
         const profile = this.store.getProfile(slug);
-        if (!profile) throw new Error(`profile ${slug} no longer exists`);
-        if (!existsSync(profile.path)) throw new Error(`profile folder ${profile.path} does not exist`);
+        if (!profile) throw new Error(`board ${slug} no longer exists`);
+        if (!existsSync(profile.path)) throw new Error(`board folder ${profile.path} does not exist`);
         const t = await this.board.createTicket(slug, {
           title: fillTitle(s.title, now), body: s.body, status: "in_progress", mode: s.mode, scheduleId: s.id,
         });

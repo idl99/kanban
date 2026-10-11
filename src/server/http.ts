@@ -185,7 +185,7 @@ export function createServer(deps: ServerDeps) {
 
   const profileOr404 = (slug: string): Profile => {
     const p = store.getProfile(slug);
-    if (!p) throw new HttpError(404, `profile ${slug} not found`);
+    if (!p) throw new HttpError(404, `board ${slug} not found`);
     return p;
   };
   const ticketOr404 = (slug: string, id: string): Ticket => {
@@ -584,7 +584,7 @@ export function createServer(deps: ServerDeps) {
         return json(next);
       }
       if (m === "DELETE") {
-        if (board.running(slug) > 0) throw new HttpError(409, "profile has running tickets");
+        if (board.running(slug) > 0) throw new HttpError(409, "board has running tickets");
         store.deleteProfile(slug);
         snippets.dropScope(slug);
         shells.kill(slug);

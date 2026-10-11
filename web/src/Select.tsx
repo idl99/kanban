@@ -27,7 +27,7 @@ export function Select<T extends string>({ value, options, onChange, footer, cla
   value: T;
   options: SelectOption<T>[];
   onChange: (v: T) => void;
-  /** Extra items under a divider, e.g. "New profile…". */
+  /** Extra items under a divider, e.g. "New board…". */
   footer?: { label: ReactNode; onSelect: () => void; icon?: ReactNode }[];
   className?: string;
   ariaLabel?: string;

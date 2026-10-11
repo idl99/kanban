@@ -142,7 +142,7 @@ export function draftReport(store: Store, ref?: { slug: string; id: string } | n
   let screenshots: string[] = [];
   if (ref) {
     const profile = store.getProfile(ref.slug);
-    if (!profile) throw new BugReportError(404, `profile ${ref.slug} not found`);
+    if (!profile) throw new BugReportError(404, `board ${ref.slug} not found`);
     const t = store.getTicket(ref.slug, ref.id);
     if (!t) throw new BugReportError(404, `ticket ${ref.id} not found`);
     const activity = store.readActivity(ref.slug, ref.id);

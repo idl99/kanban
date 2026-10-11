@@ -2,6 +2,8 @@
 # ckanban installer (macOS).
 #   curl -fsSL https://raw.githubusercontent.com/leoawesome/kanban/main/install.sh | bash
 # Env: CKANBAN_VERSION=0.1.0 (default: latest)  CKANBAN_BIN_DIR=~/.local/bin  CKANBAN_NO_DAEMON=1 (skip launchd)
+# The binary is checked against the release's SHA256SUMS before it is installed
+# (CKANBAN_DOWNLOAD_URL / CKANBAN_SUMS_URL override both URLs, e.g. for testing).
 set -euo pipefail
 
 REPO="leoawesome/kanban"
@@ -27,14 +29,23 @@ else
 fi
 
 URL="${CKANBAN_DOWNLOAD_URL:-$URL}"
+SUMS_URL="${CKANBAN_SUMS_URL:-${URL%/*}/SHA256SUMS}"
 bold "Installing ckanban (${VERSION}, darwin-${ARCH})"
 mkdir -p "$BIN_DIR"
 TMP="$(mktemp -t ckanban)"
-trap 'rm -f "$TMP"' EXIT
+SUMS="$(mktemp -t ckanban-sums)"
+trap 'rm -f "$TMP" "$SUMS"' EXIT
 curl -fL --progress-bar -o "$TMP" "$URL" || die "Download failed: $URL"
+curl -fsSL -o "$SUMS" "$SUMS_URL" || die "Couldn't download the checksums ($SUMS_URL), so the binary can't be verified. Nothing was installed."
+WANT="$(awk -v f="$ASSET" '$2 == f || $2 == "*" f { print $1; exit }' "$SUMS")"
+[ -n "$WANT" ] || die "SHA256SUMS has no entry for $ASSET. Nothing was installed."
+GOT="$(shasum -a 256 "$TMP" | awk '{ print $1 }')"
+[ "$GOT" = "$WANT" ] || die "Checksum mismatch for $ASSET: expected $WANT, got $GOT. The download may be corrupt or tampered with. Nothing was installed."
+echo "✓ Checksum verified"
 chmod 755 "$TMP"
 xattr -d com.apple.quarantine "$TMP" 2>/dev/null || true
 mv "$TMP" "$BIN_DIR/ckanban"
+rm -f "$SUMS"
 trap - EXIT
 echo "✓ Installed $BIN_DIR/ckanban ($("$BIN_DIR/ckanban" --version))"
 

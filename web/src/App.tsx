@@ -25,6 +25,7 @@ import { boardDigit, cardDir, isTyping, stepBoard, stepCard, type CardPos } from
 import { KeyHint, useHintReveal } from "./KeyHint";
 import { TicketDrawer } from "./TicketDrawer";
 import { toast, Toaster } from "./toast";
+import { SampleOffer } from "./SampleOffer";
 
 import type { DockTab } from "./Dock";
 import type { HuddleSeed, TeamRequest } from "./Team";
@@ -46,6 +47,8 @@ const Dock = lazy(() => import("./Dock").then((m) => {
 const DOCK_OPEN = "ckanban.dock.open";
 
 const LAST_PROFILE = "ckanban.profile";
+/** Board slug the sample ticket is offered on, until it is started or dismissed. */
+const SAMPLE_OFFER = "ckanban.sample-offer";
 
 /** URL hash is the source of truth for what's open: #/<profile> or #/<profile>/<ticketId>. */
 function parseHash(): { slug: string | null; ticket: string | null } {
@@ -142,6 +145,11 @@ export function App() {
   const inboxTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [profileDialog, setProfileDialog] = useState<"new" | "edit" | null>(null);
   const [newTicket, setNewTicket] = useState(false);
+  const [sampleFor, setSampleForState] = useState(() => { try { return localStorage.getItem(SAMPLE_OFFER); } catch { return null; } });
+  const setSampleFor = (v: string | null) => {
+    setSampleForState(v);
+    try { if (v) localStorage.setItem(SAMPLE_OFFER, v); else localStorage.removeItem(SAMPLE_OFFER); } catch {}
+  };
   const setError = (msg: string) => toast(msg, { tone: "error" });
   const [filters, setFilters] = useState<Set<FilterId>>(new Set());
   const [dismissed, setDismissed] = useState(readDismissed);
@@ -218,6 +226,13 @@ export function App() {
     quiet(api.version, "the version", setVersion);
     quiet(api.mcp, "connections", setMcp);
   }, [loadProfiles, loadInbox]);
+  // First visit with no boards yet: open New board straight away (it lists recent Claude Code folders).
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (profiles?.length !== 0 || autoOpened.current) return;
+    autoOpened.current = true;
+    setProfileDialog("new");
+  }, [profiles]);
 
   // Browser Back/Forward and pasted links drive the open board and ticket.
   useEffect(() => {
@@ -610,7 +625,7 @@ export function App() {
         {profiles && profiles.length > 0 && (
           <Select
             className="profile-select"
-            ariaLabel="Profile"
+            ariaLabel="Board"
             value={slug ?? ""}
             onChange={setSlug}
             menuClassName="profile-menu"
@@ -714,7 +729,7 @@ export function App() {
       )}
       {profile && profile.pathExists === false && !dismissed.has(folderKey) && (
         <div className="banner warn" role="status">
-          <span>Profile folder <code>{profile.path}</code> does not exist. Tickets will not be picked up.</span>
+          <span>Board folder <code>{profile.path}</code> does not exist. Tickets will not be picked up.</span>
           <button className="icon-btn" aria-label="Dismiss" title="Hide until next time" onClick={() => dismiss(folderKey)}><CloseIcon size={12} /></button>
         </div>
       )}
@@ -723,10 +738,10 @@ export function App() {
         <div className="empty"><span className="spinner" /> Loading boards…</div>
       ) : !profile ? (
         <div className="empty">
-          <h2>No profiles yet</h2>
-          <p>A profile is a folder (usually a git repo) with its own board.</p>
+          <h2>No boards yet</h2>
+          <p>A board runs tickets in one folder, usually a git repo.</p>
           <button className="btn primary" onClick={() => setProfileDialog("new")}>
-            Create profile
+            Create board
           </button>
         </div>
       ) : (
@@ -764,6 +779,14 @@ export function App() {
               </span>
             )}
           </div>
+          {sampleFor === profile.slug && (
+            <SampleOffer slug={profile.slug} onDismiss={() => setSampleFor(null)}
+              onStarted={(t) => {
+                setSampleFor(null);
+                setTickets((ts) => (ts.some((x) => x.id === t.id) ? ts : [...ts, t]));
+                openTicket(t.id);
+              }} />
+          )}
           <Board tickets={shownTickets} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending}
             huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} />
         </>
@@ -817,10 +840,13 @@ export function App() {
           onClose={() => setProfileDialog(null)}
           onOpenTeam={() => { setProfileDialog(null); openDockOn("team"); }}
           onSaved={(p) => {
+            // The first board gets the sample ticket offer.
+            if (profileDialog === "new" && profiles?.length === 0) { setSampleFor(p.slug); setPhoneTab("board"); }
             setProfileDialog(null);
             loadProfiles().then(() => setSlug(p.slug));
           }}
           onDeleted={() => {
+            if (sampleFor === profile?.slug) setSampleFor(null);
             setProfileDialog(null);
             setSlug(null);
             loadProfiles();

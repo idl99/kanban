@@ -24,14 +24,14 @@ export function resolveInside(root: string, rel: string): string {
   try {
     realRoot = realpathSync(root);
   } catch {
-    throw new FileError(404, "profile folder not found");
+    throw new FileError(404, "board folder not found");
   }
   try {
     real = realpathSync(join(realRoot, rel));
   } catch {
     throw new FileError(404, "not found");
   }
-  if (real !== realRoot && !real.startsWith(realRoot + sep)) throw new FileError(403, "path is outside the profile folder");
+  if (real !== realRoot && !real.startsWith(realRoot + sep)) throw new FileError(403, "path is outside the board folder");
   return real;
 }
 
