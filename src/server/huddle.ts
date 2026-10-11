@@ -449,6 +449,7 @@ export class Huddles {
         learnings: learnings.length,
         closeRequest: !!h.closeRequest,
         since: times.length ? times.reduce((a, b) => (a < b ? a : b)) : null,
+        latest: times.length ? times.reduce((a, b) => (a > b ? a : b)) : null,
       });
     }
     return out;

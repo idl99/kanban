@@ -210,7 +210,11 @@ export function App() {
     }, 300);
   }, [loadSchedules]);
 
-  const loadInbox = useCallback(() => quiet(api.inbox, "the inbox", setInbox), []);
+  const [snoozed, setSnoozed] = useState<InboxItem[]>([]);
+  const loadInbox = useCallback(() => quiet(api.inbox, "the inbox", (list) => {
+    setInbox(list.filter((i) => !i.snoozedUntil));
+    setSnoozed(list.filter((i) => i.snoozedUntil));
+  }), []);
   const refreshInboxSoon = useCallback(() => {
     if (inboxTimer.current) return;
     inboxTimer.current = setTimeout(() => {
@@ -302,6 +306,16 @@ export function App() {
   }), [slug, loadProfiles, loadInbox, loadSchedules]);
 
   const needYou = inbox.length;
+  // A snooze ends by itself: reload when the first one runs out (the server only counts it again then).
+  useEffect(() => {
+    if (!snoozed.length) return;
+    const first = Math.min(...snoozed.map((i) => Date.parse(i.snoozedUntil!)));
+    const timer = setTimeout(() => {
+      loadInbox();
+      if (slugRef.current) api.tickets(slugRef.current).then(setTickets).catch(() => {});
+    }, Math.min(Math.max(first - Date.now(), 0) + 1000, 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [snoozed, loadInbox]);
   useEffect(() => {
     document.title = needYou ? `(${needYou}) ckanban` : "ckanban";
   }, [needYou]);
@@ -585,6 +599,41 @@ export function App() {
   ];
   const menuAlert = scheduleErrors > 0 || mcpAttention > 0;
   const menuFooter = version && version.version !== "dev" ? `ckanban v${version.version} · by Leo` : "by Leo";
+  // Inbox triage on any board: the entry leaves the list (and the counts) at once, the server confirms.
+  const inboxDone = async (i: InboxItem) => {
+    setInbox((l) => l.filter((x) => x !== i));
+    setSnoozed((l) => l.filter((x) => x !== i));
+    if (i.profile === slug) return move(i.id, "done").finally(loadInbox);
+    try {
+      await api.updateTicket(i.profile, i.id, { status: "done" });
+      toast(<>Moved <b>{i.title}</b> to Done</>);
+    } catch (e: any) {
+      setError(`Couldn't move the ticket: ${e.message}`);
+      loadInbox();
+    }
+  };
+  const inboxSnooze = async (i: InboxItem, on: boolean) => {
+    const until = new Date(Date.now() + 24 * 3600_000).toISOString();
+    if (on) {
+      setInbox((l) => l.filter((x) => x !== i));
+      setSnoozed((l) => [...l, { ...i, snoozedUntil: until }]);
+    } else {
+      setSnoozed((l) => l.filter((x) => x !== i));
+      setInbox((l) => [...l, { ...i, snoozedUntil: undefined }]);
+    }
+    if (i.profile === slug) setTickets((ts) => ts.map((t) => (t.id === i.id ? { ...t, attention: on ? null : i.attention, snoozed: on ? { attention: i.attention, until } : null } : t)));
+    try {
+      const t = await (on ? api.snooze(i.profile, i.id) : api.unsnooze(i.profile, i.id));
+      const merge = (t: Ticket) => { if (i.profile === slugRef.current) setTickets((ts) => ts.map((x) => (x.id === t.id ? { ...x, ...t } : x))); };
+      if (on) toast(<>Snoozed <b>{i.title}</b> for a day</>, { action: { label: "Undo", run: () => void api.unsnooze(i.profile, i.id).then((t) => { merge(t); loadInbox(); }, () => {}) } });
+      merge(t);
+    } catch (e: any) {
+      setError(`Couldn't ${on ? "snooze" : "unsnooze"} the ticket: ${e.message}`);
+      if (i.profile === slugRef.current) api.tickets(i.profile).then(setTickets).catch(() => {});
+    }
+    loadInbox();
+  };
+
   const openFrom = (board: string, id: string) => {
     if (board !== slug) setSlug(board);
     openTicket(id, board);
@@ -668,7 +717,8 @@ export function App() {
           </span>
         )}
         <div className="spacer" />
-        <Inbox items={inbox} openRequest={inboxRequest} onPick={(i) => openFrom(i.profile, i.id)} />
+        <Inbox items={inbox} snoozed={snoozed} openRequest={inboxRequest} onPick={(i) => openFrom(i.profile, i.id)}
+          onMarkDone={(i) => void inboxDone(i)} onSnooze={(i, on) => void inboxSnooze(i, on)} />
         {profile && (
           <button className={`btn ghost icon-label${termOpen ? " on" : ""}`}
             onClick={() => (termOpen ? setDockOpen(false) : openDockOn(dockShown === "files" ? "files" : "terminal"))}
@@ -746,7 +796,7 @@ export function App() {
         </div>
       ) : (
         phone && phoneTab === "now" ? (
-          <NowView inbox={inbox} tickets={tickets} slug={profile.slug} onOpen={openFrom} onMarkDone={(id) => void move(id, "done")} onSwitchBoard={switchBoard} />
+          <NowView inbox={inbox} tickets={tickets} slug={profile.slug} onOpen={openFrom} onMarkDone={(i) => void inboxDone(i)} onSnooze={(i) => void inboxSnooze(i, true)} onSwitchBoard={switchBoard} />
         ) : <>
           <div className="board-bar">
             <div className="search">

@@ -6,12 +6,13 @@ import { useNow } from "./useNow";
  * Phone home (≤720px), for the board shown: what needs you (the Inbox, oldest wait first), what runs and what is
  * being planned. Other boards that need you are one line at the end. Tapping a card opens the ticket full screen.
  */
-export function NowView({ inbox, tickets, slug, onOpen, onMarkDone, onSwitchBoard }: {
+export function NowView({ inbox, tickets, slug, onOpen, onMarkDone, onSnooze, onSwitchBoard }: {
   inbox: InboxItem[];
   tickets: Ticket[];
   slug: string;
   onOpen: (profile: string, id: string) => void;
-  onMarkDone: (id: string) => void;
+  onMarkDone: (i: InboxItem) => void;
+  onSnooze: (i: InboxItem) => void;
   onSwitchBoard: (slug: string) => void;
 }) {
   const now = useNow();
@@ -48,7 +49,8 @@ export function NowView({ inbox, tickets, slug, onOpen, onMarkDone, onSwitchBoar
               ) : (
                 <button className={`btn${review ? "" : " primary"}`} onClick={() => onOpen(i.profile, i.id)}>Open</button>
               )}
-              {review && <button className="btn primary" onClick={() => onMarkDone(i.id)}>Mark done</button>}
+              {review && <button className="btn primary" onClick={() => onMarkDone(i)}>Mark done</button>}
+              <button className="btn ghost" onClick={() => onSnooze(i)} title="Hide it for a day, or until something changes">Snooze</button>
             </div>
           </div>
         );

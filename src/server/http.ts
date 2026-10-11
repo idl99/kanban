@@ -16,7 +16,7 @@ import { HuddleError, Huddles, type Caller } from "./huddle";
 import { HuddleSessionCache, participantSession, participantTool } from "./huddle-session";
 import { HUDDLE_HEADER, SOURCE_HEADER } from "./huddle-roster";
 import { NOTES_CAP } from "./huddle-notes";
-import { byWaitingAge, huddleAsk, huddleBusy, ticketAttention, userWaitReason } from "./attention";
+import { byWaitingAge, huddleAsk, huddleBusy, SNOOZE_MS, snoozeKey, ticketAttention, userWaitReason, withSnooze } from "./attention";
 import { isComplete, MAX_RETRIES, planActive } from "./plan";
 import { BugReportError, draftReport, submitReport, type BugBlockId, type BugSource, type GhRunner } from "./bugreport";
 import { AttachmentError, attachmentFile, attachmentType, IMAGE_TYPES, saveAttachment } from "./attachments";
@@ -241,6 +241,7 @@ export function createServer(deps: ServerDeps) {
     const running = board.isRunning(p.slug, t.id);
     const session = t.sessionId ? sessions.summary(t.sessionId) : null;
     const huddle = hosts.get(t.id);
+    const { attention, snoozed } = withSnooze(t, session, ticketAttention(store, p.slug, t, session, running, huddle), Date.now(), huddle);
     return {
       ...t,
       running,
@@ -260,7 +261,9 @@ export function createServer(deps: ServerDeps) {
       resources: board.resourceState(p.slug, t),
       /** A plan child waiting on the user (never started by the plan until then). */
       userWait: t.parentId && !isComplete(t) ? userWaitReason(t, session) : null,
-      attention: ticketAttention(store, p.slug, t, session, running, huddle),
+      attention,
+      /** Snoozed from the Inbox: what it waits for and until when (attention is null meanwhile). */
+      snoozed,
       /** Its own huddle is working on it: the card shows "Huddle · n working" instead of an outcome badge. */
       huddleBusy: !running && t.status !== "in_progress" && huddleBusy(huddle) && !huddleAsk(huddle),
       /** API-equivalent $ so far (the Usage tab's total), for In Progress and Review cards. */
@@ -398,8 +401,10 @@ export function createServer(deps: ServerDeps) {
       for (const p of store.listProfiles()) {
         const hosts = board.hostHuddles(p.slug);
         for (const t of store.listTickets(p.slug)) {
-          const att = view(p, t, hosts).attention;
-          if (att) out.push({ profile: p.slug, profileName: p.name, id: t.id, title: t.title, attention: att });
+          const v = view(p, t, hosts);
+          const base = { profile: p.slug, profileName: p.name, id: t.id, title: t.title };
+          if (v.attention) out.push({ ...base, attention: v.attention });
+          else if (v.snoozed) out.push({ ...base, attention: v.snoozed.attention, snoozedUntil: v.snoozed.until });
         }
       }
       return json(out.sort(byWaitingAge));
@@ -872,6 +877,21 @@ export function createServer(deps: ServerDeps) {
 
     const action = parts[4];
     if (action === "activity" && m === "GET") return json(store.readActivity(slug, id));
+    // Inbox Snooze: hide what the ticket waits for now (1 day, or { hours }); DELETE unsnoozes.
+    if (action === "snooze" && (m === "POST" || m === "DELETE")) {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "snoozing is the user's, not a board run's");
+      if (m === "DELETE") return json(view(profile, board.setSnooze(slug, id, null)));
+      const b = (await body(req)) ?? {};
+      const hours = b.hours === undefined ? SNOOZE_MS / 3600_000 : Number(b.hours);
+      if (!(hours > 0 && hours <= 24 * 30)) throw new HttpError(400, "hours must be between 0 and 720");
+      const t = store.getTicket(slug, id)!;
+      const session = t.sessionId ? sessions.summary(t.sessionId) : null;
+      const huddle = board.hostHuddles(slug).get(id);
+      const att = ticketAttention(store, slug, t, session, board.isRunning(slug, id), huddle);
+      if (!att) throw new HttpError(409, "this ticket doesn't need you, nothing to snooze");
+      const until = new Date(Date.now() + hours * 3600_000).toISOString();
+      return json(view(profile, board.setSnooze(slug, id, { until, key: snoozeKey(t, session, att, huddle) })));
+    }
     if (action === "usage" && m === "GET") {
       // The usage endpoint rate-limits: a ticket view reuses an answer up to 5 minutes old.
       const plan = await usage.get(5 * 60_000);

@@ -226,6 +226,28 @@ test("inbox lists tickets across boards that need the user, Review included, old
   }
 });
 
+test("snoozing an Inbox entry hides it from counts until it is unsnoozed or moved", async () => {
+  await fetch(`${base}/api/profiles`, json("POST", { name: "Snooze", path: tempDir("ck-snooze-") }));
+  const t = (await (await fetch(`${base}/api/profiles/snooze/tickets`, json("POST", { title: "later", status: "backlog" }))).json()) as any;
+  const url = `${base}/api/profiles/snooze/tickets/${t.id}`;
+  // Nothing waits on the user yet: nothing to snooze.
+  expect((await fetch(`${url}/snooze`, json("POST", {}))).status).toBe(409);
+  store.updateTicket("snooze", t.id, { status: "review", outcome: "done" });
+  const mine = async () => ((await (await fetch(`${base}/api/inbox`)).json()) as any[]).filter((i) => i.profile === "snooze");
+  const snoozed = (await (await fetch(`${url}/snooze`, json("POST", {}))).json()) as any;
+  expect(snoozed.attention).toBeNull();
+  expect(snoozed.snoozed).toMatchObject({ attention: { kind: "review" } });
+  expect(Date.parse(snoozed.snoozed.until) - Date.now()).toBeGreaterThan(23 * 3600_000);
+  expect(await mine()).toEqual([expect.objectContaining({ id: t.id, snoozedUntil: snoozed.snoozed.until, attention: expect.objectContaining({ kind: "review" }) })]);
+  const back = (await (await fetch(`${url}/snooze`, { method: "DELETE" })).json()) as any;
+  expect(back.attention).toMatchObject({ kind: "review" });
+  expect((await mine())[0].snoozedUntil).toBeUndefined();
+  // Moving the ticket clears its snooze.
+  await fetch(`${url}/snooze`, json("POST", {}));
+  await fetch(url, json("PATCH", { status: "done" }));
+  expect(store.getTicket("snooze", t.id)!.snooze).toBeNull();
+});
+
 test("tickets lists a light row for every ticket on every board", async () => {
   const a = tempDir("ck-plain-");
   const b = tempDir("ck-plain-");

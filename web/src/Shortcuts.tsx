@@ -45,6 +45,15 @@ const GROUPS: { title: string; keys: [string[], string][] }[] = [
     ],
   },
   {
+    title: "Inbox",
+    keys: [
+      [["↑", "↓"], "Select an entry"],
+      [["Enter"], "Open the ticket (Answer / Open)"],
+      [["D"], "Mark done"],
+      [["S"], "Snooze for a day / unsnooze"],
+    ],
+  },
+  {
     title: "Ticket panel",
     keys: [
       [["↑", "↓", "K", "J"], "Previous / next ticket"],

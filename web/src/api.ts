@@ -201,6 +201,8 @@ export interface Ticket {
   session?: SessionSummary | null;
   /** Why the ticket is waiting on you ("Your turn"), computed by the server. */
   attention?: Attention | null;
+  /** Snoozed from the Inbox: what it waits for and until when (attention is null meanwhile). */
+  snoozed?: { attention: Attention; until: string } | null;
   /** Its own huddle is working: the card shows the huddle badge instead of an outcome badge. */
   huddleBusy?: boolean;
   /** Output files published as claude.ai pages from the Share menu, one link per file. */
@@ -799,6 +801,8 @@ export interface InboxItem {
   id: string;
   title: string;
   attention: Attention;
+  /** Snoozed from the Inbox until then: listed apart, not counted. */
+  snoozedUntil?: string;
 }
 
 /** A ticket on any board, as the ⌘K command bar lists it. */
@@ -974,6 +978,9 @@ export const api = {
   updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "needs" | "important" | "runCapUsd">> & { expectedBody?: string }) =>
     req<Ticket>("PATCH", t(slug, id), patch),
   deleteTicket: (slug: string, id: string) => req<void>("DELETE", t(slug, id)),
+  /** Inbox Snooze: hide what the ticket waits for now for a day (or until its state changes). */
+  snooze: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/snooze`, {}),
+  unsnooze: (slug: string, id: string) => req<Ticket>("DELETE", `${t(slug, id)}/snooze`),
   /** The user answered a teammate card (saved it, or dismissed it). */
   answerTeammateCard: (slug: string, id: string, uuid: string, card: Omit<TeammateCardState, "at">) =>
     req<Ticket>("PUT", `${t(slug, id)}/teammate-cards/${encodeURIComponent(uuid)}`, card),

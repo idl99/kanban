@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { attentionFor, byWaitingAge, type HostHuddle, huddleBusy, lastChange, userWaitReason } from "../src/server/attention";
+import { attentionFor, byWaitingAge, type HostHuddle, huddleBusy, lastChange, snoozeKey, userWaitReason, withSnooze } from "../src/server/attention";
 import type { SessionSummary } from "../src/server/session";
 import type { Ticket } from "../src/server/types";
 
@@ -132,4 +132,63 @@ test("since: when the ticket started waiting", () => {
 test("the Inbox lists the oldest wait first", () => {
   const rows = [{ attention: { since: "2026-10-10T09:00:00Z" } }, { attention: { since: "2026-10-09T05:00:00Z" } }, { attention: { since: "2026-10-10T08:48:00Z" } }];
   expect(rows.sort(byWaitingAge).map((r) => r.attention.since)).toEqual(["2026-10-09T05:00:00Z", "2026-10-10T08:48:00Z", "2026-10-10T09:00:00Z"]);
+});
+
+test("a snooze hides what the ticket waits for until it ends", () => {
+  const now = Date.parse("2026-10-11T10:00:00Z");
+  const s = S({ openQuestions: 1, lastMessage: { role: "assistant", text: "?", at: "2026-10-11T09:00:00Z" } });
+  const t = T({ status: "review" });
+  const a = attentionFor(t, s, false)!;
+  const snoozed = T({ status: "review", snooze: { until: "2026-10-12T10:00:00Z", key: snoozeKey(t, s, a) } });
+  expect(withSnooze(snoozed, s, a, now)).toEqual({ attention: null, snoozed: { attention: a, until: "2026-10-12T10:00:00Z" } });
+  // Time's up: it needs the user again.
+  expect(withSnooze(snoozed, s, a, Date.parse("2026-10-12T10:00:01Z"))).toEqual({ attention: a, snoozed: null });
+  // Saving the snooze bumps updatedAt; that alone doesn't end it.
+  expect(withSnooze({ ...snoozed, updatedAt: "2026-10-11T10:00:00Z" }, s, a, now).attention).toBeNull();
+});
+
+test("a state change ends the snooze", () => {
+  const now = Date.parse("2026-10-11T10:00:00Z");
+  const s = S({ openQuestions: 1, lastMessage: { role: "assistant", text: "?", at: "2026-10-11T09:00:00Z" } });
+  const t = T({});
+  const a = attentionFor(t, s, false)!;
+  const snoozed = T({ snooze: { until: "2026-10-12T10:00:00Z", key: snoozeKey(t, s, a) } });
+  // A new question: new label.
+  const s2 = { ...s, openQuestions: 2 };
+  expect(withSnooze(snoozed, s2, attentionFor(snoozed, s2, false), now).attention).toMatchObject({ label: "Answer 2 questions" });
+  // Claude wrote again.
+  const s3 = { ...s, lastMessage: { role: "assistant" as const, text: "and?", at: "2026-10-11T09:30:00Z" } };
+  expect(withSnooze(snoozed, s3, attentionFor(snoozed, s3, false), now).attention).not.toBeNull();
+  // Another run failed.
+  const failed = { ...snoozed, outcome: "failed" as const, lastRunAt: "2026-10-11T09:45:00Z" };
+  expect(withSnooze(failed, s, attentionFor(failed, s, false), now).attention).toMatchObject({ kind: "failed" });
+  // Nothing to wait for: nothing snoozed either.
+  expect(withSnooze(snoozed, s, null, now)).toEqual({ attention: null, snoozed: null });
+});
+
+test("a new huddle ask ends the snooze, even with the same label", () => {
+  const now = Date.parse("2026-10-11T10:00:00Z");
+  const h = (since: string): HostHuddle => ({ working: 0, queued: false, tagged: 1, learnings: 0, closeRequest: false, since });
+  const t = T({ status: "review" });
+  const a = attentionFor(t, null, false, { huddle: h("2026-10-11T08:00:00Z") })!;
+  expect(a.label).toBe("Huddle: 1 for you");
+  const snoozed = T({ status: "review", snooze: { until: "2026-10-12T10:00:00Z", key: snoozeKey(t, null, a) } });
+  expect(withSnooze(snoozed, null, a, now).attention).toBeNull();
+  // The user read that tag; a new one came in later: same label, new since.
+  const again = attentionFor(snoozed, null, false, { huddle: h("2026-10-11T09:30:00Z") })!;
+  expect(withSnooze(snoozed, null, again, now).attention).toEqual(again);
+});
+
+test("a new huddle ask ends the snooze while an older one is still open", () => {
+  const now = Date.parse("2026-10-11T10:00:00Z");
+  const close = H({ closeRequest: true, since: "2026-10-11T08:00:00Z", latest: "2026-10-11T08:00:00Z" });
+  const t = T({ status: "review" });
+  const a = attentionFor(t, null, false, { huddle: close })!;
+  const snoozed = T({ status: "review", snooze: { until: "2026-10-12T10:00:00Z", key: snoozeKey(t, null, a, close) } });
+  expect(withSnooze(snoozed, null, a, now, close).attention).toBeNull();
+  // A tag for you arrives later: same label ("Huddle asks to close"), same since, newer latest.
+  const tagged = { ...close, tagged: 1, latest: "2026-10-11T09:30:00Z" };
+  const again = attentionFor(snoozed, null, false, { huddle: tagged })!;
+  expect(again.label).toBe(a.label);
+  expect(withSnooze(snoozed, null, again, now, tagged).attention).toEqual(again);
 });

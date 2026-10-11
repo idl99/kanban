@@ -316,6 +316,11 @@ export class Board {
     return !!a && a.kind !== "review";
   }
 
+  /** Snooze the ticket from the Inbox until a time (null: unsnooze); key: snoozeKey of what it waits for now. */
+  setSnooze(slug: string, id: string, snooze: { until: string; key: string } | null): Ticket {
+    return this.patch(slug, id, { snooze });
+  }
+
   /** Runs holding a maxParallel slot (see takesSlot). */
   running(slug: string): number {
     let n = 0;
@@ -1140,6 +1145,7 @@ export class Board {
     // Moved by hand: the user takes it from here, no automatic continue, and the card no longer waits for an auto huddle.
     if (clean.status && current.limit) clean.limit = null;
     if (clean.status && current.autoHuddle) clean.autoHuddle = null;
+    if (clean.status && current.snooze) clean.snooze = null;
     let t = this.patch(slug, id, clean);
 
     if (clean.status === "done") t = await this.cleanupWorktree(slug, t);

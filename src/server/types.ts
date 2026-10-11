@@ -133,6 +133,11 @@ export interface Ticket {
    * Ready tickets. from: where the card was, so Stop puts it back.
    */
   slotWait?: { at: string; from: Pick<Ticket, "status" | "outcome"> } | null;
+  /**
+   * Snoozed from the Inbox until a time: it doesn't need the user (no Inbox entry, no counts) until then, or until
+   * its state changes (key: snoozeKey when snoozed, see attention.ts).
+   */
+  snooze?: { until: string; key: string } | null;
   /** ⭐ Important: set by the user (or Claude when the user says so); unattended runs review it in an auto huddle before landing. */
   important?: boolean;
   /** The auto huddle this ticket's run started or waits for; the card stays In Progress until it ends. */

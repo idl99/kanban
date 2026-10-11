@@ -29,6 +29,8 @@ export interface HostHuddle {
   closeRequest: boolean;
   /** When the oldest of the tags, learnings and close request came in; null without any. */
   since: string | null;
+  /** When the newest of them came in (a new ask ends a snooze). */
+  latest?: string | null;
 }
 
 /** The huddle works on its own: the card shows "Huddle · n working" and it doesn't need the user. */
@@ -103,6 +105,34 @@ export function ticketAttention(
     planComplete: t.plan?.state === "stuck" ? planComplete() : undefined,
     huddle,
   });
+}
+
+/** How long Snooze in the Inbox hides a ticket. */
+export const SNOOZE_MS = 24 * 3600_000;
+
+/**
+ * What a snooze holds on to: the reason and the last thing that happened (Claude's last word, the last run).
+ * A new question, message or run changes it and ends the snooze. Not updatedAt: saving the snooze bumps that.
+ */
+export function snoozeKey(t: Ticket, s: SessionSummary | null, a: Attention, huddle?: HostHuddle | null): string {
+  // A huddle's asks don't touch the session or the runs: the newest unseen ask (and the oldest, once that one is read).
+  const asks = a.kind === "huddle" ? `${a.since}|${huddle?.latest ?? ""}` : "";
+  return [a.kind, a.label, s?.lastMessage?.at ?? "", t.lastRunAt ?? "", t.outcome ?? "", asks].join("|");
+}
+
+/** A ticket that would need the user but is snoozed: the Inbox lists it apart, with time left. */
+export interface Snoozed {
+  attention: Attention;
+  until: string;
+}
+
+/** Applies the ticket's snooze to its attention: while it holds, the ticket doesn't need the user. */
+export function withSnooze(
+  t: Ticket, s: SessionSummary | null, a: Attention | null, now = Date.now(), huddle?: HostHuddle | null,
+): { attention: Attention | null; snoozed: Snoozed | null } {
+  const z = t.snooze;
+  if (a && z && Date.parse(z.until) > now && z.key === snoozeKey(t, s, a, huddle)) return { attention: null, snoozed: { attention: a, until: z.until } };
+  return { attention: a, snoozed: null };
 }
 
 /** Oldest first: the Inbox order. */
