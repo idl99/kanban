@@ -840,10 +840,9 @@ textarea { resize: vertical; font-size: 13.5px; }
 .conv-msg.user { background: var(--surface-2); border-radius: 16px 16px 4px 16px; padding: 8px 14px; max-width: 80%; align-self: flex-end; font-size: 14px; }
 .conv-msg.user .conv-head { display: none; }
 .conv-msg.user.pending .conv-head { display: flex; }
-/* Ticket-to-ticket messages (ask_ticket / reply_ticket): neither the user nor this ticket's own reply. */
+/* Messages from other sessions (huddles): neither the user nor this ticket's own reply. */
 .conv-msg.peer { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 8px 14px; max-width: 86%; font-size: 13.5px; }
 .conv-msg.peer.in { align-self: flex-start; border-left: 3px solid var(--accent); }
-.conv-msg.peer.out { align-self: flex-end; border-right: 3px solid var(--accent); }
 .conv-msg.peer .conv-head { display: flex; color: var(--muted); }
 .conv-msg.peer .conv-head b { font-weight: 560; color: var(--text); }
 /* huddle messages delivered to a ticket's session: a collapsible huddle entry, not a user bubble */

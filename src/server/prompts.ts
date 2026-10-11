@@ -4,7 +4,7 @@ import { helperCommand } from "./artifact";
 import { huddleLine, summaryFile } from "./huddle-roster";
 import { MOCKUPS_DIR } from "./mockups";
 import { MAX_RETRIES } from "./plan";
-import type { Comment, Huddle, HuddleMessage, HuddleParticipant, Ticket, TicketQuestion } from "./types";
+import type { Comment, Huddle, HuddleMessage, HuddleParticipant, Ticket } from "./types";
 import { shellQuote } from "./util";
 
 const RESULT_RULE = `When you finish this run, end your final message with exactly one line in this format (valid JSON, single line):
@@ -52,11 +52,6 @@ function context(note: string, body: string, attrs: Record<string, string> = {})
   return `<ckanban-context note="${note.replace(/"/g, "'")}"${extra}>\n${body}\n</ckanban-context>`;
 }
 
-/** Board runs can talk to other tickets' Claude sessions (ask_ticket / reply_ticket). */
-const PEERS_RULE = `# Other tickets
-- If you need something only another ticket's Claude knows (what it changed and why, an API it is building), read that ticket with the ckanban \`get_ticket\` tool first. If that isn't enough, ask its Claude with \`ask_ticket\` (same board only); the call waits for the reply.
-- If another ticket's Claude asks you something, reply with \`reply_ticket\` and the question id it gave you.`;
-
 /** Runs start with --chrome and share the user's Chrome, so each works in tabs of its own. */
 const CHROME_RULE = `# Browser
 Claude in Chrome is available (mcp__claude-in-chrome__* tools, in the user's own Chrome). Open your own new tab and don't close or take over the user's tabs. If it isn't connected, say so and carry on without it.`;
@@ -76,36 +71,6 @@ ${t.important ? "This ticket is marked ⭐ Important, so it gets a review huddle
 
 /** The section above, when the board has auto huddles on (absent: nothing). */
 const autoSection = (t: Pick<Ticket, "important">, on?: boolean) => (on ? `\n\n${autoHuddleRule(t)}` : "");
-
-const quote = (s: string, max = 200) => {
-  const one = s.replace(/\s+/g, " ").trim();
-  return one.length > max ? `${one.slice(0, max - 1)}…` : one;
-};
-
-/**
- * A question from ticket `from`'s Claude, sent into ticket `to`'s session (steering its run, or starting a reply).
- * The question comes first so the chat shows it; the from/question attributes mark it as a ticket-to-ticket message.
- */
-export function askPrompt(from: Ticket, q: TicketQuestion): string {
-  return `${q.text.trim()}
-
-${context("", `(Question from the Claude working on ticket ${from.id} "${from.title}" on this board; question id ${q.id}. That session is waiting for your reply.)
-Reply with the ckanban \`reply_ticket\` tool (questionId "${q.id}"): answer from what you know about this ticket, its conversation and its code, or ask a clarifying question back if you need more detail. Keep it short and specific.
-${DIGEST_RULE} Don't post only to acknowledge, and tag only who must act.
-If you were in the middle of work, carry on with it afterwards and keep following the instructions you were given for that run, including how to end it. Otherwise just reply; don't change files for this.`, { from: from.id, question: q.id })}`;
-}
-
-/** A reply that arrived after the asker's ask_ticket call stopped waiting, sent into the asker's run. */
-export function lateReplyPrompt(to: Ticket, q: TicketQuestion): string {
-  return `${(q.reply ?? "").trim()}
-
-${context("", `(Reply from the Claude working on ticket ${to.id} "${to.title}" to your question ${q.id}: "${quote(q.text)}". It came after your ask_ticket call stopped waiting. Take it into account and carry on; keep following the instructions you were given for this run, including how to end it.)`, { from: to.id, reply: q.id })}`;
-}
-
-/** The same late reply as a comment, for the asker's next run. */
-export function lateReplyComment(to: Ticket, q: TicketQuestion): string {
-  return `Reply from ticket ${to.id} "${to.title}" to the question "${quote(q.text)}" (${q.id}):\n\n${(q.reply ?? "").trim()}`;
-}
 
 const INTERVIEW = `# How to work: interview first
 The user wants to be interviewed before you do the work. In this first run:
@@ -134,10 +99,11 @@ function deliverableRule(outputDir: string): string {
 - Code changes still belong in the repository, not in the outputs folder.`;
 }
 
-/** Board runs are headless, where Claude Code turns the Artifact tool off; the helper stands in. */
-function artifactRule(): string {
+/** Board runs are headless, where Claude Code turns the Artifact tool off; the helper stands in (board setting "claude.ai artifacts"). */
+function artifactRule(on?: boolean): string {
+  if (!on) return "";
   const cmd = helperCommand();
-  return `# claude.ai artifacts
+  return `\n\n# claude.ai artifacts
 The Artifact tool is not available in board runs. To publish or read a claude.ai artifact, run this helper with Bash instead (each call can take a minute or two):
 - New page: \`${cmd} artifact publish <file.html> [--title "Title"]\`
 - Update an existing artifact (keeps the same link): first \`${cmd} artifact read <url> --out <file.html>\`, edit that file, then \`${cmd} artifact publish <file.html> --url <url>\`
@@ -195,6 +161,8 @@ export interface PromptContext {
   schedule?: { id: string; name: string | null; board: string };
   /** The board has "Auto huddles" on: add the auto huddle section (not for interview-mode tickets' first run). */
   autoHuddles?: boolean;
+  /** The board has "claude.ai artifacts" on: teach the artifact helper. */
+  artifacts?: boolean;
 }
 
 /** Tells a scheduled run where it came from, so it can read or refine its own schedule. */
@@ -232,18 +200,14 @@ ${interview ? `${INTERVIEW}\n\n` : ""}# Rules
 - If it is a development task but git or a GitHub remote is not available, do NOT fake it. Stop, and report status "blocked" explaining what is missing.
 - If it is a non-code task (research, writing, analysis, file organisation), no PR is needed.${autoSection(t, ctx.autoHuddles)}
 
-${PEERS_RULE}
-
 ${CHROME_RULE}
 
-${targetDesignRule(ctx.outputDir)}${deliverableRule(ctx.outputDir)}
-
-${artifactRule()}
+${targetDesignRule(ctx.outputDir)}${deliverableRule(ctx.outputDir)}${artifactRule(ctx.artifacts)}
 
 ${RESULT_RULE}`);
 }
 
-export function resumePrompt(t: Ticket, newComments: Comment[], outputDir: string, autoHuddles = false): string {
+export function resumePrompt(t: Ticket, newComments: Comment[], outputDir: string, autoHuddles = false, artifacts = false): string {
   const feedback = newComments.length
     ? newComments.map((c) => `- ${c.text}`).join("\n")
     : "- (no new comments; continue the task)";
@@ -254,11 +218,7 @@ ${feedback}
 
 ${t.mode === "interview" ? `${t.interviewed ? AFTER_ANSWERS : INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}Continue working on the ticket, addressing the feedback. If a pull request already exists, push new commits to the same branch to update it. Update deliverables in ${outputDir} rather than creating duplicates.${autoSection(t, autoHuddles)}
 
-${targetDesignRule(outputDir)}${PEERS_RULE}
-
-${CHROME_RULE}
-
-${artifactRule()}
+${targetDesignRule(outputDir)}${CHROME_RULE}${artifactRule(artifacts)}
 
 ${RESULT_RULE}`);
 }
@@ -275,6 +235,7 @@ export interface FreshContext {
   comments: Comment[];
   outputDir: string;
   autoHuddles?: boolean;
+  artifacts?: boolean;
 }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
@@ -307,13 +268,9 @@ ${t.mode === "interview" && !t.interviewed ? `${INTERVIEW.replace("In this first
 - You are working in the main checkout of this project (not an isolated worktree): use a feature branch, never commit directly to the default branch.` : ""}
 - Update deliverables in ${ctx.outputDir} rather than creating duplicates.${autoSection(t, ctx.autoHuddles)}
 
-${PEERS_RULE}
-
 ${CHROME_RULE}
 
-${targetDesignRule(ctx.outputDir)}${deliverableRule(ctx.outputDir)}
-
-${artifactRule()}
+${targetDesignRule(ctx.outputDir)}${deliverableRule(ctx.outputDir)}${artifactRule(ctx.artifacts)}
 
 ${RESULT_RULE}`);
 }
@@ -338,7 +295,7 @@ export function interruptedPrompt(): string {
 }
 
 /** A message the user typed in the ticket's chat. Their text comes first; board instructions are wrapped so the UI can hide them. */
-export function chatPrompt(t: Ticket, text: string, mode: ChatMode, outputDir: string): string {
+export function chatPrompt(t: Ticket, text: string, mode: ChatMode, outputDir: string, artifacts = false): string {
   const typed = text.trim();
   if (mode === "refine") {
     const start = typed ? "" : `The user just moved this ticket to Planning and is waiting for you in the ticket chat. Start now:
@@ -365,9 +322,7 @@ ${bugReportRule(t)}
 
 ${mockupsRule(outputDir)}
 
-${PLANNING_ARTIFACT_RULE}
-
-${CHROME_RULE}
+${artifacts ? `${PLANNING_ARTIFACT_RULE}\n\n` : ""}${CHROME_RULE}
 
 ${QUESTIONS_FORMAT}
 
@@ -395,9 +350,7 @@ If proposing tickets, a branch or a teammate was all the message asked for, put 
 ${MANAGE_RULE}
 If managing tickets (adopting, ordering, starting the plan) was all the message asked for, also end with <ckanban-stay/>.
 
-${targetDesignRule(outputDir)}${QUESTIONS_FORMAT}
-
-${artifactRule()}
+${targetDesignRule(outputDir)}${QUESTIONS_FORMAT}${artifactRule(artifacts)}
 
 ${RESULT_RULE}`)}`;
 }

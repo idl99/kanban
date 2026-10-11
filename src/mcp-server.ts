@@ -107,30 +107,17 @@ interface Tool {
 export interface ToolContext {
   client: Pick<BoardClient,
     | "listProfiles" | "listTickets" | "getTicket" | "createTicket" | "updateTicket" | "deleteTicket" | "chat" | "stop" | "listComments"
-    | "comment" | "ask" | "pollQuestion" | "replyQuestion" | "reportBug" | "listSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "runSchedule"
+    | "comment" | "reportBug" | "listSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "runSchedule"
     | "scheduleHistory" | "cronPreview" | "adopt" | "planAction" | "huddleRead" | "huddlePost" | "huddleMode" | "huddleAdd" | "huddleFindings"
     | "huddleStatus" | "huddleCloseRequest" | "startAutoHuddle"
     | "listHuddlePresets" | "saveHuddlePreset" | "deleteHuddlePreset" | "listHuddleTemplates" | "huddleBrief" | "huddleProposeTeammate">;
   cwd: string;
   env: Record<string, string | undefined>;
   main?: (dir: string) => string | null;
-  /** Waits between ask_ticket polls (tests pass a fake). */
-  sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   /** Runs an artifact publish/read (tests pass a fake). Default: runArtifactJob. */
   artifact?: (job: ArtifactJob, timeoutMs: number) => Promise<ArtifactOutcome>;
 }
-
-/** How long ask_ticket waits for the reply: 10 minutes, or less when Claude Code's MCP_TOOL_TIMEOUT would cut the call off sooner. */
-export function askWaitMs(env: Record<string, string | undefined>): number {
-  const wait = 10 * 60_000;
-  const limit = Number(env.MCP_TOOL_TIMEOUT);
-  // Claude Code ignores values under 1s; leave 15s for the last poll and the answer to get back.
-  if (!Number.isFinite(limit) || limit < 1000) return wait;
-  return Math.max(1000, Math.min(wait, limit - 15_000));
-}
-
-const ASK_POLL_MS = 1000;
 
 /** How long an artifact job may take: 3 minutes, or less when MCP_TOOL_TIMEOUT would cut the call off sooner. */
 export function artifactWaitMs(env: Record<string, string | undefined>): number {
@@ -1249,70 +1236,6 @@ export const TOOLS: Tool[] = [
     },
   },
   {
-    name: "ask_ticket",
-    description:
-      "Ask the Claude session of another ticket on this board a question and wait for its reply (up to about 10 minutes). " +
-      "Use it when you need something only that ticket's Claude knows (what it changed and why, an API it is building); " +
-      "read the ticket with get_ticket first. The question goes into that ticket's real session: it steers its run if Claude is working, " +
-      "or starts a short reply there; both tickets' chats show the exchange. The reply may be a clarifying question: then call ask_ticket again with more detail. " +
-      "If no reply comes in time it arrives later as a message in your run (or a comment for your next run). Only works inside a board run.",
-    inputSchema: {
-      type: "object",
-      properties: { profile: PROFILE, id: { ...ID, description: "Ticket whose Claude to ask (same board), e.g. t_20261001_abcd." }, question: { type: "string", description: "Short, self-contained question." } },
-      required: ["id", "question"],
-    },
-    changes: true,
-    allowInRun: true,
-    async run(args, ctx) {
-      const run = ctx.env[RUN_ENV];
-      if (!run) throw new ClientError("ask_ticket only works inside a board run: it asks on behalf of that run's ticket");
-      const slug = await slugFor(args, ctx);
-      const now = ctx.now ?? Date.now;
-      const sleep = ctx.sleep ?? Bun.sleep;
-      const waitMs = askWaitMs(ctx.env);
-      const q = await ctx.client.ask(slug, str(args, "id")!, str(args, "question")!, waitMs, run);
-      const who = `ticket ${q.to} "${q.toTitle}"`;
-      const deadline = now() + waitMs;
-      for (;;) {
-        const final = now() >= deadline;
-        // A daemon restart mid-wait is not the end: keep polling until the deadline.
-        const r = await ctx.client.pollQuestion(slug, q.id, final, run).catch(() => ({ reply: null }));
-        if (r.reply !== null) return `Reply from ${who}:\n\n${r.reply}`;
-        if (final) {
-          return `No reply yet from ${who} (question ${q.id}); it will arrive later as a message in your run, ` +
-            "or as a comment for your next run. Carry on with other work meanwhile.";
-        }
-        await sleep(Math.max(0, Math.min(ASK_POLL_MS, deadline - now())));
-      }
-    },
-  },
-  {
-    name: "reply_ticket",
-    description:
-      "Reply to a question another ticket's Claude asked you with ask_ticket (the message names the question id). " +
-      "Answer it, or ask a clarifying question back; then carry on with your own work.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        profile: PROFILE,
-        questionId: { type: "string", description: "Question id from the message, e.g. q_ab12cd34." },
-        text: { type: "string", description: "Your reply." },
-      },
-      required: ["questionId", "text"],
-    },
-    changes: true,
-    allowInRun: true,
-    async run(args, ctx) {
-      const slug = await slugFor(args, ctx);
-      const r = await ctx.client.replyQuestion(slug, str(args, "questionId")!, str(args, "text")!, ctx.env[RUN_ENV]);
-      const how = r.delivered === "call" ? "it got it right away"
-        : r.delivered === "steer" ? "it had stopped waiting, so it arrives as a message in its run"
-        : r.delivered === "comment" ? "it had stopped waiting, so it was left as a comment for its next run"
-        : "that ticket no longer exists";
-      return `Sent your reply to ticket ${r.from}; ${how}.`;
-    },
-  },
-  {
     name: "stop_ticket",
     description: "Stop the Claude run working on a ticket.",
     inputSchema: { type: "object", properties: { profile: PROFILE, id: ID }, required: ["id"] },
@@ -1425,8 +1348,7 @@ export async function handleMessage(msg: JsonRpc, ctx: ToolContext): Promise<obj
           "Tools for the user's local ckanban board. Use them when the user asks to put work on the board, " +
           "find what to do next, or check on, start or steer tickets. Tickets you create land in Backlog in interview mode by default. " +
           "Schedules (create_schedule etc.) make the board create and run a ticket on a cron, for work the user wants done regularly. " +
-          "ask_questions, propose_ticket, propose_tickets, propose_branch and propose_teammate are for the board's ticket chats: they show a form or cards to the user. " +
-          "read_artifact and publish_artifact read, update and publish claude.ai artifacts where the Artifact tool isn't available.",
+          "ask_questions, propose_ticket, propose_tickets, propose_branch and propose_teammate are for the board's ticket chats: they show a form or cards to the user.",
       });
     }
     case "ping":

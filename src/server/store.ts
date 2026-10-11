@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import YAML from "yaml";
 import type {
-  ActivityEntry, Comment, Config, Huddle, HuddleMessage, OutputFile, Profile, Schedule, ScheduleHistoryEntry, Status, Ticket, TicketMode, TicketQuestion,
+  ActivityEntry, Comment, Config, Huddle, HuddleMessage, OutputFile, Profile, Schedule, ScheduleHistoryEntry, Status, Ticket, TicketMode,
 } from "./types";
 import { cleanPresets, type HuddlePreset } from "./huddle-presets";
 import { cleanTemplates, type HuddleTemplate } from "./huddle-templates";
@@ -318,21 +318,6 @@ export class Store {
 
   readScheduleHistory(slug: string, id: string): ScheduleHistoryEntry[] {
     return readJsonl<ScheduleHistoryEntry>(join(this.schedulesDir(slug), `${id}.history.jsonl`));
-  }
-
-  listQuestions(slug: string): TicketQuestion[] {
-    const file = join(this.profileDir(slug), "questions.json");
-    if (!existsSync(file)) return [];
-    try {
-      const v = JSON.parse(readFileSync(file, "utf8"));
-      return Array.isArray(v) ? v : [];
-    } catch {
-      return [];
-    }
-  }
-
-  saveQuestions(slug: string, qs: TicketQuestion[]): void {
-    atomicWrite(join(this.profileDir(slug), "questions.json"), JSON.stringify(qs, null, 2) + "\n");
   }
 
   /** Huddle presets at one level: a board's own (slug), or the global ones every board gets (slug null). Merge with mergePresets. */

@@ -66,10 +66,9 @@ export function outcomeBadge(t: Ticket) {
   }
 }
 
-/** Who wrote the card's last message: huddle digests and other tickets' messages aren't the user's. */
+/** Who wrote the card's last message: huddle digests aren't the user's. */
 function lastWho(m: SessionMessage): string {
   if (m.from === "huddle") return "Huddle";
-  if (m.from === "ticket") return "Another ticket";
   return m.role === "user" ? "You" : "Claude";
 }
 

@@ -112,15 +112,6 @@ export interface CommentInfo {
   at: string;
 }
 
-export interface QuestionInfo {
-  id: string;
-  from: string;
-  to: string;
-  toTitle: string;
-  text: string;
-  waitUntil: string;
-}
-
 export interface TicketPatch {
   title?: string;
   body?: string;
@@ -277,14 +268,6 @@ export class BoardClient {
   listComments = (slug: string, id: string) => this.req<CommentInfo[]>("GET", `${this.t(slug, id)}/comments`);
   comment = (slug: string, id: string, text: string, run?: string | null) =>
     this.req<CommentInfo>("POST", `${this.t(slug, id)}/comments`, { text }, this.by(run));
-  // Ticket-to-ticket questions: `run` is the board run's CKANBAN_TICKET (the asking or replying ticket).
-  ask = (slug: string, id: string, question: string, waitMs: number, run: string) =>
-    this.req<QuestionInfo>("POST", `${this.t(slug, id)}/ask`, { question, waitMs }, this.by(run));
-  pollQuestion = (slug: string, qid: string, final: boolean, run: string) =>
-    this.req<{ reply: string | null }>("POST", `${this.q(slug, qid)}/poll`, { final }, this.by(run));
-  replyQuestion = (slug: string, qid: string, text: string, run?: string | null) =>
-    this.req<{ delivered: "call" | "steer" | "comment" | "gone"; from: string }>("POST", `${this.q(slug, qid)}/reply`, { text }, this.by(run));
-  private q = (slug: string, qid: string) => `/api/profiles/${encodeURIComponent(slug)}/questions/${encodeURIComponent(qid)}`;
   reportBug = (input: BugReportRequest) => this.req<BugReportReply>("POST", "/api/bug-report", input);
 
   private s(slug: string, id?: string): string {

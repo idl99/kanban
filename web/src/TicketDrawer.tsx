@@ -585,7 +585,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 </div>
               )}
 
-              <NeedsField slug={slug} ticket={ticket} onError={onError} />
+              {/* Rarely set by hand (plans and update_ticket set it), so only shown once the ticket has needs. */}
+              {!!ticket.needs?.length && <NeedsField slug={slug} ticket={ticket} onError={onError} />}
 
               {children.length > 0 && <PlanSummary ticket={ticket} children={children} onOpen={() => setTab("plan")} />}
 

@@ -370,15 +370,6 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
 
   const empty = page !== null && !loadError && entries.length === 0 && !pending.length && !queued.length && !running;
 
-  /** Who a ticket-to-ticket message is from or to, linking to that ticket when it still exists. */
-  const peerLabel = (dir: "in" | "out", ticketId: string | null) => {
-    const other = ticketId ? tickets.find((t) => t.id === ticketId) : undefined;
-    const name = other ? other.title : ticketId ?? "another ticket";
-    const link = other
-      ? <button className="link-btn" onClick={() => onOpenTicket(other.id)} title={other.id}>{name}</button>
-      : <span>{name}</span>;
-    return dir === "in" ? <>From {link}'s Claude</> : <>Claude to {link}</>;
-  };
   const childFor = (d: { title: string }) => tickets.find((t) => t.parentId === ticket.id && t.title === d.title);
   const createChild = async (d: NewTicketDraft) => {
     try {
@@ -472,17 +463,6 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             return (
               <HuddleDigest key={e.uuid} text={e.text} old={old} onOpen={onOpenHuddle}
                 meta={e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>} />
-            );
-          }
-          if (e.peer) {
-            return (
-              <div key={e.uuid} className={`conv-msg peer ${e.peer.dir}${old ? " inherited" : ""}`}>
-                <div className="conv-head">
-                  <b>{peerLabel(e.peer.dir, e.peer.ticketId)}</b>
-                  {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}
-                </div>
-                <Markdown text={e.text} />
-              </div>
             );
           }
           return (
@@ -682,7 +662,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         {queued.filter((q) => q.peer && !HUDDLE_TAG.test(q.text)).map((q) => (
           <div key={q.id} className="conv-msg peer in pending">
             <div className="conv-head">
-              <b>{peerLabel("in", q.text.match(/<ckanban-context[^>]* from="([^"]*)"/)?.[1] ?? null)}</b>
+              <b>From the board</b>
               <span className="muted small">{q.state === "queued" ? "queued · Claude reads this at its next step" : "not sent · Claude was stopped before reading it"}</span>
             </div>
             <Markdown text={q.text.split("<ckanban-context")[0].trim()} />

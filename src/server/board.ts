@@ -389,7 +389,7 @@ export class Board {
   /**
    * Send a chat message: resumes the ticket's session right away, like typing in the terminal.
    * While Claude is working the message steers the run instead: Claude reads it at its next step.
-   * peer: the message comes from another ticket's Claude (see questions.ts) and is already a full prompt.
+   * peer: the message comes from another session (a huddle) and is already a full prompt.
    */
   async chat(slug: string, id: string, text: string, opts: ChatOptions = {}): Promise<Ticket> {
     const t = this.store.getTicket(slug, id);
@@ -657,16 +657,16 @@ export class Board {
     let prompt = withSetup(localizeImages(run.chat?.raw
       ? run.chat.text
       : run.chat
-      ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir)
+      ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir, !!profile.artifacts)
       : fresh
       ? this.freshPrompt(slug, t, session.isGit, outputDir)
       : t.runCount === 0 || !session.existed
       ? firstRunPrompt(t, {
         isGit: session.isGit, linked: !!t.workdir, comments: t.workdir || t.runCount > 0 ? newComments : [], outputDir,
         schedule: t.scheduleId ? { id: t.scheduleId, name: this.store.getSchedule(slug, t.scheduleId)?.name ?? null, board: slug } : undefined,
-        autoHuddles: autoHuddlesOn(profile),
+        autoHuddles: autoHuddlesOn(profile), artifacts: !!profile.artifacts,
       })
-      : resumePrompt(t, newComments, outputDir, autoHuddlesOn(profile)), this.store.attachmentsDir), this.takeSetup(slug, id));
+      : resumePrompt(t, newComments, outputDir, autoHuddlesOn(profile), !!profile.artifacts), this.store.attachmentsDir), this.takeSetup(slug, id));
     // A slash command only runs when it is the whole message: Claude Code passes everything after the name to
     // it as arguments (the board's note too). So the command goes alone and the board's instructions go in
     // the system prompt for this run.
@@ -1597,9 +1597,10 @@ export class Board {
     const comments = this.store.listComments(slug, t.id);
     const last = comments.findLast((c) => c.author === "ai" && !BOARD_NOTE_RE.test(c.text));
     const recent = comments.filter((c) => !BOARD_NOTE_RE.test(c.text) && c !== last).slice(-10);
+    const profile = this.store.getProfile(slug);
     return freshSessionPrompt(t, {
-      isGit, linked: !!t.workdir, baseBranch: this.store.getProfile(slug)?.baseBranch || "main",
-      lastResult: last?.text ?? null, comments: recent, outputDir, autoHuddles: autoHuddlesOn(this.store.getProfile(slug)),
+      isGit, linked: !!t.workdir, baseBranch: profile?.baseBranch || "main",
+      lastResult: last?.text ?? null, comments: recent, outputDir, autoHuddles: autoHuddlesOn(profile), artifacts: !!profile?.artifacts,
     });
   }
 

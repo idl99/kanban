@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { extractFinalText, summarizeEvent } from "../src/server/activity";
-import { chatPrompt, firstRunPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumeCommand, resumePrompt } from "../src/server/prompts";
+import { chatPrompt, firstRunPrompt, freshSessionPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumeCommand, resumePrompt } from "../src/server/prompts";
 import { parseResult } from "../src/server/result";
 import type { Ticket } from "../src/server/types";
 
@@ -120,20 +120,26 @@ test("parseResult accepts questions status", () => {
   expect(parseResult('CKANBAN_RESULT: {"status":"questions","prUrl":null,"summary":"4 questions"}')!.status).toBe("questions");
 });
 
-test("run prompts point Claude at the artifact helper", () => {
+test("run prompts point Claude at the artifact helper only when the board turns it on", () => {
   const t = { ...ticket, mode: "auto", runCount: 1 } as Ticket;
-  for (const p of [firstRunPrompt(t, { isGit: true, outputDir: "/o" }), resumePrompt(t, [], "/o"), chatPrompt(t, "hi", "act", "/o")]) {
+  const fresh = { isGit: true, linked: false, baseBranch: "main", lastResult: null, comments: [], outputDir: "/o" };
+  for (const p of [firstRunPrompt(t, { isGit: true, outputDir: "/o", artifacts: true }), resumePrompt(t, [], "/o", false, true), chatPrompt(t, "hi", "act", "/o", true), freshSessionPrompt(t, { ...fresh, artifacts: true })]) {
     expect(p).toContain("Artifact tool is not available");
     expect(p).toContain("artifact publish <file.html> --url <url>");
   }
-  expect(chatPrompt(t, "hi", "refine", "/o")).not.toContain("artifact publish");
+  for (const p of [firstRunPrompt(t, { isGit: true, outputDir: "/o" }), resumePrompt(t, [], "/o"), chatPrompt(t, "hi", "act", "/o"), freshSessionPrompt(t, fresh)]) {
+    expect(p).not.toContain("claude.ai artifacts");
+    expect(p).not.toContain("artifact publish");
+  }
+  expect(chatPrompt(t, "hi", "refine", "/o", true)).not.toContain("artifact publish");
 });
 
-test("planning chats reach artifacts through the MCP tools, not the Bash helper", () => {
-  const p = chatPrompt({ ...ticket, mode: "auto" } as Ticket, "", "refine", "/o");
+test("planning chats reach artifacts through the MCP tools, not the Bash helper (when on)", () => {
+  const p = chatPrompt({ ...ticket, mode: "auto" } as Ticket, "", "refine", "/o", true);
   expect(p).toContain("`read_artifact`");
   expect(p).toContain("`publish_artifact` with the full edited page and the same url");
   expect(p).toContain("Publishing artifacts is allowed while planning");
+  expect(chatPrompt({ ...ticket, mode: "auto" } as Ticket, "", "refine", "/o")).not.toContain("read_artifact");
 });
 
 test("a scheduled ticket's first run is told its schedule", () => {

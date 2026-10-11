@@ -36,6 +36,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
   const [capText, setCapText] = useState(capInputText(profile?.runCapUsd));
   const cap = parseCap(capText);
   const capError = cap === undefined ? "An amount in $, e.g. 5 (empty: no cap)" : null;
+  const [artifacts, setArtifacts] = useState(!!profile?.artifacts);
   const [claudeModel, setClaudeModel] = useState<string | null>(null);
   const [recent, setRecent] = useState<ClaudeProject[] | null>(null);
   const [filter, setFilter] = useState("");
@@ -90,7 +91,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
     try {
       const p = profile
         ? await api.updateProfile(profile.slug, {
-          name, path, maxParallel, model: model || null, autoHuddles, runCapUsd: cap || null,
+          name, path, maxParallel, model: model || null, autoHuddles, runCapUsd: cap || null, artifacts,
           // A file typed but not yet added with Enter still counts.
           copyFiles: newFile.trim() && !copyFiles.includes(newFile.trim()) ? [...copyFiles, newFile.trim()] : copyFiles,
           setupCommand: setupCommand.trim(), cleanupCommand: cleanupCommand.trim(), setupDetected: detected,
@@ -213,6 +214,15 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
                 Auto huddles
                 <span className="muted small">
                   When you're away, Claude starts a review huddle on its own before landing ⭐ important or risky work ($20 cap, one at a time per board).
+                </span>
+              </span>
+            </label>
+            <label className="check-row board-switch">
+              <input type="checkbox" checked={artifacts} onChange={(e) => setArtifacts(e.target.checked)} />
+              <span>
+                claude.ai artifacts
+                <span className="muted small">
+                  Teach Claude to publish and read claude.ai artifacts from runs and Planning chats. Off keeps every prompt shorter.
                 </span>
               </span>
             </label>

@@ -31,6 +31,8 @@ export interface Profile {
   autoHuddles?: boolean;
   /** Spending cap per run in USD (claude --max-budget-usd) for its tickets' work runs. Missing/null: none. */
   runCapUsd?: number | null;
+  /** Runs are taught the claude.ai artifact helper (publish/read artifacts). Missing: off. */
+  artifacts?: boolean;
 }
 
 /** Board setting "Auto huddles": on unless turned off. */
@@ -277,7 +279,7 @@ export interface QueuedMessage {
   /** queued: Claude reads it at its next step. unsent: the run was stopped first; the user sends or discards it. */
   state: "queued" | "unsent";
   /**
-   * From another ticket's Claude (ask_ticket / a late reply): sent as-is, without the ticket-chat note, and
+   * From another session (a huddle's messages): sent as-is, without the ticket-chat note, and
    * a reply run it starts leaves the card, outcome and run count alone.
    */
   peer?: boolean;
@@ -290,25 +292,6 @@ export interface QueuedMessage {
   slash?: "prompt" | "local";
   /** From the ticket's own auto huddle (findings, the budget brake) or a freed auto-huddle slot: sent as-is, run as its work. */
   hostWake?: boolean;
-}
-
-/** A question one ticket's Claude asked another's (ask_ticket), kept per board in questions.json. */
-export interface TicketQuestion {
-  id: string;
-  /** Asking ticket. */
-  from: string;
-  /** Ticket whose Claude is asked. */
-  to: string;
-  text: string;
-  askedAt: string;
-  /** The asker's ask_ticket call waits for the reply until then. */
-  waitUntil: string;
-  /** The asker's call is still waiting (false once it took the reply or gave up). */
-  waiting: boolean;
-  reply: string | null;
-  repliedAt: string | null;
-  /** How the reply reached the asker: its waiting call, a message into its run, or a comment for its next run. */
-  delivered: null | "call" | "steer" | "comment";
 }
 
 export interface Comment {

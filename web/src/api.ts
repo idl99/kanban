@@ -109,6 +109,7 @@ export interface Profile {
   autoHuddles?: boolean;
   /** Spending cap per run in USD for its tickets' work runs; missing/null: none. */
   runCapUsd?: number | null;
+  artifacts?: boolean;
   pathExists?: boolean;
   running?: number;
 }
@@ -237,7 +238,7 @@ export interface QueuedMessage {
   text: string;
   at: string;
   state: "queued" | "unsent";
-  /** From another ticket's Claude: text is the full prompt (question first, then board instructions). */
+  /** From another session (a huddle's messages): text is the full prompt. */
   peer?: boolean;
   /** A slash command: Claude Code runs it as its own turn, after the current one. */
   slash?: "prompt" | "local";
@@ -247,8 +248,8 @@ export interface SessionMessage {
   role: "user" | "assistant";
   text: string;
   at: string;
-  /** A user-role message the user didn't write: a huddle digest or another ticket's Claude. */
-  from?: "huddle" | "ticket";
+  /** A user-role message the user didn't write: a huddle digest. */
+  from?: "huddle";
   /** Claude's quiet reply to such a message. */
   peerReply?: boolean;
 }
@@ -325,7 +326,7 @@ export interface SessionEntry {
   moved?: "planning";
   /** A board block whose JSON couldn't be read (left visible as text). */
   unreadable?: "questions" | "proposal" | "tickets";
-  /** A ticket-to-ticket message: in = from that ticket's Claude, out = Claude to it. */
+  /** A message from outside the user (a huddle digest): in = into this session. */
   peer?: { dir: "in" | "out"; ticketId: string | null };
   /** Huddle messages delivered to this ticket's session (a peer entry too): the huddle's id. text is the digest. */
   huddleId?: string;

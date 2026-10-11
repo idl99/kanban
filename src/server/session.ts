@@ -73,7 +73,7 @@ export interface SessionEntry {
   moved?: "planning";
   /** A board block whose JSON couldn't be read (left visible as text; the chat says so). */
   unreadable?: BlockKind;
-  /** A ticket-to-ticket message (ask_ticket / reply_ticket): in = from that ticket's Claude, out = to it. */
+  /** A message from outside the user (a huddle digest): in = into this session. */
   peer?: { dir: "in" | "out"; ticketId: string | null };
   /** Huddle messages delivered to this ticket's session (also a peer entry, ticketId null): the huddle's id. */
   huddleId?: string;
@@ -238,8 +238,8 @@ export interface SessionMessage {
   role: "user" | "assistant";
   text: string;
   at: string;
-  /** A user-role message that didn't come from the user: a huddle digest or another ticket's Claude. */
-  from?: "huddle" | "ticket";
+  /** A user-role message that didn't come from the user: a huddle digest. */
+  from?: "huddle";
   /** An assistant message answering such a message (a quiet reply, not one for the user). */
   peerReply?: boolean;
 }
@@ -311,7 +311,7 @@ function terminalOnly(cmd: string | null): boolean {
   return !!cmd && TERMINAL_COMMANDS.has(cmd.slice(1).split(" ")[0]);
 }
 
-function userText(content: unknown): { kind: "text" | "board"; text: string; from?: string; question?: string; huddle?: string; setup?: SetupResult; command?: string } | null {
+function userText(content: unknown): { kind: "text" | "board"; text: string; huddle?: string; setup?: SetupResult; command?: string } | null {
   if (Array.isArray(content)) {
     if (content.some((c: any) => c?.type === "tool_result")) return null;
     content = content.map((c: any) => (c?.type === "text" ? c.text : "")).join("\n");
@@ -322,14 +322,11 @@ function userText(content: unknown): { kind: "text" | "board"; text: string; fro
     // Board-sent prompt: show only what the user typed; pure instructions become a short note.
     const typed = content.slice(0, ctx).trim();
     const tag = content.slice(ctx, content.indexOf(">", ctx) + 1);
-    // Sent by another ticket's Claude (a question, or a late reply): from="<ticket id>".
-    const from = tag.match(/ from="([^"]*)"/)?.[1];
     const setup = parseSetupBlock(content.slice(ctx));
     const extra = setup ? { setup } : {};
     // Huddle messages for this ticket's session: huddle="<huddle id>".
     const huddle = tag.match(/ huddle="([^"]*)"/)?.[1];
     if (typed && huddle) return { kind: "text", text: typed, huddle, ...extra };
-    if (typed && from) return { kind: "text", text: typed, from, question: tag.match(/ question="([^"]*)"/)?.[1], ...extra };
     if (typed) return { kind: "text", text: typed, ...extra };
     const note = content.slice(ctx).match(/note="([^"]*)"/)?.[1];
     return { kind: "board", text: note || "Board sent instructions to Claude", ...extra };
@@ -349,8 +346,6 @@ function resultText(content: unknown): string {
   return "";
 }
 
-const ASK_TOOL = /(?:^|__)ask_ticket$/;
-const REPLY_TOOL = /(?:^|__)reply_ticket$/;
 /** Planning-chat tools (ckanban MCP): their input becomes a form or card, like the text blocks. */
 const QUESTIONS_TOOL = /(?:^|__)ask_questions$/;
 const PROPOSAL_TOOL = /(?:^|__)propose_ticket$/;
@@ -359,7 +354,6 @@ const BRANCH_TOOL = /(?:^|__)propose_branch$/;
 const HUDDLE_TOOL = /(?:^|__)propose_huddle$/;
 const DELETE_TOOL = /(?:^|__)propose_delete$/;
 const TEAMMATE_TOOL = /(?:^|__)propose_teammate$/;
-const REPLY_HEAD = /^Reply from ticket (\S+) .*:\n\n/;
 
 /** The form or card a planning-chat tool call shows, or null for other tools (or input that can't be read). */
 function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "newTickets" | "branch" | "huddle" | "deletion" | "teammate"> | null {
@@ -402,9 +396,6 @@ export function parseSession(raw: string): ParsedSession {
   const entries: SessionEntry[] = [];
   const artifacts = new Map<string, SessionArtifact>();
   const publishers = new Set<string>();
-  /** ask_ticket calls by tool_use id → asked ticket; question id → asking ticket. */
-  const asks = new Map<string, string | null>();
-  const askers = new Map<string, string>();
   /** Card tool calls (by tool_use id) and those whose result was an error: those don't render. */
   const cards = new Set<string>();
   const failed = new Set<string>();
@@ -425,10 +416,9 @@ export function parseSession(raw: string): ParsedSession {
     else a.error = n.result ?? `Agent ${n.status}`;
   };
   const peerEntry = (u: NonNullable<ReturnType<typeof userText>>, uuid: string, at: string): SessionEntry => {
-    if (u.from && u.question) askers.set(u.question, u.from);
     return {
       uuid, at, role: "user", kind: u.kind, text: u.text, ...(u.command ? { command: u.command } : {}),
-      ...(u.from ? { peer: { dir: "in" as const, ticketId: u.from } } : {}), ...(u.huddle ? { peer: { dir: "in" as const, ticketId: null }, huddleId: u.huddle } : {}),
+      ...(u.huddle ? { peer: { dir: "in" as const, ticketId: null }, huddleId: u.huddle } : {}),
       ...(u.setup ? { setup: u.setup } : {}),
     };
   };
@@ -480,18 +470,10 @@ export function parseSession(raw: string): ParsedSession {
       if (!ev.isMeta) hideOutput = false;
       notified(typeof content === "string" ? content : Array.isArray(content) ? content.map((c: any) => (c?.type === "text" ? c.text : "")).join("\n") : "", at);
       if (Array.isArray(content)) {
-        for (const [i, b] of content.entries()) {
+        for (const b of content) {
           if (b?.type === "tool_result" && agents.has(b.tool_use_id)) agentResult(agents.get(b.tool_use_id)!, b, ev.toolUseResult, at);
           if (b?.type === "tool_result" && b.is_error && cards.has(b.tool_use_id)) failed.add(b.tool_use_id);
           if (b?.type === "tool_result" && b.is_error) errored.add(b.tool_use_id);
-          // The reply an ask_ticket call came back with: shown as that ticket's message.
-          if (b?.type === "tool_result" && asks.has(b.tool_use_id) && !b.is_error) {
-            const m = REPLY_HEAD.exec(resultText(b.content));
-            if (m) {
-              const text = resultText(b.content).slice(m[0].length).trim();
-              entries.push({ uuid: i ? `${uuid}:${i}` : uuid, at, role: "user", kind: "text", text, peer: { dir: "in", ticketId: asks.get(b.tool_use_id) ?? m[1] } });
-            }
-          }
           // Only real publishes: output of the Artifact tool, or of the `ckanban artifact publish`
           // helper / publish_artifact MCP tool headless runs use. Other tools (e.g. Bash grepping a different session's file)
           // can print the same text.
@@ -515,14 +497,7 @@ export function parseSession(raw: string): ParsedSession {
       const id = i ? `${uuid}:${i}` : uuid;
       const card = b?.type === "tool_use" && typeof b.id === "string" ? cardEntry(b) : null;
       if (b?.type === "text" && b.text?.trim()) entries.push({ uuid: id, at, role: "assistant", kind: "text", ...assistantBlock(b.text.trim()) });
-      else if (b?.type === "tool_use" && ASK_TOOL.test(b.name ?? "") && typeof b.input?.question === "string") {
-        const to = typeof b.input.id === "string" ? b.input.id : null;
-        if (typeof b.id === "string") asks.set(b.id, to);
-        entries.push({ uuid: id, at, role: "assistant", kind: "text", text: b.input.question.trim(), peer: { dir: "out", ticketId: to } });
-      } else if (b?.type === "tool_use" && REPLY_TOOL.test(b.name ?? "") && typeof b.input?.text === "string") {
-        const to = typeof b.input.questionId === "string" ? askers.get(b.input.questionId) ?? null : null;
-        entries.push({ uuid: id, at, role: "assistant", kind: "text", text: b.input.text.trim(), peer: { dir: "out", ticketId: to } });
-      } else if (card) {
+      else if (card) {
         // The tool_use id keeps the uuid stable, so form drafts and answered/applied state stick to it.
         cards.add(b.id);
         entries.push({ uuid: b.id, at, role: "assistant", kind: "text", text: "", ...card });
@@ -559,7 +534,7 @@ export function parseSession(raw: string): ParsedSession {
     lastMessage: last
       ? {
         role: last.role, text: lastText, at: last.at,
-        ...(last.role === "user" && last.peer ? { from: last.huddleId ? "huddle" as const : "ticket" as const } : {}),
+        ...(last.role === "user" && last.peer ? { from: "huddle" as const } : {}),
         ...(asked?.peer?.dir === "in" ? { peerReply: true } : {}),
       }
       : null,

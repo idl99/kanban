@@ -12,7 +12,6 @@ import { resumeCommand } from "./prompts";
 import { cronError, describeCron, nextRuns, parseCron } from "./cron";
 import { RUN_HEADER, ScheduleError, Scheduler } from "./scheduler";
 import { SnippetError, Snippets } from "./snippets";
-import { QuestionError, Questions } from "./questions";
 import { HuddleError, Huddles, type Caller } from "./huddle";
 import { HuddleSessionCache, participantSession, participantTool } from "./huddle-session";
 import { HUDDLE_HEADER, SOURCE_HEADER } from "./huddle-roster";
@@ -56,7 +55,6 @@ export interface ServerDeps {
   mcp?: McpManager;
   scheduler?: Scheduler;
   agents?: AgentRegistry;
-  questions?: Questions;
   huddles?: Huddles;
   /** Restart the daemon once no run is active (POST /api/restart); missing when not running as the daemon. */
   restart?: () => { running: number; alreadyPending: boolean };
@@ -169,7 +167,6 @@ export function createServer(deps: ServerDeps) {
   const mcp = deps.mcp ?? new McpManager(bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const scheduler = deps.scheduler ?? new Scheduler(board, store, bus);
   const agents = deps.agents ?? new AgentRegistry();
-  const questions = deps.questions ?? new Questions(store, board);
   const huddles = deps.huddles ?? new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const snippets = new Snippets(store, bus);
   const windowsFile = join(store.root, "usage-windows.json");
@@ -588,6 +585,7 @@ export function createServer(deps: ServerDeps) {
           if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can change the board's spending cap");
           next.runCapUsd = capValue(b.runCapUsd, true) || null;
         }
+        if (b.artifacts !== undefined) next.artifacts = !!b.artifacts;
         if (b.setupDetected !== undefined) next.setupDetected = b.setupDetected && typeof b.setupDetected === "object" ? b.setupDetected : null;
         if (next.path !== profile.path) shells.kill(slug);
         store.saveProfile(next);
@@ -693,18 +691,6 @@ export function createServer(deps: ServerDeps) {
         const entry = await scheduler.runNow(slug, sid);
         return json({ entry, schedule: scheduler.view(slug, scheduler.get(slug, sid)) });
       }
-      throw new HttpError(404, "not found");
-    }
-
-    // /profiles/:p/questions/:q/(poll|reply) — ticket-to-ticket questions (ask_ticket / reply_ticket)
-    if (parts[2] === "questions" && parts.length === 5 && m === "POST") {
-      const b = await body(req);
-      const runId = runTicket(req, slug);
-      if (parts[4] === "poll") {
-        if (!runId) throw new HttpError(403, "only the asking ticket's run can wait for a reply");
-        return json(questions.poll(slug, parts[3], runId, !!b.final));
-      }
-      if (parts[4] === "reply") return json(await questions.reply(slug, parts[3], runId, String(b.text ?? "")));
       throw new HttpError(404, "not found");
     }
 
@@ -990,14 +976,6 @@ export function createServer(deps: ServerDeps) {
         const by = planner ? "Planner: " : requester ? `From the Planning chat of ${requester.id} (user request): ` : "";
         return json(board.addComment(slug, id, by + text), 201);
       }
-    }
-    // Another ticket's Claude asks this ticket's Claude (ask_ticket); the asker then polls questions/:q/poll.
-    if (m === "POST" && action === "ask") {
-      const from = runTicket(req, slug);
-      if (!from) throw new HttpError(403, "ask_ticket only works inside a board run (it asks on behalf of that run's ticket)");
-      const b = await body(req);
-      const q = await questions.ask(slug, from, id, String(b.question ?? ""), Number(b.waitMs) || 0);
-      return json(q, 201);
     }
     if (m === "POST" && action === "chat") {
       const { planner, requester } = runRights(req, slug, store.getTicket(slug, id)!);
@@ -1451,7 +1429,6 @@ export function createServer(deps: ServerDeps) {
       if (e instanceof AgentError) return json({ error: e.message }, e.status);
       if (e instanceof ScheduleError) return json({ error: e.message }, e.status);
       if (e instanceof SnippetError) return json({ error: e.message }, e.status);
-      if (e instanceof QuestionError) return json({ error: e.message }, e.status);
       if (e instanceof HuddleError) return json({ error: e.message }, e.status);
       if (e instanceof RemoteError) return json({ error: e.message }, e.status);
       if (e instanceof URIError) return json({ error: "malformed URL" }, 400);
