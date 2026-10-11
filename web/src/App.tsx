@@ -731,7 +731,7 @@ export function App() {
         </div>
       ) : (
         phone && phoneTab === "now" ? (
-          <NowView inbox={inbox} tickets={tickets} slug={profile.slug} onOpen={openFrom} onMarkDone={(id) => void move(id, "done")} />
+          <NowView inbox={inbox} tickets={tickets} slug={profile.slug} onOpen={openFrom} onMarkDone={(id) => void move(id, "done")} onSwitchBoard={switchBoard} />
         ) : <>
           <div className="board-bar">
             <div className="search">
@@ -769,7 +769,7 @@ export function App() {
         </>
       )}
       {phone && profile && (
-        <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={needYou} scheduleAlert={scheduleErrors > 0} onSchedules={() => setSchedulesOpen(true)}
+        <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={perBoard.get(profile.slug) ?? 0} scheduleAlert={scheduleErrors > 0} onSchedules={() => setSchedulesOpen(true)}
           onMore={() => setMoreOpen(true)} moreAlert={mcpAttention > 0} />
       )}
       {moreOpen && <MoreSheet items={menuItems.filter((i) => i.label !== "Schedules" && i.label !== "Keyboard shortcuts")} footer={menuFooter} onClose={() => setMoreOpen(false)} />}

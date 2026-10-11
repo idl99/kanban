@@ -3,22 +3,27 @@ import { elapsed, OLD_WAIT_MS, waitedFor } from "./time";
 import { useNow } from "./useNow";
 
 /**
- * Phone home (≤720px): what needs you on any board (the Inbox, oldest wait first), then what runs and what is
- * being planned on this board. Tapping a card opens the ticket full screen.
+ * Phone home (≤720px), for the board shown: what needs you (the Inbox, oldest wait first), what runs and what is
+ * being planned. Other boards that need you are one line at the end. Tapping a card opens the ticket full screen.
  */
-export function NowView({ inbox, tickets, slug, onOpen, onMarkDone }: {
+export function NowView({ inbox, tickets, slug, onOpen, onMarkDone, onSwitchBoard }: {
   inbox: InboxItem[];
   tickets: Ticket[];
   slug: string;
   onOpen: (profile: string, id: string) => void;
   onMarkDone: (id: string) => void;
+  onSwitchBoard: (slug: string) => void;
 }) {
   const now = useNow();
-  const needs = [...inbox].sort((a, b) => a.attention.since.localeCompare(b.attention.since));
-  const waiting = new Set(inbox.filter((i) => i.profile === slug).map((i) => i.id));
+  const needs = inbox.filter((i) => i.profile === slug).sort((a, b) => a.attention.since.localeCompare(b.attention.since));
+  const elsewhere = [...inbox.filter((i) => i.profile !== slug).reduce((m, i) => {
+    const b = m.get(i.profile) ?? { slug: i.profile, name: i.profileName, n: 0 };
+    b.n++;
+    return m.set(i.profile, b);
+  }, new Map<string, { slug: string; name: string; n: number }>()).values()];
+  const waiting = new Set(needs.map((i) => i.id));
   const running = tickets.filter((t) => t.running && !waiting.has(t.id));
   const planning = tickets.filter((t) => t.status === "planning" && !t.running && !waiting.has(t.id));
-  const several = new Set(inbox.map((i) => i.profile)).size > 1 || inbox.some((i) => i.profile !== slug);
 
   return (
     <main className="now">
@@ -26,14 +31,14 @@ export function NowView({ inbox, tickets, slug, onOpen, onMarkDone }: {
       {needs.length === 0 && <p className="now-empty muted small">Nothing waits on you right now.</p>}
       {needs.map((i) => {
         const answer = i.attention.kind === "questions" || i.attention.kind === "proposal" || i.attention.kind === "reply" || i.attention.kind === "huddle";
-        const review = i.attention.kind === "review" && i.profile === slug;
+        const review = i.attention.kind === "review";
         const old = now - new Date(i.attention.since).getTime() > OLD_WAIT_MS;
         return (
           <div key={`${i.profile}/${i.id}`} className={`now-card need att-${i.attention.kind}`}>
             <button className="now-open" onClick={() => onOpen(i.profile, i.id)}>
               <span className="now-title">{i.title}</span>
               <span className="now-act">
-                {i.attention.label}{several && <> · {i.profileName}</>}
+                {i.attention.label}
                 <span className={old ? " now-old" : ""}> · {waitedFor(i.attention.since, now)}</span>
               </span>
             </button>
@@ -68,6 +73,15 @@ export function NowView({ inbox, tickets, slug, onOpen, onMarkDone }: {
             </button>
           ))}
         </>
+      )}
+
+      {elsewhere.length > 0 && (
+        <div className="now-elsewhere">
+          <span className="muted small">Other boards:</span>
+          {elsewhere.map((b) => (
+            <button key={b.slug} className="chip" onClick={() => onSwitchBoard(b.slug)}>{b.name}<span className="need-chip">{b.n}</span></button>
+          ))}
+        </div>
       )}
     </main>
   );
