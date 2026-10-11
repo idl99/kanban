@@ -25,7 +25,7 @@ export type BusEvent =
   /** A message was posted in a huddle. */
   | { type: "huddle.message"; profile: string; huddleId: string; message: HuddleMessage }
   /** What a huddle participant is doing now (lastActivity), without a whole huddle.updated. */
-  | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null }
+  | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number }
   /** A huddle agent's session file changed (the session viewer refetches; polled, so at most every 2 s). */
   | { type: "huddle.session"; profile: string; huddleId: string; handle: string };
 

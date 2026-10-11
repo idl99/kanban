@@ -269,8 +269,12 @@ export class Store {
     appendFileSync(join(this.ticketDir(slug, id), "activity.jsonl"), JSON.stringify(e) + "\n");
   }
 
+  activityPath(slug: string, id: string): string {
+    return join(this.ticketDir(slug, id), "activity.jsonl");
+  }
+
   readActivity(slug: string, id: string): ActivityEntry[] {
-    return readJsonl<ActivityEntry>(join(this.ticketDir(slug, id), "activity.jsonl"));
+    return readJsonl<ActivityEntry>(this.activityPath(slug, id));
   }
 
   private schedulesDir(slug: string) {

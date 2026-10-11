@@ -234,6 +234,7 @@ body.show-hints .sortable-card:not(:focus) .key-hint.card-keys { display: none; 
 .badge.blocked { background: var(--warn-soft); color: var(--warn); }
 .badge.failed { background: var(--err-soft); color: var(--err); }
 .badge.stopped { background: var(--surface-2); color: var(--muted); }
+.badge.cost { background: var(--surface-2); color: var(--muted); font-variant-numeric: tabular-nums; }
 .badge.pr { background: var(--info-soft); color: var(--info); }
 .badge.pr-chip.ok { background: var(--ok-soft); color: var(--ok); }
 .badge.pr-chip.bad { background: var(--err-soft); color: var(--err); }
@@ -265,6 +266,8 @@ button.badge.huddle.quiet { background: var(--ok-soft); color: var(--ok); }
 .form label.board-switch input { width: auto; flex: none; margin: 2px 0 0; }
 .form label.board-switch > span { display: flex; flex-direction: column; gap: 2px; }
 .form label.board-switch .muted { font-weight: 400; }
+.form label.cap-field .muted { font-weight: 400; }
+.form label.cap-field input { max-width: 160px; }
 /* Messages waiting for the user: card badge, dock row, Huddle tab. */
 .for-you-pill { display: inline-block; background: var(--accent); color: #fff; border-radius: 99px; padding: 0 6px; font-size: 10px; font-weight: 650; line-height: 16px; margin-left: 4px; white-space: nowrap; }
 .badge .spinner { width: 9px; height: 9px; border-width: 1.5px; flex: none; }
@@ -810,6 +813,15 @@ textarea { resize: vertical; font-size: 13.5px; }
 .menu-item:disabled { cursor: default; opacity: 0.6; }
 .menu-hint { margin-left: auto; font-size: 11px; color: var(--accent); white-space: nowrap; }
 .menu-item:disabled .menu-hint { color: var(--muted); }
+/* Ticket ⋯ menu: spending cap per run */
+.menu-item.cap-row { flex-wrap: wrap; cursor: default; row-gap: 2px; }
+.cap-input { margin-left: auto; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--muted); }
+.cap-input input {
+  width: 96px; padding: 3px 6px; font: inherit; font-size: 12px; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px; font-variant-numeric: tabular-nums;
+}
+.cap-input input[aria-invalid="true"] { border-color: var(--err); }
+.cap-row .menu-hint { flex-basis: 100%; text-align: right; color: var(--muted); }
 .menu-sep { border-top: 1px solid var(--border); margin: 5px 2px; }
 .menu-item.danger, .menu-item.danger .menu-icon { color: var(--err); }
 .menu-item.danger:hover, .menu-item.danger:focus-visible { background: var(--err-soft); }
@@ -1324,6 +1336,9 @@ button.pill { border: 0; cursor: pointer; font-family: inherit; }
 button.pill:hover { color: var(--text); }
 .pill.err { background: var(--err-soft); color: var(--err); font-weight: 600; white-space: nowrap; }
 .usage-pill { white-space: nowrap; }
+.usage-today { font-variant-numeric: tabular-nums; }
+.usage-spend { margin: 0 0 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.usage-sub.spend-row { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
 .usage-pop {
   position: absolute; left: 0; top: calc(100% + 6px); z-index: 80; width: 300px; padding: 14px;
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16);

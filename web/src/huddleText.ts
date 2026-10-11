@@ -52,10 +52,16 @@ export function mergeMessages<M extends { seq: number }>(a: M[], b: M[]): M[] {
   return [...bySeq.values()].sort((x, y) => x.seq - y.seq);
 }
 
-/** The huddle with one participant's lastActivity changed (huddle.activity events). */
-export function withActivity<H extends { participants: { handle: string; lastActivity?: string | null }[] }>(h: H, handle: string, lastActivity: string | null): H {
-  if (!h.participants.some((p) => p.handle === handle && p.lastActivity !== lastActivity)) return h;
-  return { ...h, participants: h.participants.map((p) => (p.handle === handle ? { ...p, lastActivity } : p)) };
+/** The huddle with one participant's lastActivity (and its turn's live cost, when given) changed (huddle.activity events). */
+export function withActivity<H extends { participants: { handle: string; lastActivity?: string | null; liveCostUsd?: number }[] }>(
+  h: H, handle: string, lastActivity: string | null, liveCostUsd?: number,
+): H {
+  const same = (p: H["participants"][number]) => p.lastActivity === lastActivity && (liveCostUsd === undefined || p.liveCostUsd === liveCostUsd);
+  if (!h.participants.some((p) => p.handle === handle && !same(p))) return h;
+  return {
+    ...h,
+    participants: h.participants.map((p) => (p.handle === handle ? { ...p, lastActivity, ...(liveCostUsd !== undefined ? { liveCostUsd } : {}) } : p)),
+  };
 }
 
 /** Where a post came in from, for its tooltip; null for system messages and old posts without a source. */

@@ -29,6 +29,8 @@ export interface Profile {
    * Missing: on (see autoHuddlesOn).
    */
   autoHuddles?: boolean;
+  /** Spending cap per run in USD (claude --max-budget-usd) for its tickets' work runs. Missing/null: none. */
+  runCapUsd?: number | null;
 }
 
 /** Board setting "Auto huddles": on unless turned off. */
@@ -135,6 +137,12 @@ export interface Ticket {
   autoHuddle?: AutoHuddle | null;
   /** Set with outcome "limit": when the limit resets and whether the board sends "continue" then (see limit.ts). */
   limit?: LimitHit | null;
+  /** Per-run spending cap for this ticket, overriding the board's: a positive amount, 0 for none. Missing/null: the board's. */
+  runCapUsd?: number | null;
+  /** The last run stopped at its spending cap (outcome "blocked"); cleared when the next run starts. */
+  capHit?: { capUsd: number; at: string } | null;
+  /** Cap for the next run only ("Continue with +$Y"), then cleared. */
+  capNextUsd?: number | null;
   /** false: the user turned automatic continues off for this ticket ("Don't auto-continue"). Missing: on. */
   autoContinue?: boolean;
   /** Automatic continues sent on day (local YYYY-MM-DD), for the per-day cap. */
@@ -515,4 +523,12 @@ export interface HuddleMessage {
   kind: HuddleMessageKind;
   /** Posts only (system messages have none). */
   source?: HuddleSource;
+}
+
+/** The spending cap a ticket's next work run gets (claude --max-budget-usd), or null for none. */
+export function runCapFor(t: Pick<Ticket, "runCapUsd" | "capNextUsd">, p: Pick<Profile, "runCapUsd"> | null | undefined): number | null {
+  const pos = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n > 0 ? n : null);
+  if (pos(t.capNextUsd)) return t.capNextUsd!;
+  if (t.runCapUsd === 0) return null;
+  return pos(t.runCapUsd) ?? pos(p?.runCapUsd);
 }

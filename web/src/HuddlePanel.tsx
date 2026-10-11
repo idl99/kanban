@@ -964,7 +964,9 @@ function Roster({ slug, huddle: h, onError, viewing, onView }: {
                 )}
               </span>
             )}
-            <span className="hd-p-cost" title={human ? undefined : `What @${p.handle} spent in this huddle`}>{human ? "" : money(p.costUsd ?? 0)}</span>
+            <span className="hd-p-cost" title={human ? undefined : `What @${p.handle} spent in this huddle${p.liveCostUsd ? `, with ≈${money(p.liveCostUsd)} for the turn it is in now` : ""}`}>
+              {human ? "" : money((p.costUsd ?? 0) + (p.liveCostUsd ?? 0))}
+            </span>
           </div>
         );
       })}

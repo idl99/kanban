@@ -24,7 +24,7 @@ import { BOARD_COMMANDS, commandText, listCommands, MODEL_HELP, parseSlash, REFU
 import { mcpConfig } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
-import { autoHuddlesOn, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
+import { autoHuddlesOn, runCapFor, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
 import { CLEANUP_TIMEOUT_MS, prepareWorktree, runShell, withSetup, type SetupResult } from "./worktree-setup";
 import { nowIso, slugify } from "./util";
 
@@ -574,7 +574,7 @@ export class Board {
       ? { error: null, lastActivity: "Claude is replying…", runStartedAt: nowIso(), waitingOn: null }
       : run.chat?.mode === "refine"
       ? { error: null, lastActivity: "Claude is replying…", refineStarted: true, runStartedAt: nowIso(), waitingOn: null }
-      : { status: "in_progress", outcome: null, error: null, limit: null, lastActivity: "Starting…", runStartedAt: nowIso(), waitingOn: null });
+      : { status: "in_progress", outcome: null, error: null, limit: null, capHit: null, lastActivity: "Starting…", runStartedAt: nowIso(), waitingOn: null });
   }
 
   /** One claude run, then a chat reply for each message that came in too late for it. */
@@ -690,12 +690,15 @@ export class Board {
       draftTimer = null;
       this.bus.emit({ type: "draft", profile: slug, id, text: draft.text });
     };
+    // The spending cap applies to the ticket's own work (not Planning chats or replies to other tickets).
+    const cap = refine || quiet ? null : runCapFor(t, profile);
+    if (!refine && !quiet && t.capNextUsd) this.patch(slug, id, { capNextUsd: null });
     // Marks where this run starts in the log and what it was (the Usage tab lists runs by kind).
     this.store.appendActivity(slug, id, runNo, { type: "ckanban_run", kind: refine ? "planning" : quiet ? "reply" : run.chat ? "chat" : "work" });
     run.handle = startRun({
       bin: this.opts.claudeBin,
       cwd: session.dir,
-      args: buildArgs(session.sessionId, session.existed, t.model ?? profile.model, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt),
+      args: buildArgs(session.sessionId, session.existed, t.model ?? profile.model, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, cap),
       input: prompt,
       inputLocal: run.chat?.slash === "local",
       planning: refine,
@@ -777,6 +780,10 @@ export class Board {
       this.patch(slug, id, { ...base, outcome: "stopped", error: null, lastActivity: null, ...this.dropAutoWait(slug, id) });
       return;
     }
+    if (cap !== null && out.events.some((e) => e?.type === "result" && e.subtype === "error_max_budget_usd")) {
+      this.capReached(slug, id, base, cap);
+      return;
+    }
     // The account hit its usage limit: not a failure of the work, it continues once the limit resets.
     const limited = quiet || result ? null : limitMessage(out.events, out.code !== 0 ? out.stderr : "");
     if (limited) {
@@ -843,6 +850,28 @@ export class Board {
 
   private now(): Date {
     return this.opts.now?.() ?? new Date();
+  }
+
+  /** A run stopped at its spending cap: blocked until the user continues it with more budget (continueAfterCap). */
+  private capReached(slug: string, id: string, base: Partial<Ticket>, cap: number): void {
+    const msg = `Stopped at $${cap.toFixed(2)} cap`;
+    this.store.addComment(slug, id, "ai", `${msg}: this run spent its budget before it finished. Continue it with more budget, or change the ticket's cap in its ⋯ menu.`);
+    this.patch(slug, id, { ...base, outcome: "blocked", error: msg, capHit: { capUsd: cap, at: nowIso() } });
+  }
+
+  /** "Continue with +$Y" after a run stopped at its cap: "continue" in the same session, with a cap of addUsd for that run. */
+  async continueAfterCap(slug: string, id: string, addUsd: number): Promise<Ticket> {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    if (!(Number.isFinite(addUsd) && addUsd > 0)) throw new Error("addUsd must be a positive amount");
+    if (this.isRunning(slug, id)) throw new Error("this ticket is already running");
+    this.patch(slug, id, { capNextUsd: addUsd });
+    try {
+      return await this.chat(slug, id, CONTINUE_TEXT);
+    } catch (e) {
+      this.patch(slug, id, { capNextUsd: null });
+      throw e;
+    }
   }
 
   /** A run ended on the usage limit: wait for the reset, then continue on its own unless turned off or capped. */
@@ -1052,7 +1081,7 @@ export class Board {
   async updateTicket(
     slug: string,
     id: string,
-    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "needs" | "important">> & {
+    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "needs" | "important" | "runCapUsd">> & {
       expectedBody?: string;
       /** null: take the ticket out of its plan (only clearing is allowed here; adoptTickets sets it). */
       parentId?: null;
@@ -1069,6 +1098,7 @@ export class Board {
     if (patch.order !== undefined) clean.order = patch.order;
     if (patch.mode !== undefined) clean.mode = patch.mode;
     if (patch.notice !== undefined) clean.notice = patch.notice;
+    if (patch.runCapUsd !== undefined) clean.runCapUsd = patch.runCapUsd;
     if (patch.needs !== undefined) clean.needs = normalizeNeeds(patch.needs);
     if (patch.important !== undefined) clean.important = !!patch.important;
     if (patch.parentId === null && current.parentId) {

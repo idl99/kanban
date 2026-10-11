@@ -18,6 +18,8 @@ test("running tickets never need the user", () => {
 test("failures and blocks come first", () => {
   expect(attentionFor(T({ outcome: "failed" }), null, false)).toMatchObject({ kind: "failed", label: "Run failed" });
   expect(attentionFor(T({ outcome: "blocked" }), S({ openQuestions: 2 }), false)!.kind).toBe("blocked");
+  expect(attentionFor(T({ status: "review", outcome: "blocked", capHit: { capUsd: 0.05, at: "" } }), null, false))
+    .toMatchObject({ kind: "blocked", label: "Stopped at $0.05 cap" });
 });
 
 test("open questions", () => {

@@ -72,7 +72,7 @@ export function attentionFor(
   if (t.outcome === "failed") return { kind: "failed", label: "Run failed", since };
   // Hit the usage limit: it waits for the reset and continues by itself, unless that is off or used up for today.
   if (t.outcome === "limit") return t.limit?.auto ? null : { kind: "limit", label: "Limit hit", since };
-  if (t.outcome === "blocked") return { kind: "blocked", label: "Blocked", since };
+  if (t.outcome === "blocked") return { kind: "blocked", label: t.capHit ? `Stopped at $${t.capHit.capUsd.toFixed(2)} cap` : "Blocked", since };
   const q = s?.openQuestions ?? 0;
   if (q > 0) return { kind: "questions", label: `Answer ${q} question${q === 1 ? "" : "s"}`, since };
   if (t.outcome === "needs_input") return { kind: "questions", label: "Answer Claude", since };

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, COLUMNS, safeHref, startWorkTarget, subscribe, type ClaudeSession, type Profile, type Status, type Ticket } from "./api";
 import { outcomeBadge } from "./Card";
+import { CapActions } from "./CapActions";
+import { capLabel, capWait } from "./capText";
 import { LimitActions } from "./LimitActions";
 import { limitHint, limitLabel, limitWait } from "./limitText";
 import { branchTicket } from "./branch";
@@ -499,6 +501,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           )}
           <TicketMenu ticket={ticket} working={working} live={!!(ticket.terminalOpen || linked?.live)}
             linkedLabel={ticket.workdir && ticket.sessionId ? (linked ? sessionLabel(linked) : ticket.sessionId.slice(0, 8)) : null}
+            boardCap={profile.runCapUsd ?? null}
+            onCap={(usd) => api.updateTicket(slug, ticket.id, { runCapUsd: usd })}
             onBranch={() => setConfirmBranch(true)}
             onPickSession={() => setPicking(true)}
             onUnlink={() => act(() => api.linkSession(slug, ticket.id, null))}
@@ -657,6 +661,15 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                   {ticket.limit?.message && <span className="muted small">{ticket.limit.message}</span>}
                 </div>
                 <LimitActions slug={slug} ticket={ticket} onError={onError} small />
+              </div>
+            )}
+            {capWait(ticket) && (
+              <div className="banner warn inline limit-banner" role="status">
+                <div className="limit-text">
+                  <strong>{capLabel(ticket)}</strong>
+                  <span>The run spent its budget before it finished. Continue it in the same session with more, or change the cap in ⋯.</span>
+                </div>
+                <CapActions slug={slug} ticket={ticket} onError={onError} small />
               </div>
             )}
             <nav className="tabs" role="tablist" aria-label="Ticket">

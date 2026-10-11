@@ -1682,3 +1682,40 @@ test("recovery actions refuse while Claude is working on the ticket", async () =
   expect(() => board.startFresh("p", t.id)).toThrow(ConflictError);
   await expect(board.takeOver("p", t.id)).rejects.toThrow(ConflictError);
 });
+
+test("a run stops at its spending cap, waits blocked, and Continue with +$Y resumes it with that cap", async () => {
+  const p = await setup();
+  store.saveProfile({ ...p, runCapUsd: 0.05 });
+  process.env.FAKE_MODE = "budget";
+  const t = await board.createTicket("p", { title: "Capped", body: "desc", status: "ready" });
+  await board.whenIdle();
+  let got = store.getTicket("p", t.id)!;
+  expect(readArgs()[0].args.join(" ")).toContain("--max-budget-usd 0.05");
+  expect(got).toMatchObject({ status: "review", outcome: "blocked", error: "Stopped at $0.05 cap", capHit: { capUsd: 0.05 } });
+  expect(store.listComments("p", t.id).at(-1)!.text).toStartWith("Stopped at $0.05 cap");
+
+  process.env.FAKE_MODE = "ok";
+  await board.continueAfterCap("p", t.id, 0.5);
+  await board.whenIdle();
+  got = store.getTicket("p", t.id)!;
+  const call = readArgs().at(-1)!;
+  expect(call.args).toContain("--resume");
+  expect(call.args.join(" ")).toContain("--max-budget-usd 0.5");
+  expect(got).toMatchObject({ outcome: "done", capHit: null, capNextUsd: null });
+  await expect(board.continueAfterCap("p", t.id, 0)).rejects.toThrow("positive");
+});
+
+test("a ticket's own cap overrides the board's; 0 runs without one", async () => {
+  const p = await setup();
+  store.saveProfile({ ...p, runCapUsd: 5 });
+  const a = await board.createTicket("p", { title: "Own cap", body: "desc", status: "backlog" });
+  await board.updateTicket("p", a.id, { runCapUsd: 2 });
+  await board.updateTicket("p", a.id, { status: "ready" });
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.args.join(" ")).toContain("--max-budget-usd 2");
+  const b = await board.createTicket("p", { title: "No cap", body: "desc", status: "backlog" });
+  await board.updateTicket("p", b.id, { runCapUsd: 0 });
+  await board.updateTicket("p", b.id, { status: "ready" });
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.args).not.toContain("--max-budget-usd");
+});

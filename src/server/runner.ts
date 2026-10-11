@@ -45,6 +45,8 @@ export function buildArgs(
   mcp?: string,
   /** Board instructions for a run whose message is a slash command (they can't share its text, see Board.executeOnce). */
   systemPrompt?: string,
+  /** Spending cap for this run (--max-budget-usd); the run stops with an error_max_budget_usd result once it is spent. */
+  maxBudgetUsd?: number | null,
 ): string[] {
   // Prompts go in on stdin (see startRun) so more messages can follow while Claude works;
   // --replay-user-messages echoes each one back when Claude picks it up.
@@ -55,6 +57,7 @@ export function buildArgs(
   if (model) args.push("--model", model);
   if (mcp) args.push("--mcp-config", mcp);
   if (systemPrompt) args.push("--append-system-prompt", systemPrompt);
+  if (maxBudgetUsd) args.push("--max-budget-usd", String(maxBudgetUsd));
   // Claude in Chrome. Its tools ask for permission even under bypassPermissions; with
   // --permission-prompt-tool stdio those asks reach the board as control requests (see controlResponse).
   args.push("--chrome", "--permission-prompt-tool", "stdio");

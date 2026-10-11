@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type ClaudeProject, type Profile, type SetupDetection } from "./api";
+import { capInputText, parseCap } from "./capText";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Modal } from "./Modal";
 import { Select } from "./Select";
@@ -32,6 +33,9 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
   const [saving, setSaving] = useState(false);
   const [model, setModel] = useState(profile?.model ?? "");
   const [autoHuddles, setAutoHuddles] = useState(profile?.autoHuddles !== false);
+  const [capText, setCapText] = useState(capInputText(profile?.runCapUsd));
+  const cap = parseCap(capText);
+  const capError = cap === undefined ? "An amount in $, e.g. 5 (empty: no cap)" : null;
   const [claudeModel, setClaudeModel] = useState<string | null>(null);
   const [recent, setRecent] = useState<ClaudeProject[] | null>(null);
   const [filter, setFilter] = useState("");
@@ -81,12 +85,12 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (saving || maxParallelError) return;
+    if (saving || maxParallelError || capError) return;
     setSaving(true);
     try {
       const p = profile
         ? await api.updateProfile(profile.slug, {
-          name, path, maxParallel, model: model || null, autoHuddles,
+          name, path, maxParallel, model: model || null, autoHuddles, runCapUsd: cap || null,
           // A file typed but not yet added with Enter still counts.
           copyFiles: newFile.trim() && !copyFiles.includes(newFile.trim()) ? [...copyFiles, newFile.trim()] : copyFiles,
           setupCommand: setupCommand.trim(), cleanupCommand: cleanupCommand.trim(), setupDetected: detected,
@@ -212,6 +216,15 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
                 </span>
               </span>
             </label>
+            <label className="cap-field">
+              Spending cap per run
+              <span className="muted small">
+                Each work run stops once it has spent this much (API-equivalent $) and waits in the Inbox for you to continue it. Empty: no cap. Tickets can override it in their ⋯ menu.
+              </span>
+              <input inputMode="decimal" value={capText} onChange={(e) => setCapText(e.target.value)} placeholder="No cap, e.g. 5"
+                aria-invalid={!!capError} aria-describedby={capError ? "cap-error" : undefined} />
+              {capError && <span id="cap-error" className="field-error">{capError}</span>}
+            </label>
             <div className="form-section">
               <span>Worktree setup</span>
               <button type="button" className="btn small ghost link" onClick={detectAgain} disabled={detecting}>
@@ -270,7 +283,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
           )}
           <div className="spacer" />
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn primary" disabled={saving || !name.trim() || !path.trim() || !!maxParallelError}>
+          <button type="submit" className="btn primary" disabled={saving || !name.trim() || !path.trim() || !!maxParallelError || !!capError}>
             {saving ? (profile ? "Saving…" : "Creating…") : profile ? "Save" : "Create board"}
           </button>
         </div>

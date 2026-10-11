@@ -107,6 +107,8 @@ export interface Profile {
   setupDetected?: SetupDetection | null;
   /** Unattended runs start a review huddle themselves before landing important or risky work. Missing: on. */
   autoHuddles?: boolean;
+  /** Spending cap per run in USD for its tickets' work runs; missing/null: none. */
+  runCapUsd?: number | null;
   pathExists?: boolean;
   running?: number;
 }
@@ -170,6 +172,16 @@ export interface Ticket {
   limit?: { resetAt: string; auto: boolean; capped?: boolean; at: string; message: string } | null;
   /** false: automatic continues after the usage limit are off for this ticket. */
   autoContinue?: boolean;
+  /** Per-run spending cap for this ticket: a positive amount, 0 for none; missing/null: the board's. */
+  runCapUsd?: number | null;
+  /** The last run stopped at its spending cap. */
+  capHit?: { capUsd: number; at: string } | null;
+  /** Cap for the next run only ("Continue with +$Y"). */
+  capNextUsd?: number | null;
+  /** API-equivalent $ so far (In Progress and Review cards; null otherwise). */
+  costUsd?: number | null;
+  /** Spending cap its next work run gets (null: none). */
+  runCap?: number | null;
   /** Its run takes one of the board's maxParallel slots. */
   holdsSlot?: boolean;
   /** ⭐ Important: unattended runs review it in an auto huddle before landing. */
@@ -503,6 +515,13 @@ export interface HuddleTemplate extends LayerInfo {
   report: string;
 }
 
+/** What every board spent today (src/server/spend.ts). */
+export interface TodaySpend {
+  day: string;
+  costUsd: number;
+  boards: { slug: string; name: string; costUsd: number }[];
+}
+
 /** One huddle a teammate or template took part in (src/server/huddle-usage.ts). */
 export interface UsageHuddle {
   board: string;
@@ -557,6 +576,8 @@ export interface HuddleParticipant {
   joinedAt: string;
   lastActivity?: string | null;
   costUsd?: number;
+  /** ≈ cost of the turn it is in now, not yet in costUsd. */
+  liveCostUsd?: number;
   error?: string | null;
   running: boolean;
   /** Read-only agent: the host branch and commit its snapshot shows. */
@@ -756,7 +777,7 @@ export type BusEvent =
   | { type: "restart.updated"; pending: boolean; waiting: number }
   | { type: "huddle.updated"; profile: string; huddle: Huddle }
   | { type: "huddle.message"; profile: string; huddleId: string; message: HuddleMessage }
-  | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null }
+  | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number }
   | { type: "huddle.session"; profile: string; huddleId: string; handle: string };
 
 /** Phone access over Tailscale (src/server/remote.ts). local: this page is open on the Mac, not the phone. */
@@ -837,6 +858,8 @@ export const api = {
   pickFolder: () => req<{ path: string | null }>("POST", "/api/pick-folder"),
   /** Claude plan usage (5h / weekly windows) or a plain-words error. */
   usage: () => req<UsageResult>("GET", "/api/usage"),
+  /** What every board spent today (local day). */
+  spend: () => req<TodaySpend>("GET", "/api/spend"),
   version: () => req<{ version: string; latest: string | null; updateAvailable: boolean; url: string | null }>("GET", "/api/version"),
   health: () => req<Health>("GET", "/api/health"),
   /** pending: a daemon restart holds new runs until the `waiting` active runs finish. */
@@ -947,7 +970,7 @@ export const api = {
   }) => req<Ticket>("POST", t(slug), input),
   plan: (slug: string, id: string, action: "start" | "pause" | "resume" | "done" | "concurrency", maxConcurrent?: number) =>
     req<Ticket>("POST", `${t(slug, id)}/plan`, { action, maxConcurrent }),
-  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "needs" | "important">> & { expectedBody?: string }) =>
+  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "needs" | "important" | "runCapUsd">> & { expectedBody?: string }) =>
     req<Ticket>("PATCH", t(slug, id), patch),
   deleteTicket: (slug: string, id: string) => req<void>("DELETE", t(slug, id)),
   /** The user answered a teammate card (saved it, or dismissed it). */
@@ -1012,6 +1035,8 @@ export const api = {
   prSendFailures: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/send-failures`),
   prMerge: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/merge`),
   /** Usage limit: send "continue" now. */
+  /** "Continue with +$Y" after a run stopped at its spending cap. */
+  capContinue: (slug: string, id: string, addUsd: number) => req<Ticket>("POST", `${t(slug, id)}/cap-continue`, { addUsd }),
   limitContinue: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/limit`, { action: "continue" }),
   /** Usage limit: turn the automatic continue at the reset on or off for this ticket. */
   limitAuto: (slug: string, id: string, auto: boolean) => req<Ticket>("POST", `${t(slug, id)}/limit`, { auto }),

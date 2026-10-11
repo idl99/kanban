@@ -1,11 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { api, subscribe, type TodaySpend } from "./api";
 import { useLayer } from "./layers";
 import { fullTime, timeAgo } from "./time";
 import { useNow } from "./useNow";
-import { pillText, resetText, usageTone, worstTone, type UsageResult } from "./usage";
+import { costText, pillText, resetText, usageTone, worstTone, type UsageResult } from "./usage";
 
-/** Header pill with Claude plan usage; loads once on page open, then only on Refresh. */
+/** How often today's spend refreshes at most while runs report costs. */
+const SPEND_THROTTLE_MS = 15_000;
+
+/**
+ * Header pill with Claude plan usage (loads once on page open, then only on Refresh) and what all boards spent today
+ * (refreshed as tickets and huddles change, at most every 15 s).
+ */
 export function UsagePill({ openRequest }: { openRequest?: number } = {}) {
   const [usage, setUsage] = useState<UsageResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -22,6 +28,29 @@ export function UsagePill({ openRequest }: { openRequest?: number } = {}) {
       .finally(() => setLoading(false));
   }, []);
   useEffect(load, [load]);
+
+  const [spend, setSpend] = useState<TodaySpend | null>(null);
+  const loadSpend = useCallback(() => {
+    api.spend().then(setSpend).catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadSpend();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let last = Date.now();
+    const off = subscribe((e) => {
+      if (e.type !== "ticket.updated" && e.type !== "huddle.updated") return;
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        last = Date.now();
+        loadSpend();
+      }, Math.max(0, last + SPEND_THROTTLE_MS - Date.now()));
+    });
+    return () => {
+      off();
+      if (timer) clearTimeout(timer);
+    };
+  }, [loadSpend]);
 
   // ⌘K "Usage" opens the panel.
   useEffect(() => {
@@ -45,12 +74,16 @@ export function UsagePill({ openRequest }: { openRequest?: number } = {}) {
   const windows = usage && !("error" in usage) ? usage.windows : [];
   const tone = failed || !windows.length ? "ok" : worstTone(windows);
   const label = !usage ? "Usage …" : failed ? "Usage unavailable" : windows.length ? pillText(windows) : "Usage · no data";
+  const today = spend ? `today ${costText(spend.costUsd)}` : null;
+  const spendTitle = spend
+    ? `Spent today (API-equivalent $): ${spend.boards.filter((b) => b.costUsd > 0).map((b) => `${b.name} ${costText(b.costUsd)}`).join(" · ") || "nothing yet"}`
+    : null;
 
   return (
     <div className="usage" ref={root}>
       <button ref={pill} className={`pill usage-pill${tone === "ok" ? "" : ` ${tone}`}`} aria-haspopup="dialog" aria-expanded={open}
-        onClick={() => setOpen((v) => !v)} title="Claude plan usage">
-        {label}
+        onClick={() => { setOpen((v) => !v); loadSpend(); }} title={spendTitle ? `Claude plan usage\n${spendTitle}` : "Claude plan usage"}>
+        {label}{today && <span className="usage-today"> · {today}</span>}
       </button>
       {open && (
         <div className="usage-pop" role="dialog" aria-label="Claude plan usage">
@@ -69,6 +102,15 @@ export function UsagePill({ openRequest }: { openRequest?: number } = {}) {
               </div>
             );
           })}
+          {spend && (
+            <div className="usage-spend">
+              <div className="usage-top"><span>Spent today</span><b>{costText(spend.costUsd)}</b></div>
+              {spend.boards.filter((b) => b.costUsd > 0).map((b) => (
+                <div key={b.slug} className="usage-sub spend-row"><span>{b.name}</span><span>{costText(b.costUsd)}</span></div>
+              ))}
+              <div className="usage-sub">API-equivalent cost of every board's runs and huddle agents since midnight.</div>
+            </div>
+          )}
           <div className="usage-foot">
             <span title={usage ? fullTime(usage.fetchedAt) : undefined}>
               {usage ? `Updated ${timeAgo(usage.fetchedAt)}` : ""}

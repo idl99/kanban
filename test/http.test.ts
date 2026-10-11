@@ -629,3 +629,32 @@ test("a Planning chat answering the user's message may change any other ticket o
     board.userRequestRights = real;
   }
 });
+
+test("spending: card cost, today's spend and caps set by the user only", async () => {
+  const path = tempDir("ck-plain-");
+  let r = await fetch(`${base}/api/profiles`, json("POST", { name: "Spend", path }));
+  const p = (await r.json()) as any;
+  r = await fetch(`${base}/api/profiles/${p.slug}`, json("PATCH", { runCapUsd: 3 }));
+  expect(((await r.json()) as any).runCapUsd).toBe(3);
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets`, json("POST", { title: "Costly" }));
+  const t = (await r.json()) as any;
+  store.appendActivity(p.slug, t.id, 1, { type: "result", session_id: "s", total_cost_usd: 0.42 });
+  // Backlog cards show no $; Review cards do.
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}`);
+  expect(((await r.json()) as any).costUsd).toBeNull();
+  store.updateTicket(p.slug, t.id, { status: "review" });
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}`);
+  expect((await r.json()) as any).toMatchObject({ costUsd: 0.42, runCap: 3 });
+  r = await fetch(`${base}/api/spend`);
+  const spend = (await r.json()) as any;
+  expect(spend.boards.find((b: any) => b.slug === p.slug).costUsd).toBeCloseTo(0.42);
+
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}`, json("PATCH", { runCapUsd: 0 }));
+  expect((await r.json()) as any).toMatchObject({ runCapUsd: 0, runCap: null });
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}`, json("PATCH", { runCapUsd: -1 }));
+  expect(r.status).toBe(400);
+  r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}`, {
+    ...json("PATCH", { runCapUsd: 100 }), headers: { "content-type": "application/json", "x-ckanban-run": `${p.slug}/${t.id}` },
+  });
+  expect(r.status).toBe(403);
+});

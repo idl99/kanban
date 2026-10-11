@@ -1,19 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import { copy, type Ticket } from "./api";
 import { BranchIcon, BugIcon, CheckIcon, CloseIcon, CopyIcon, MoreIcon, RefreshIcon, TerminalIcon, TrashIcon } from "./icons";
+import { capInputText, parseCap } from "./capText";
 import { useLayer } from "./layers";
+import { costText } from "./usage";
 
 /**
  * "⋯" menu in the ticket panel header: the session (resume command, branch, ID, linked session),
  * then Report a bug and Delete. ↑↓ move, Esc closes only the menu.
  */
-export function TicketMenu({ ticket, working, live, linkedLabel, onBranch, onPickSession, onUnlink, onCheckPr, onReportBug, onDelete }: {
+export function TicketMenu({ ticket, working, live, linkedLabel, boardCap, onCap, onBranch, onPickSession, onUnlink, onCheckPr, onReportBug, onDelete }: {
   ticket: Ticket;
   working: boolean;
   /** The session is open in a terminal right now. */
   live: boolean;
   /** Label of the linked Claude session, when there is one. */
   linkedLabel: string | null;
+  /** The board's spending cap per run (null: none). */
+  boardCap: number | null;
+  /** Set this ticket's cap: an amount, 0 for none, null for the board's. */
+  onCap: (usd: number | null) => Promise<unknown>;
   /** Branch the ticket (copy of its conversation + committed code); only offered once it has a conversation. */
   onBranch: () => void;
   onPickSession: () => void;
@@ -138,6 +144,8 @@ export function TicketMenu({ ticket, working, live, linkedLabel, onBranch, onPic
             </button>
           )}
           <div className="menu-sep" role="separator" />
+          <CapRow ticket={ticket} boardCap={boardCap} onCap={onCap} />
+          <div className="menu-sep" role="separator" />
           <button role="menuitem" className="menu-item" title="Something wrong with ckanban on this ticket? File a GitHub issue with its details attached"
             onClick={pick(onReportBug)}>
             <span className="menu-icon" aria-hidden><BugIcon size={14} /></span>
@@ -150,5 +158,36 @@ export function TicketMenu({ ticket, working, live, linkedLabel, onBranch, onPic
         </div>
       )}
     </div>
+  );
+}
+
+/** The ticket's spending cap per run: typed, saved with Enter (empty: the board's, 0: none). */
+function CapRow({ ticket, boardCap, onCap }: { ticket: Ticket; boardCap: number | null; onCap: (usd: number | null) => Promise<unknown> }) {
+  const own = ticket.runCapUsd;
+  const [text, setText] = useState(own === 0 ? "none" : capInputText(own));
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const value = parseCap(text);
+  const save = async () => {
+    if (value === undefined || value === (own ?? null)) return;
+    setState("saving");
+    try {
+      await onCap(value);
+      setState("saved");
+    } catch {
+      setState("error");
+    }
+  };
+  const board = boardCap ? `board: ${costText(boardCap)}` : "board: no cap";
+  return (
+    <label className="menu-item cap-row" title="Each work run of this ticket stops once it has spent this much (API-equivalent $). Empty: the board's cap; none: no cap.">
+      <span className="menu-label">Spending cap per run</span>
+      <span className="cap-input">
+        $<input inputMode="decimal" aria-label="Spending cap per run in $" value={text} placeholder={board}
+          aria-invalid={value === undefined}
+          onChange={(e) => { setText(e.target.value); setState("idle"); }}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }} onBlur={save} />
+      </span>
+      <span className="menu-hint">{value === undefined ? "an amount, or none" : state === "saved" ? "Saved ✓" : state === "error" ? "Not saved" : state === "saving" ? "Saving…" : board}</span>
+    </label>
   );
 }

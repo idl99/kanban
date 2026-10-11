@@ -3,12 +3,15 @@ import { safeHref, waitsForSlot, type SessionMessage, type Ticket } from "./api"
 import { type CardHuddleBadge, digestPreview } from "./huddleText";
 import { ClockIcon } from "./icons";
 import { KeyHint } from "./KeyHint";
+import { CapActions } from "./CapActions";
+import { capWait } from "./capText";
 import { LimitActions } from "./LimitActions";
 import { limitLabel, limitWait } from "./limitText";
 import { ResourceChip, resourceWait } from "./Needs";
 import { currentPr, prChips } from "./prText";
 import { ImportantStar } from "./StarToggle";
 import { elapsed, fullTime, plainPreview, timeAgo } from "./time";
+import { costText } from "./usage";
 import { useNow } from "./useNow";
 
 /** Live running time: ticks every second for the first minute, then every 30s. */
@@ -129,7 +132,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           {plainPreview(last.from === "huddle" ? digestPreview(last.text) : last.text)}
         </div>
       )}
-      {(badge || ticket.autoHuddle || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || huddle) && (
+      {(badge || ticket.autoHuddle || ticket.costUsd || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || huddle) && (
         <div className="card-meta">
           {ticket.plan && ticket.plan.state !== "done" && (
             <span className={`badge plan ${ticket.plan.state}`} title="This ticket runs a plan of child tickets">
@@ -153,6 +156,11 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           {ticket.status === "review" && prChips(currentPr(ticket)).map((c) => (
             <span key={c.label} className={`badge pr-chip ${c.tone}`} title={c.title}>{c.label}</span>
           ))}
+          {!!ticket.costUsd && (
+            <span className="badge cost" title={`API-equivalent cost of this ticket's runs so far${ticket.runCap ? ` · runs stop at ${costText(ticket.runCap)}` : ""}`}>
+              {costText(ticket.costUsd)}
+            </span>
+          )}
           {ticket.workdir && (ticket.terminalOpen
             ? <span className="badge running" title="This ticket's Claude session is open in a terminal"><span className="live-dot" /> In terminal</span>
             : <span className="badge stopped" title="Linked to an existing Claude session">session</span>)}
@@ -162,6 +170,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
         </div>
       )}
       {limit && !dragging && limitWait(ticket) && <LimitActions slug={limit.slug} ticket={ticket} onError={limit.onError} small />}
+      {limit && !dragging && capWait(ticket) && <CapActions slug={limit.slug} ticket={ticket} onError={limit.onError} small />}
     </article>
   );
 }

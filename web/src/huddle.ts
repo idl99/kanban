@@ -120,9 +120,9 @@ export function useHuddle(slug: string, ticketId: string, huddleId: string | nul
     } else if (e.type === "huddle.message" && e.profile === slug && e.huddleId === idRef.current) {
       setMessages((ms) => mergeMessages(ms, [e.message]));
     } else if (e.type === "huddle.activity" && e.profile === slug) {
-      if (e.huddleId === idRef.current) setHuddle((h) => h && withActivity(h, e.handle, e.lastActivity));
+      if (e.huddleId === idRef.current) setHuddle((h) => h && withActivity(h, e.handle, e.lastActivity, e.liveCostUsd));
       if (listRef.current?.some((h) => h.id === e.huddleId)) {
-        listRef.current = listRef.current.map((h) => (h.id === e.huddleId ? withActivity(h, e.handle, e.lastActivity) : h));
+        listRef.current = listRef.current.map((h) => (h.id === e.huddleId ? withActivity(h, e.handle, e.lastActivity, e.liveCostUsd) : h));
         setList(listRef.current);
       }
     }
@@ -158,7 +158,7 @@ export function useBoardHuddles(slug: string | null): Huddle[] {
   }, [reload]);
   useEffect(() => subscribe((e) => {
     if (e.type === "huddle.updated" && e.profile === slug) setList((hs) => upsertHuddle(hs, e.huddle));
-    else if (e.type === "huddle.activity" && e.profile === slug) setList((hs) => hs.map((h) => (h.id === e.huddleId ? withActivity(h, e.handle, e.lastActivity) : h)));
+    else if (e.type === "huddle.activity" && e.profile === slug) setList((hs) => hs.map((h) => (h.id === e.huddleId ? withActivity(h, e.handle, e.lastActivity, e.liveCostUsd) : h)));
   }), [slug]);
   useEffect(() => onReconnect(reload), [reload]);
   return list;

@@ -31,10 +31,11 @@ import { AGENT_STEP_TAIL, settleAgent } from "./subagents";
 import type { TerminalWatcher } from "./terminals";
 import { attachmentHeader, canCopyFile, copyFileToClipboard, markdownPage, markdownTitle, revealFile, ShareError } from "./share";
 import { UpdateChecker } from "./update";
+import { SpendIndex } from "./spend";
 import { ClaudeLogIndex, readWindows, recordWindow, ticketRuns, ticketUsage, UsageCache, windowsNeeded } from "./ticket-usage";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
-import { STATUSES, type Profile, type ScheduleEditor, type Status, type Ticket } from "./types";
+import { runCapFor, STATUSES, type Profile, type ScheduleEditor, type Status, type Ticket } from "./types";
 import { nowIso, slugify } from "./util";
 import { applyDetection, detectSetup } from "./worktree-setup";
 
@@ -173,6 +174,7 @@ export function createServer(deps: ServerDeps) {
   const snippets = new Snippets(store, bus);
   const windowsFile = join(store.root, "usage-windows.json");
   const usage = new UsageCache(deps.usage ?? fetchUsage, (r) => recordWindow(windowsFile, r));
+  const spend = new SpendIndex(store);
   const claudeLogs = deps.claudeLogs ?? new ClaudeLogIndex();
   const publishArtifact = deps.publishArtifact ?? ((job: ArtifactJob) => runArtifactJob(job));
   // No listener (not bound): 0, so `on` refuses instead of pointing serve at whatever holds the port.
@@ -264,6 +266,10 @@ export function createServer(deps: ServerDeps) {
       attention: ticketAttention(store, p.slug, t, session, running, huddle),
       /** Its own huddle is working on it: the card shows "Huddle · n working" instead of an outcome badge. */
       huddleBusy: !running && t.status !== "in_progress" && huddleBusy(huddle) && !huddleAsk(huddle),
+      /** API-equivalent $ so far (the Usage tab's total), for In Progress and Review cards. */
+      costUsd: running || t.status === "in_progress" || t.status === "review" ? spend.ticket(p.slug, t.id).costUsd : null,
+      /** Spending cap its next work run gets (null: none). */
+      runCap: runCapFor(t, p),
     };
   };
 
@@ -385,6 +391,8 @@ export function createServer(deps: ServerDeps) {
     if (parts[0] === "events" && m === "GET") return sse(req);
     if (parts[0] === "version" && m === "GET") return json(await updates.status());
     if (parts[0] === "usage" && m === "GET") return json(await usage.get(0));
+    // What every board spent today (tickets' runs and huddle agents), for the header pill.
+    if (parts[0] === "spend" && m === "GET") return json(spend.today());
     // How every teammate (huddle preset) and template was used, from the huddles on every board.
     if (parts[0] === "team-usage" && m === "GET") return json(huddles.usage());
     if (parts[0] === "inbox" && m === "GET") {
@@ -576,6 +584,10 @@ export function createServer(deps: ServerDeps) {
         if (b.setupCommand !== undefined) next.setupCommand = String(b.setupCommand ?? "").trim();
         if (b.cleanupCommand !== undefined) next.cleanupCommand = String(b.cleanupCommand ?? "").trim();
         if (b.autoHuddles !== undefined) next.autoHuddles = !!b.autoHuddles;
+        if (b.runCapUsd !== undefined) {
+          if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can change the board's spending cap");
+          next.runCapUsd = capValue(b.runCapUsd, true) || null;
+        }
         if (b.setupDetected !== undefined) next.setupDetected = b.setupDetected && typeof b.setupDetected === "object" ? b.setupDetected : null;
         if (next.path !== profile.path) shells.kill(slug);
         store.saveProfile(next);
@@ -829,6 +841,11 @@ export function createServer(deps: ServerDeps) {
         if (b.important !== undefined) {
           if (typeof b.important !== "boolean") throw new HttpError(400, "important must be true or false");
           patch.important = b.important;
+        }
+        // Spending cap per run: a positive amount, 0 for none, null for the board's. Only the user sets it.
+        if (b.runCapUsd !== undefined) {
+          if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can change a ticket's spending cap");
+          patch.runCapUsd = capValue(b.runCapUsd, true);
         }
         if (planner || requester) {
           delete patch.order;
@@ -1105,6 +1122,17 @@ export function createServer(deps: ServerDeps) {
       if (!ids?.length) throw new HttpError(400, "ids must be a non-empty list of ticket ids");
       const r = board.adoptTickets(slug, id, ids);
       return json({ adopted: r.adopted.map((t) => view(profile, t)), skipped: r.skipped });
+    }
+    // A run stopped at its spending cap: "Continue with +$Y" ({addUsd}).
+    if (m === "POST" && action === "cap-continue") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can continue a ticket past its spending cap");
+      const b = await body(req);
+      try {
+        return json(view(profile, await board.continueAfterCap(slug, id, Number(b.addUsd))), 202);
+      } catch (e) {
+        if (e instanceof ConflictError) throw e;
+        throw new HttpError(400, (e as Error).message);
+      }
     }
     // Usage limit: "Continue now" (action: continue), or "Don't auto-continue" / "Auto-continue" (auto: boolean).
     if (m === "POST" && action === "limit") {
@@ -1480,4 +1508,12 @@ export function createServer(deps: ServerDeps) {
     }
   }
   return Object.assign(server, { remoteServer });
+}
+
+/** A spending cap from a request: a positive amount, 0 for none (allowZero), null for the default. */
+function capValue(v: unknown, allowZero: boolean): number | null {
+  if (v === null || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0 || (n === 0 && !allowZero)) throw new HttpError(400, `spending cap must be a positive amount${allowZero ? ", 0 for none" : ""}, or null`);
+  return n;
 }

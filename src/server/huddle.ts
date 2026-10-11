@@ -58,7 +58,9 @@ import { huddleUsage, type Usage } from "./huddle-usage";
 import { isLevel, type Level, lowerLevels } from "./layers";
 import { autoHuddleSlotPrompt, autoHuddleStoppedPrompt, huddleAgentPrompt, huddleAgentSystemPrompt, huddleDigest, huddleMainPrompt } from "./prompts";
 import { buildArgs, MONITOR_IDLE_MS, startRun, type RunHandle } from "./runner";
+import { addHuddleSpend } from "./spend";
 import type { Store } from "./store";
+import { messageCost } from "./ticket-usage";
 import { proposalPreset, teammateProposal, type TeammateProposal } from "./teammate-proposal";
 import { autoHuddlesOn } from "./types";
 import type {
@@ -110,7 +112,11 @@ function costAfter(p: HuddleParticipant | undefined, total: number): Pick<Huddle
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 
-export type ParticipantView = Omit<HuddleParticipant, "token"> & { running: boolean };
+export type ParticipantView = Omit<HuddleParticipant, "token"> & {
+  running: boolean;
+  /** Estimated cost of the turn it is in now, not yet in costUsd (≈, priced from the turn's messages). */
+  liveCostUsd?: number;
+};
 /**
  * quiet: live, nobody working, no unanswered tags and no open findings (a sign it can be wrapped up);
  * idleSince: when the last message or turn was. forYou: messages tagging @you since the user last posted or acted
@@ -206,6 +212,8 @@ interface AgentRun {
   /** Snapshot agent between turns: its worktree is being reset (refreshing), or was reset for the next wake (fresh). */
   refreshing?: Promise<void> | null;
   fresh?: boolean;
+  /** Estimated cost of the turn in progress by assistant message id (its result line gives the exact total). */
+  turn?: Map<string, number>;
 }
 
 const isCoordinator = (h: Huddle, p: HuddleParticipant) => p.kind === "ticket-main" && p.ticketId === h.hostTicket;
@@ -403,7 +411,8 @@ export class Huddles {
         const running = this.isRunning(slug, h, p);
         // A ticket session's status is its ticket's run (unless it said it is done or blocked, or was stopped).
         const status = p.kind === "ticket-main" && (p.status === "idle" || p.status === "working") ? (running ? "working" : "idle") : p.status;
-        return { ...p, status, running };
+        const liveCostUsd = running ? this.turnCost(slug, h.id, p.handle) : 0;
+        return { ...p, status, running, ...(liveCostUsd > 0 ? { liveCostUsd } : {}) };
       }),
       ...this.quiet(slug, h, msgs),
       forYou: msgs.filter((m) => isForYou(m, since)).length + learningsPending,
@@ -790,16 +799,25 @@ export class Huddles {
     return h;
   }
 
+  /** What an agent's turn in progress cost so far (≈); 0 between turns. */
+  private turnCost(slug: string, hid: string, handle: string): number {
+    const turn = this.runs.get(this.key(slug, hid, handle))?.turn;
+    return turn ? [...turn.values()].reduce((a, b) => a + b, 0) : 0;
+  }
+
   private updateP(slug: string, hid: string, handle: string, patch: Partial<HuddleParticipant>): void {
     if (!this.load(slug, hid)) return;
     // Only what it is doing now (many times a minute): saved, and sent as a small event instead of the whole view.
     if (Object.keys(patch).every((k) => k === "lastActivity")) {
       const h = this.get(slug, hid);
       const p = h.participants.find((x) => x.handle === handle);
-      if (!p || p.lastActivity === patch.lastActivity) return;
-      p.lastActivity = patch.lastActivity;
-      this.save(slug, h);
-      this.bus.emit({ type: "huddle.activity", profile: slug, huddleId: hid, handle, lastActivity: patch.lastActivity ?? null });
+      const liveCostUsd = this.turnCost(slug, hid, handle);
+      if (!p || (p.lastActivity === patch.lastActivity && !liveCostUsd)) return;
+      if (p.lastActivity !== patch.lastActivity) {
+        p.lastActivity = patch.lastActivity;
+        this.save(slug, h);
+      }
+      this.bus.emit({ type: "huddle.activity", profile: slug, huddleId: hid, handle, lastActivity: patch.lastActivity ?? null, ...(liveCostUsd ? { liveCostUsd } : {}) });
       return;
     }
     this.update(slug, hid, (h) => {
@@ -1648,8 +1666,13 @@ export class Huddles {
         if (ev?.type === "stream_event" || this.shuttingDown) return;
         if (ev?.type === "result") {
           run.idle = true;
+          run.turn = undefined;
           const cur = this.get(slug, hid).participants.find((x) => x.handle === handle);
-          this.updateP(slug, hid, handle, { status: settled(cur) ? cur!.status : "idle", idleAt: nowIso(), ...costAfter(cur, Number(ev.total_cost_usd) || 0) });
+          const cost = costAfter(cur, Number(ev.total_cost_usd) || 0);
+          this.updateP(slug, hid, handle, { status: settled(cur) ? cur!.status : "idle", idleAt: nowIso(), ...cost });
+          try {
+            addHuddleSpend(this.store.root, slug, (cost.costUsd ?? 0) - (cur?.costUsd ?? 0));
+          } catch {}
           this.board.restartWorkChanged();
           this.checkBudget(slug, hid);
           // Turn boundary: a monitor gets what came in while it worked.
@@ -1664,6 +1687,10 @@ export class Huddles {
         if (run.idle && (ev?.type === "assistant" || (ev?.type === "system" && ev.subtype === "init"))) {
           run.idle = false;
           if (!settled(this.get(slug, hid).participants.find((x) => x.handle === handle))) this.updateP(slug, hid, handle, { status: "working" });
+        }
+        // Live cost on the roster: the turn's messages priced from their usage until the result line.
+        if (ev?.type === "assistant" && ev.message?.id && ev.message.usage) {
+          (run.turn ??= new Map()).set(ev.message.id, messageCost(String(ev.message.model ?? p.model ?? profile.model ?? ""), ev.message.usage));
         }
         const s = summarizeEvent(ev);
         const now = Date.now();
