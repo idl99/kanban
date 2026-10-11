@@ -236,6 +236,8 @@ body.show-hints .sortable-card:not(:focus) .key-hint.card-keys { display: none; 
 .badge.stopped { background: var(--surface-2); color: var(--muted); }
 .badge.cost { background: var(--surface-2); color: var(--muted); font-variant-numeric: tabular-nums; }
 .badge.pr { background: var(--info-soft); color: var(--info); }
+.badge.artifact { background: var(--accent-soft); color: var(--accent); }
+.badge.artifact:hover { background: color-mix(in srgb, var(--accent) 22%, var(--accent-soft)); }
 .badge.pr-chip.ok { background: var(--ok-soft); color: var(--ok); }
 .badge.pr-chip.bad { background: var(--err-soft); color: var(--err); }
 .badge.pr-chip.pend { background: var(--warn-soft); color: var(--warn); }
@@ -590,10 +592,28 @@ textarea { resize: vertical; font-size: 13.5px; }
 .output-view.html .output-body { padding: 0; display: flex; flex-direction: column; overflow: hidden; }
 .output-html { flex: 1; min-height: 360px; width: 100%; border: 0; background: #fff; border-radius: 0 0 10px 10px; }
 .output-html-note { padding: 14px 18px; }
+/* Outputs tab: the ticket's artifacts and share links above the files, the newest artifact highlighted */
+.output-section { flex: none; margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.output-links { flex: none; max-height: 40%; overflow: auto; margin-bottom: 12px; }
+.link-row { display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-bottom: 1px solid var(--border); }
+.link-row:last-child { border-bottom: 0; }
+.link-row.latest { background: var(--accent-soft); border: 0; border-radius: 8px; padding: 9px 10px; margin-bottom: 4px; }
+.link-icon { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border-radius: 6px; background: var(--surface-2); font-size: 13px; color: var(--muted); }
+.link-row.latest .link-icon { background: var(--surface); color: var(--accent); }
+.link-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.link-label { font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-row.latest .link-label { font-weight: 650; }
+.link-text .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-row .btn { display: inline-flex; align-items: center; gap: 4px; flex: none; text-decoration: none; }
+.link-src { flex: none; font-size: 11px; background: var(--info-soft); color: var(--info); border-radius: 6px; padding: 1px 6px; }
+.output-meta .link-src { margin-left: 6px; }
 @container (max-width: 640px) {
   .outputs { flex-direction: column; }
   .output-side { width: auto; flex: 0 0 auto; max-height: 35%; }
   .output-view { flex: 1; }
+  .link-row { flex-wrap: wrap; }
+  .link-text { flex-basis: calc(100% - 36px); }
+  .link-row .link-src { margin-left: 36px; }
 }
 .output-view pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .output-view .md table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }

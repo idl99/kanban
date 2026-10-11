@@ -53,7 +53,7 @@ function serializeTicket(t: Ticket): string {
 export class Store {
   /** Parsed huddle message logs by "<slug>/<huddle>", with the byte offset read up to (see readHuddleMessages). */
   private huddleLogs = new Map<string, { offset: number; msgs: HuddleMessage[] }>();
-  private lastAiCache = new Map<string, { key: string; text: string | null }>();
+  private aiCache = new Map<string, { key: string; comments: Comment[] }>();
   constructor(public readonly root: string) {
     mkdirSync(join(root, "profiles"), { recursive: true });
   }
@@ -241,21 +241,26 @@ export class Store {
     return readJsonl<Comment>(join(this.ticketDir(slug, id), "comments.jsonl"));
   }
 
-  /** Text of the ticket's last Claude comment (its last result summary), cached until comments.jsonl changes. */
+  /** Text of the ticket's last Claude comment (its last result summary). */
   lastAiComment(slug: string, id: string): string | null {
+    return this.aiComments(slug, id).at(-1)?.text ?? null;
+  }
+
+  /** The ticket's Claude comments (its result summaries), oldest first, cached until comments.jsonl changes. */
+  aiComments(slug: string, id: string): Comment[] {
     const file = join(this.ticketDir(slug, id), "comments.jsonl");
     let key: string;
     try {
       const st = statSync(file);
       key = `${st.mtimeMs}:${st.size}`;
     } catch {
-      return null;
+      return [];
     }
-    const hit = this.lastAiCache.get(file);
-    if (hit?.key === key) return hit.text;
-    const text = this.listComments(slug, id).findLast((c) => c.author === "ai")?.text ?? null;
-    this.lastAiCache.set(file, { key, text });
-    return text;
+    const hit = this.aiCache.get(file);
+    if (hit?.key === key) return hit.comments;
+    const comments = this.listComments(slug, id).filter((c) => c.author === "ai");
+    this.aiCache.set(file, { key, comments });
+    return comments;
   }
 
   addComment(slug: string, id: string, author: Comment["author"], text: string): Comment {
@@ -385,6 +390,20 @@ export class Store {
       .map((f) => this.getHuddle(slug, f.slice(0, -5)))
       .filter((h): h is Huddle => h !== null)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  /** Cheap change marker for the board's huddle files (names, sizes and mtimes). */
+  huddlesVersion(slug: string): string {
+    const dir = this.huddlesDir(slug);
+    if (!existsSync(dir)) return "";
+    return readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => {
+      try {
+        const st = statSync(join(dir, f));
+        return `${f}:${st.size}:${st.mtimeMs}`;
+      } catch {
+        return f;
+      }
+    }).join("|");
   }
 
   getHuddle(slug: string, id: string): Huddle | null {

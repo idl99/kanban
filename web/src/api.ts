@@ -211,6 +211,8 @@ export interface Ticket {
   huddleBusy?: boolean;
   /** Output files published as claude.ai pages from the Share menu, one link per file. */
   shareLinks?: ShareLink[];
+  /** Artifacts and share links, newest first (src/server/links.ts). */
+  links?: TicketLink[];
   /** Teammate cards in the chat the user answered, by entry uuid (src/server/types.ts). */
   teammateCards?: Record<string, TeammateCardState>;
   /** Share menu publishes in progress (or the last one's error), per output file. */
@@ -222,6 +224,11 @@ export interface Ticket {
 }
 
 export interface ShareLink { file: string; url: string; at: string }
+/** Where a link was found: the ticket's session, a huddle teammate's session ("huddle:@handle"), a result summary or the Share menu. */
+export interface TicketLink { url: string; label: string; at: string; source: string }
+export const isArtifactLink = (l: TicketLink) => l.source !== "share";
+/** The ticket's newest claude.ai artifact (share links of output files aside). */
+export const newestArtifact = (t: Pick<Ticket, "links">) => t.links?.find(isArtifactLink) ?? null;
 export interface ShareJob { file: string; state: "publishing" | "failed"; error?: string; at: string }
 
 export type PlanState = "running" | "paused" | "finishing" | "done" | "stuck";

@@ -41,6 +41,8 @@ const MIN_WIDTH = 640;
 
 /** Backdrop left visible beside the panel, so clicking it can always close the panel. */
 const BACKDROP_MIN = 64;
+/** Artifact and share link chips in the header; the rest are behind "+N more" (the Outputs tab). */
+const LINK_CHIPS = 3;
 
 const defaultWidth = () => Math.round(Math.min(1120, window.innerWidth * 0.72));
 
@@ -332,6 +334,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const width = (tab === "changes" || tab === "huddle") && !panel.custom ? clampWidth(CHANGES_WIDTH) : panel.width;
   const [descScrolled, setDescScrolled] = useState(false);
 
+  const links = (ticket.links ?? []).filter((l) => safeHref(l.url));
   const loadOutputs = () => api.outputs(slug, ticket.id).then((o) => setOutputCount(o.length)).catch(() => {});
 
   useEffect(() => {
@@ -591,7 +594,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
 
               {children.length > 0 && <PlanSummary ticket={ticket} children={children} onOpen={() => setTab("plan")} />}
 
-              {(!!ticket.session?.artifacts.length || !!ticket.shareLinks?.length || outputCount > 0 || hasUsage) && (
+              {(!!links.length || outputCount > 0 || hasUsage) && (
                 <div className="result-chips" aria-label="Results">
                   {usage && hasUsage && (
                     <button className="result-chip usage-chip" onClick={() => setTab("usage")}
@@ -602,14 +605,17 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                   {outputCount > 0 && (
                     <button className="result-chip" onClick={() => setTab("outputs")}><FileTextIcon size={13} /> {outputCount} output file{outputCount > 1 ? "s" : ""}</button>
                   )}
-                  {ticket.session?.artifacts.slice().reverse().map((a) => (
-                    <a key={a.url} className="result-chip" href={safeHref(a.url)} target="_blank" rel="noreferrer" title={a.url}><ExternalIcon size={12} /> {a.label}</a>
-                  ))}
-                  {ticket.shareLinks?.filter((l) => !ticket.session?.artifacts.some((a) => a.url === l.url)).slice().reverse().map((l) => (
-                    <a key={l.url} className="result-chip" href={safeHref(l.url)} target="_blank" rel="noreferrer" title={`Share link for ${l.file}: ${l.url}`}>
-                      <LinkIcon size={12} /> {l.file.slice(l.file.lastIndexOf("/") + 1)}
+                  {links.slice(0, LINK_CHIPS).map((l) => (
+                    <a key={l.url} className="result-chip" href={safeHref(l.url)} target="_blank" rel="noreferrer"
+                      title={l.source === "share" ? `Share link: ${l.url}` : l.url}>
+                      {l.source === "share" ? <LinkIcon size={12} /> : <ExternalIcon size={12} />} {l.label}
                     </a>
                   ))}
+                  {links.length > LINK_CHIPS && (
+                    <button className="result-chip" onClick={() => { setOutputFocus(null); setTab("outputs"); }} title="All links are in the Outputs tab">
+                      +{links.length - LINK_CHIPS} more
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -707,7 +713,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 </button>
               )}
               <button role="tab" aria-selected={tab === "outputs"} className={tab === "outputs" ? "active" : ""} onClick={() => { setOutputFocus(null); setTab("outputs"); }}>
-                Outputs{outputCount > 0 && <span className="tab-count">{outputCount}</span>}
+                Outputs{outputCount + links.length > 0 && <span className="tab-count">{outputCount + links.length}</span>}
               </button>
               <button role="tab" aria-selected={tab === "usage"} className={tab === "usage" ? "active" : ""} onClick={() => { ticketUsage.reload(); setTab("usage"); }}>
                 Usage{usage && hasUsage && usage.totals.pctCurrentWindow !== null && <span className="tab-count">{approxPct(usage.totals.pctCurrentWindow).replace(" ", "")}</span>}

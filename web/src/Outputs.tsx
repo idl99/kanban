@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, subscribe, type OutputFile, type Ticket } from "./api";
-import { ChevronDownIcon, ChevronRightIcon, CloseIcon, FileCodeIcon, FileIcon, FileImageIcon, FileTextIcon, FolderIcon, FolderOpenIcon } from "./icons";
+import { api, copy, isArtifactLink, safeHref, subscribe, type OutputFile, type Ticket, type TicketLink } from "./api";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, CopyIcon, ExternalIcon, FileCodeIcon, FileIcon, FileImageIcon, FileTextIcon, FolderIcon, FolderOpenIcon, LinkIcon } from "./icons";
 import { fullTime, timeAgo } from "./time";
 import { useNow } from "./useNow";
 import { Markdown } from "./Transcript";
@@ -67,7 +67,64 @@ function openInTab(name: string, html: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-/** Deliverables Claude saved in the ticket's outputs folder; markdown is rendered, images and HTML previewed, other text shown raw. */
+/** Where a link came from, as the row's tag; the ticket's own publishes need none. */
+function sourceTag(l: TicketLink): string | null {
+  if (l.source.startsWith("huddle:")) return "huddle";
+  if (l.source === "share") return "share link";
+  if (l.source === "result") return "result";
+  return null;
+}
+
+function linkMeta(l: TicketLink): string {
+  if (l.source === "share") return "share link";
+  if (l.source.startsWith("huddle:")) return `claude.ai artifact · by ${l.source.slice("huddle:".length)} in huddle`;
+  if (l.source === "result") return "claude.ai artifact · from the result summary";
+  return "claude.ai artifact";
+}
+
+/** The ticket's artifacts and share links (newest first), the newest artifact highlighted. Hidden when there are none. */
+function Links({ links }: { links: TicketLink[] }) {
+  const [copied, setCopied] = useState(false);
+  const shown = links.filter((l) => safeHref(l.url));
+  if (!shown.length) return null;
+  const top = shown.find(isArtifactLink);
+  const rest = shown.filter((l) => l !== top);
+  return (
+    <section className="output-links" aria-label="Links">
+      <h4 className="output-section">Links</h4>
+      {top && (
+        <div className="link-row latest">
+          <span className="link-icon" aria-hidden>★</span>
+          <span className="link-text">
+            <span className="link-label" title={top.url}>{top.label}</span>
+            <span className="muted small" title={fullTime(top.at)}>{linkMeta(top)} · latest · updated {timeAgo(top.at)}</span>
+          </span>
+          {sourceTag(top) && <span className="link-src">{sourceTag(top)}</span>}
+          <a className="btn primary small" href={safeHref(top.url)} target="_blank" rel="noreferrer">Open <ExternalIcon size={12} /></a>
+          <button className="btn small" onClick={() => copy(top.url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); })}>
+            {copied ? <><CheckIcon size={12} /> Copied</> : <><CopyIcon size={12} /> Copy link</>}
+          </button>
+        </div>
+      )}
+      {rest.map((l) => (
+        <div key={l.url} className="link-row">
+          <span className="link-icon" aria-hidden>{isArtifactLink(l) ? "◆" : <LinkIcon size={13} />}</span>
+          <span className="link-text">
+            <span className="link-label" title={l.url}>{l.label}</span>
+            <span className="muted small" title={fullTime(l.at)}>{linkMeta(l)} · {timeAgo(l.at)}</span>
+          </span>
+          {sourceTag(l) && <span className="link-src">{sourceTag(l)}</span>}
+          <a className="btn small" href={safeHref(l.url)} target="_blank" rel="noreferrer">Open <ExternalIcon size={12} /></a>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/**
+ * Deliverables Claude saved in the ticket's outputs folder; markdown is rendered, images and HTML previewed, other text shown raw.
+ * The ticket's artifacts and share links sit above them.
+ */
 export function Outputs({ slug, ticket, onCount, focus }: {
   slug: string;
   ticket: Ticket;
@@ -120,15 +177,24 @@ export function Outputs({ slug, ticket, onCount, focus }: {
     return next;
   });
 
-  if (files === null) return <div className="muted"><span className="spinner" /> Loading…</div>;
+  const links = ticket.links ?? [];
+  const shared = new Set(ticket.shareLinks?.map((l) => l.file));
+  const withLinks = (body: React.ReactNode) => !links.some((l) => safeHref(l.url)) ? body : (
+    <>
+      <Links links={links} />
+      <h4 className="output-section">Files</h4>
+      {body}
+    </>
+  );
+  if (files === null) return withLinks(<div className="muted"><span className="spinner" /> Loading…</div>);
   if (error && !files.length) {
-    return (
+    return withLinks(
       <div className="banner error inline load-error" role="alert">
         Couldn't load the outputs: {error} <button className="link-btn" onClick={load}>Retry</button>
-      </div>
+      </div>,
     );
   }
-  if (!files.length) return <div className="muted">No outputs yet. Research and writing tasks save their report here.</div>;
+  if (!files.length) return withLinks(<div className="muted">No output files yet. Research and writing tasks save their report here.</div>);
 
   const pad = (depth: number) => ({ paddingLeft: 8 + depth * 14 });
   const renderFolder = (d: Folder, depth: number): React.ReactNode => (
@@ -154,7 +220,10 @@ export function Outputs({ slug, ticket, onCount, focus }: {
             <span className="tree-icon" aria-hidden>{fileIcon(f.name)}</span>
             <span className="output-label">
               <span className="output-name">{baseName(f.name)}</span>
-              <span className="output-meta muted" title={fullTime(f.updatedAt)}>{kb(f.size)} · {timeAgo(f.updatedAt)}</span>
+              <span className="output-meta muted" title={fullTime(f.updatedAt)}>
+                {kb(f.size)} · {timeAgo(f.updatedAt)}
+                {shared.has(f.name) && <span className="link-src" title="Published as a claude.ai page from the Share menu">shared</span>}
+              </span>
             </span>
           </button>
           <ShareMenu slug={slug} ticket={ticket} name={f.name} variant="dots" text={f.name === open ? text : undefined} />
@@ -170,7 +239,7 @@ export function Outputs({ slug, ticket, onCount, focus }: {
     </div>
   );
 
-  return (
+  return withLinks(
     <div className="outputs">
       <div className="output-side">
         {files.length > FILTER_MIN && (
@@ -208,6 +277,6 @@ export function Outputs({ slug, ticket, onCount, focus }: {
           : <pre>{text.length > 200_000 ? text.slice(0, 200_000) + "\n…(truncated)" : text}</pre>}
         </div>
       </div>
-    </div>
+    </div>,
   );
 }

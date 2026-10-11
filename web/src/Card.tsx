@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { safeHref, waitsForSlot, type SessionMessage, type Ticket } from "./api";
+import { newestArtifact, safeHref, waitsForSlot, type SessionMessage, type Ticket } from "./api";
 import { type CardHuddleBadge, digestPreview } from "./huddleText";
-import { ClockIcon } from "./icons";
+import { ClockIcon, ExternalIcon } from "./icons";
 import { KeyHint } from "./KeyHint";
 import { CapActions } from "./CapActions";
 import { capWait } from "./capText";
@@ -113,6 +113,8 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
   const last = ticket.session?.lastMessage;
   useNow();
   const lastAt = ticket.session ? ticket.session.lastMessage?.at || ticket.session.updatedAt : null;
+  const artifact = newestArtifact(ticket);
+  const artifactHref = safeHref(artifact?.url);
   return (
     <article
       className={`card ${dragging ? "dragging" : ""} ${queued && !working ? "is-queued" : ""} ${working ? "is-running" : ""} ${att ? `needs-you att-${att.kind}` : ""}`}
@@ -134,7 +136,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           {plainPreview(last.from === "huddle" ? digestPreview(last.text) : last.text)}
         </div>
       )}
-      {(badge || ticket.autoHuddle || ticket.costUsd || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || huddle) && (
+      {(badge || ticket.autoHuddle || ticket.costUsd || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || huddle || artifactHref) && (
         <div className="card-meta">
           {ticket.plan && ticket.plan.state !== "done" && (
             <span className={`badge plan ${ticket.plan.state}`} title="This ticket runs a plan of child tickets">
@@ -153,6 +155,12 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           {ticket.prUrl && (
             <a className="badge pr" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
               PR #{ticket.prUrl.split("/").pop()}
+            </a>
+          )}
+          {artifact && artifactHref && (
+            <a className="badge artifact" href={artifactHref} target="_blank" rel="noreferrer" title={artifact.label === "claude.ai artifact" ? "Open claude.ai artifact" : `Open ${artifact.label} (claude.ai artifact)`}
+              aria-label={`Open artifact: ${artifact.label}`} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+              <ExternalIcon size={11} /> artifact
             </a>
           )}
           {ticket.status === "review" && prChips(currentPr(ticket)).map((c) => (

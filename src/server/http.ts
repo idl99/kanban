@@ -25,7 +25,8 @@ import { McpError, McpManager } from "./mcp";
 import { Notifier } from "./notify";
 import { LISTENER_HEADER, LOGIN_HEADER, qrSvg, RemoteAccess, RemoteError, remoteUrl, type RemoteConfig } from "./remote";
 import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
-import { SessionCache } from "./session";
+import { collectLinks } from "./links";
+import { SessionCache, type SessionSummary } from "./session";
 import { ptySupported, ShellManager, type PtyKind, type Shell } from "./shell";
 import { AGENT_STEP_TAIL, settleAgent } from "./subagents";
 import type { TerminalWatcher } from "./terminals";
@@ -243,6 +244,30 @@ export function createServer(deps: ServerDeps) {
   };
   const strings = (v: unknown): string[] | undefined =>
     Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()).map((x) => x.trim()) : undefined;
+  /** Huddle teammates (agents with a session) by host ticket; huddle files are read again only once they change. */
+  const teammates = new Map<string, { version: string; byHost: Map<string, { handle: string; sessionId: string }[]> }>();
+  const teammatesOf = (slug: string, id: string) => {
+    let hit = teammates.get(slug);
+    const version = store.huddlesVersion(slug);
+    if (hit?.version !== version) {
+      const byHost = new Map<string, { handle: string; sessionId: string }[]>();
+      for (const h of store.listHuddles(slug)) {
+        const list = byHost.get(h.hostTicket) ?? [];
+        for (const p of h.participants) if (p.kind === "agent" && p.sessionId && p.sessionStarted) list.push({ handle: p.handle, sessionId: p.sessionId });
+        byHost.set(h.hostTicket, list);
+      }
+      hit = { version, byHost };
+      teammates.set(slug, hit);
+    }
+    return hit.byHost.get(id) ?? [];
+  };
+  /** Every artifact and share link of the ticket, newest first (see links.ts). */
+  const ticketLinks = (slug: string, t: Ticket, session: SessionSummary | null) => collectLinks({
+    ticket: session?.artifacts,
+    huddles: teammatesOf(slug, t.id).map((m) => ({ handle: m.handle, artifacts: sessions.get(m.sessionId)?.artifacts ?? [] })),
+    results: store.aiComments(slug, t.id),
+    shareLinks: t.shareLinks,
+  });
   /** hosts: the board's open huddles by host ticket, when the caller already has them (one read per board). */
   const view = (p: Profile, t: Ticket, hosts = board.hostHuddles(p.slug)) => {
     const running = board.isRunning(p.slug, t.id);
@@ -256,6 +281,8 @@ export function createServer(deps: ServerDeps) {
       holdsSlot: running && board.holdsSlot(p.slug, t.id),
       resumeCommand: t.sessionId ? resumeCommand(t.workdir ?? t.worktree ?? p.path, t.sessionId) : null,
       session,
+      /** Artifacts and share links, newest first: the Outputs tab's Links, the header chips and the card's ↗ chip. */
+      links: ticketLinks(p.slug, t, session),
       /** Absolute outputs folder, so the Share menu can show where a file is. */
       outputDir: store.outputsPath(p.slug, t.id),
       shareJobs: [...(shareJobs.get(`${p.slug}/${t.id}`)?.values() ?? [])],
