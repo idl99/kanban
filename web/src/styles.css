@@ -616,6 +616,31 @@ textarea { resize: vertical; font-size: 13.5px; }
   .link-row .link-src { margin-left: 36px; }
 }
 .output-view pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* narrow Outputs (Outputs.tsx `narrow`): the list fills the tab; a tapped file opens in a reader over the whole ticket panel */
+.outputs.narrow { flex-direction: column; }
+.outputs.narrow .output-side { width: auto; flex: 1; max-height: none; }
+.outputs.narrow .output-file { min-height: 44px; align-items: center; padding-right: 34px; }
+.outputs.narrow .output-row .share-wrap { top: 10px; }
+.outputs.narrow .share-dots { opacity: 1; }
+.output-chev { margin-left: auto; padding-left: 8px; flex: none; display: flex; }
+.output-view.reader { position: absolute; inset: 0; z-index: 45; border: 0; border-radius: 0; background: var(--surface); }
+body > .output-view.reader { position: fixed; }
+.reader .output-bar { gap: 8px; padding: calc(8px + env(safe-area-inset-top)) 10px 8px 6px; }
+.output-back {
+  flex: none; display: inline-flex; align-items: center; gap: 2px; min-height: 40px; padding: 0 6px; border: 0; background: none;
+  color: var(--accent); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer;
+}
+.reader .output-bar-name { text-align: center; font-size: 13px; }
+.reader .output-body { padding: 16px 18px; font-size: 16px; line-height: 1.6; overflow-x: hidden; }
+.reader .output-body .md { overflow-wrap: anywhere; }
+.reader .output-body .md table { display: block; max-width: 100%; overflow-x: auto; }
+.reader.html .output-body { padding: 0; }
+.reader .output-html { border-radius: 0; }
+.output-pager {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 4px 12px max(6px, env(safe-area-inset-bottom)); border-top: 1px solid var(--border);
+}
+.output-pager .link-btn { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; font-size: 14px; font-weight: 600; }
 .output-view .md table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
 .output-view .md th, .output-view .md td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
 .output-view .md h1 { font-size: 20px; } .output-view .md h2 { font-size: 16px; margin-top: 18px; }
@@ -2081,6 +2106,11 @@ button.hd-mode:disabled { cursor: default; }
   .qkey { display: none; }
   .qcard .btn { min-height: 40px; }
   .composer-actions .btn { min-height: 40px; padding-left: 14px; padding-right: 14px; }
+  /* the hint gets its own line above the buttons instead of a squeezed column beside them */
+  .composer-foot { flex-wrap: wrap; row-gap: 8px; }
+  .composer-hint { flex: 1 1 100%; }
+  .composer-actions { flex: 1 1 100%; justify-content: flex-end; }
+  .composer-actions .image-pick { margin-right: auto; }
   .btn.image-pick, .btn.small.desc-editor-pick { min-height: 36px; padding-left: 12px; padding-right: 12px; font-size: 13px; }
 }
 

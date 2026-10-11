@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, copy, isArtifactLink, safeHref, subscribe, type OutputFile, type Ticket, type TicketLink } from "./api";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CloseIcon, CopyIcon, ExternalIcon, FileCodeIcon, FileIcon, FileImageIcon, FileTextIcon, FolderIcon, FolderOpenIcon, LinkIcon } from "./icons";
+import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, ExternalIcon, FileCodeIcon, FileIcon, FileImageIcon, FileTextIcon, FolderIcon, FolderOpenIcon, LinkIcon } from "./icons";
 import { fullTime, timeAgo } from "./time";
 import { useNow } from "./useNow";
 import { Markdown } from "./Transcript";
 import { baseName, BINARY, dragFile, HTML, IMAGE, MARKDOWN } from "./share";
 import { ShareMenu } from "./ShareMenu";
+import { useLayer } from "./layers";
+import { usePhone } from "./usePhone";
 
 function kb(n: number): string {
   return n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`;
@@ -44,6 +47,14 @@ function buildTree(files: OutputFile[]): Folder {
   sort(root);
   return root;
 }
+
+/** Files in the order the tree shows them: each folder's subfolders first, then its files. */
+function flatten(d: Folder): string[] {
+  return [...d.folders.flatMap(flatten), ...d.files.map((f) => f.name)];
+}
+
+/** Keep in step with the `@container (max-width: 640px)` rules for .outputs in styles.css. */
+const NARROW = 640;
 
 function fileIcon(name: string) {
   if (IMAGE.test(name) || /\.svg$/i.test(name)) return <FileImageIcon />;
@@ -139,7 +150,22 @@ export function Outputs({ slug, ticket, onCount, focus }: {
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [filter, setFilter] = useState("");
+  // Narrow (phone or a narrow panel): the list fills the tab and a tapped file opens in a full-height reader.
+  const [box, setBox] = useState<HTMLElement | null>(null);
+  const [narrow, setNarrow] = useState(false);
+  const [reading, setReading] = useState(!!focus);
+  const phone = usePhone();
+  const pushed = useRef(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
   useNow();
+
+  useEffect(() => {
+    const el = box?.parentElement;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setNarrow(e.contentRect.width <= NARROW));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [box]);
 
   const load = () => api.outputs(slug, ticketId).then((fs) => {
     setError(null);
@@ -176,6 +202,28 @@ export function Outputs({ slug, ticket, onCount, focus }: {
     if (isOpen(path)) next.add(path); else next.delete(path);
     return next;
   });
+
+  const readerOn = narrow && reading && !!open && !!files?.some((f) => f.name === open);
+  const order = useMemo(() => flatten(tree), [tree]);
+  const at = open ? order.indexOf(open) : -1;
+  const closeReader = () => (pushed.current ? history.back() : setReading(false));
+  useLayer(closeReader, { active: readerOn, skipInInputs: true });
+  // On a phone the Back gesture closes the reader, not the ticket: the reader gets its own history entry.
+  useEffect(() => {
+    if (!readerOn || !phone) return;
+    history.pushState({ ckOutputsReader: true }, "");
+    pushed.current = true;
+    const onPop = () => { pushed.current = false; setReading(false); };
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      if (pushed.current && history.state?.ckOutputsReader) history.back();
+      pushed.current = false;
+    };
+  }, [readerOn, phone]);
+  useEffect(() => { bodyRef.current?.scrollTo(0, 0); }, [open]);
+  const pick = (name: string) => { setOpen(name); setReading(true); };
+  const stepFile = (by: number) => { if (at >= 0) setOpen(order[(at + by + order.length) % order.length]); };
 
   const links = ticket.links ?? [];
   const shared = new Set(ticket.shareLinks?.map((l) => l.file));
@@ -214,7 +262,7 @@ export function Outputs({ slug, ticket, onCount, focus }: {
       {d.files.map((f) => (
         <div key={f.name} className={`output-row${f.name === open ? " selected" : ""}`} role="none">
           <button className={`tree-row output-file${f.name === open ? " selected" : ""}`} style={pad(depth)} title={f.name}
-            role="treeitem" aria-selected={f.name === open} onClick={() => setOpen(f.name)}
+            role="treeitem" aria-selected={f.name === open} onClick={() => pick(f.name)}
             draggable onDragStart={(e) => dragFile(e, slug, ticketId, f.name)}>
             <span className="tree-caret" aria-hidden />
             <span className="tree-icon" aria-hidden>{fileIcon(f.name)}</span>
@@ -225,6 +273,7 @@ export function Outputs({ slug, ticket, onCount, focus }: {
                 {shared.has(f.name) && <span className="link-src" title="Published as a claude.ai page from the Share menu">shared</span>}
               </span>
             </span>
+            {narrow && <span className="output-chev muted" aria-hidden><ChevronRightIcon size={12} /></span>}
           </button>
           <ShareMenu slug={slug} ticket={ticket} name={f.name} variant="dots" text={f.name === open ? text : undefined} />
         </div>
@@ -239,8 +288,44 @@ export function Outputs({ slug, ticket, onCount, focus }: {
     </div>
   );
 
+  const view = (
+    <div className={`output-view${kind === "html" ? " html" : ""}${readerOn ? " reader" : ""}`} role={readerOn ? "dialog" : undefined} aria-label={readerOn ? baseName(open ?? "") : undefined}>
+      {open && (
+        <div className="output-bar">
+          {readerOn && <button className="output-back" onClick={closeReader}><ChevronLeftIcon size={14} /> Files</button>}
+          <span className="output-bar-name" title={ticket.outputDir ? `${ticket.outputDir}/${open}` : open}>{baseName(open)}</span>
+          {kind === "html" && (
+            <button className="link-btn small" disabled={text === null} onClick={() => text !== null && openInTab(open, text)}>Open in new tab</button>
+          )}
+          <ShareMenu slug={slug} ticket={ticket} name={open} variant="button" text={kind === "text" || kind === "html" ? text : undefined} />
+        </div>
+      )}
+      <div className="output-body" ref={bodyRef}>
+      {kind === "html" ? (
+        text === null ? <div className="muted output-html-note">Loading…</div>
+          : <iframe className="output-html" sandbox="allow-scripts" srcDoc={text} title={`Preview of ${open}`} />
+      ) : kind === "image" ? (
+        <div className="output-image"><img src={`${rawUrl}?v=${encodeURIComponent(current?.updatedAt ?? "")}`} alt={open ?? ""} /></div>
+      ) : kind === "binary" ? binaryNote
+        : text === null ? <div className="muted">Loading…</div>
+        : text.slice(0, 8000).includes("\0") ? binaryNote
+        : open && MARKDOWN.test(open) ? <Markdown text={text} />
+        : <pre>{text.length > 200_000 ? text.slice(0, 200_000) + "\n…(truncated)" : text}</pre>}
+      </div>
+      {readerOn && at >= 0 && order.length > 1 && (
+        <div className="output-pager">
+          <button className="link-btn" onClick={() => stepFile(-1)}><ChevronLeftIcon size={12} /> Previous</button>
+          <span className="muted small">{at + 1} of {order.length}</span>
+          <button className="link-btn" onClick={() => stepFile(1)}>Next <ChevronRightIcon size={12} /></button>
+        </div>
+      )}
+    </div>
+  );
+  // Over the whole ticket panel, so the header, banner and tabs make room for the file.
+  const panel = box?.closest<HTMLElement>(".panel") ?? document.body;
+
   return withLinks(
-    <div className="outputs">
+    <div className={`outputs${narrow ? " narrow" : ""}`} ref={setBox}>
       <div className="output-side">
         {files.length > FILTER_MIN && (
           <div className="file-filter">
@@ -254,29 +339,8 @@ export function Outputs({ slug, ticket, onCount, focus }: {
         </nav>
         {"chrome" in window && <div className="output-hint muted">Tip: drag a file into Slack or Finder</div>}
       </div>
-      <div className={`output-view${kind === "html" ? " html" : ""}`}>
-        {open && (
-          <div className="output-bar">
-            <span className="output-bar-name" title={ticket.outputDir ? `${ticket.outputDir}/${open}` : open}>{baseName(open)}</span>
-            {kind === "html" && (
-              <button className="link-btn small" disabled={text === null} onClick={() => text !== null && openInTab(open, text)}>Open in new tab</button>
-            )}
-            <ShareMenu slug={slug} ticket={ticket} name={open} variant="button" text={kind === "text" || kind === "html" ? text : undefined} />
-          </div>
-        )}
-        <div className="output-body">
-        {kind === "html" ? (
-          text === null ? <div className="muted output-html-note">Loading…</div>
-            : <iframe className="output-html" sandbox="allow-scripts" srcDoc={text} title={`Preview of ${open}`} />
-        ) : kind === "image" ? (
-          <div className="output-image"><img src={`${rawUrl}?v=${encodeURIComponent(current?.updatedAt ?? "")}`} alt={open ?? ""} /></div>
-        ) : kind === "binary" ? binaryNote
-          : text === null ? <div className="muted">Loading…</div>
-          : text.slice(0, 8000).includes("\0") ? binaryNote
-          : open && MARKDOWN.test(open) ? <Markdown text={text} />
-          : <pre>{text.length > 200_000 ? text.slice(0, 200_000) + "\n…(truncated)" : text}</pre>}
-        </div>
-      </div>
+      {!narrow && view}
+      {readerOn && createPortal(view, panel)}
     </div>,
   );
 }
