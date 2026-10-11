@@ -288,8 +288,77 @@ test("non-git profile runs in profile path without worktree", async () => {
   expect(got.worktree).toBeNull();
   expect(readArgs()[0].cwd).toBe(p.path);
   const prompt = readArgs()[0].prompt;
-  expect(prompt).toContain("NOT a git repository");
+  expect(prompt).toContain("no version history");
+  expect(prompt).not.toContain('report status "blocked"');
 });
+
+test("tickets that edit the folder in place run one at a time; a waiting card says why", async () => {
+  await setup({ git: false, maxParallel: 3 });
+  process.env.FAKE_MODE = "slow";
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  for (let i = 0; i < 100 && readArgs().length < 1; i++) await Bun.sleep(50);
+  await Bun.sleep(300);
+  expect(board.isRunning("p", a.id)).toBe(true);
+  expect(board.isRunning("p", b.id)).toBe(false);
+  expect(board.folderWait("p", store.getTicket("p", b.id)!)).toBe(true);
+  expect(board.folderWait("p", store.getTicket("p", a.id)!)).toBe(false);
+  process.env.FAKE_MODE = "ok";
+  board.stop("p", a.id);
+  await board.whenIdle();
+  expect(store.getTicket("p", b.id)!.outcome).toBe("done");
+  const calls = readArgs();
+  expect(calls.length).toBe(2);
+  expect(calls[1].cwd).toBe(calls[0].cwd);
+}, 20000);
+
+test("a reply that would edit the folder while another ticket does waits for it", async () => {
+  await setup({ git: false, maxParallel: 3 });
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  await board.whenIdle();
+  process.env.FAKE_MODE = "slow";
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  await Bun.sleep(500);
+  expect(board.isRunning("p", b.id)).toBe(true);
+  const waiting = await board.chat("p", a.id, "one more change");
+  expect(board.isRunning("p", a.id)).toBe(false);
+  expect(waiting.lastActivity).toBe("waiting: another ticket is using the folder");
+  expect(board.folderWait("p", waiting)).toBe(true);
+  process.env.FAKE_MODE = "ok";
+  board.stop("p", b.id);
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.prompt).toContain("one more change");
+}, 20000);
+
+test("a reply to another session (a huddle) also waits for the folder, without moving the card", async () => {
+  await setup({ git: false, maxParallel: 3 });
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  await board.whenIdle();
+  process.env.FAKE_MODE = "slow";
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  await Bun.sleep(500);
+  expect(board.isRunning("p", b.id)).toBe(true);
+  const waiting = await board.chat("p", a.id, "message from a huddle", { peer: true });
+  expect(board.isRunning("p", a.id)).toBe(false);
+  expect(waiting.status).toBe("review");
+  expect(board.folderWait("p", waiting)).toBe(true);
+  process.env.FAKE_MODE = "ok";
+  board.stop("p", b.id);
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.prompt).toContain("message from a huddle");
+  expect(store.getTicket("p", a.id)!.status).toBe("review");
+  expect(store.getTicket("p", a.id)!.slotWait ?? null).toBeNull();
+}, 20000);
+
+test("tickets with worktrees of their own still run side by side", async () => {
+  await setup({ maxParallel: 3 });
+  process.env.FAKE_MODE = "slow";
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  await Bun.sleep(1500);
+  expect(board.isRunning("p", a.id) && board.isRunning("p", b.id)).toBe(true);
+  expect(board.folderWait("p", store.getTicket("p", b.id)!)).toBe(false);
+}, 20000);
 
 test("repo with no commits runs in the folder with a notice, then worktrees once it has a commit", async () => {
   const p = await setup({ git: false });
@@ -1370,7 +1439,7 @@ test("branchTicket of a ticket that ran in place stays in the project folder", a
     const s = store.getTicket("p", src.id)!;
     fakeSession(configDir, p.path, s.sessionId!, "hi");
     const { ticket: b, warning } = await board.branchTicket("p", src.id);
-    expect(warning).toBeNull();
+    expect(warning).toContain("no version history");
     expect(b.worktree).toBeNull();
     expect(b.branch).toBeNull();
     expect(existsSync(join(configDir, "projects", p.path.replace(/[^a-zA-Z0-9]/g, "-"), `${b.sessionId}.jsonl`))).toBe(true);

@@ -81,7 +81,7 @@ test("planning asks for mockup blocks and question-form feedback; runs follow th
   expect(refine).toContain('"Target design"');
   expect(refine).not.toMatch(/approve/i);
   expect(chatPrompt(t, "hi", "act", out)).not.toContain("ckanban-mockup");
-  const runs = () => [firstRunPrompt(t, { isGit: true, outputDir: out }), resumePrompt(t, [], out), chatPrompt(t, "hi", "act", out)];
+  const runs = () => [firstRunPrompt(t, { repo: "remote" as const, outputDir: out }), resumePrompt(t, [], out), chatPrompt(t, "hi", "act", out)];
   for (const p of runs()) expect(p).not.toContain("# Target design");
   mkdirSync(join(out, "mockups"));
   writeFileSync(join(out, "mockups", "notes.txt"), "x");

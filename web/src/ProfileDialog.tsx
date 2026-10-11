@@ -5,6 +5,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { Modal } from "./Modal";
 import { Select } from "./Select";
 import { timeAgo } from "./time";
+import { VersionHistoryOffer } from "./VersionHistoryOffer";
 
 const MODELS = ["opus", "sonnet", "haiku"];
 const DEFAULT_MAX_PARALLEL = 5;
@@ -179,7 +180,8 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
               aria-label="Folder path" />
             <button type="button" className="btn" onClick={browse} disabled={picking}>{picking ? "Choosing…" : "Browse…"}</button>
           </div>
-          <span className="muted small">Git repo: each ticket gets its own worktree + branch and a PR. Plain folder: Claude works in place.</span>
+          <span className="muted small">With version history, each ticket works on its own copy of the folder. Without it, Claude edits the folder directly, one ticket at a time.</span>
+          <VersionHistoryOffer path={path} />
         </div>
 
         <label>

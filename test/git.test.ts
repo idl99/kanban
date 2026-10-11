@@ -1,9 +1,9 @@
 import { beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { makeRepo } from "./helpers";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { addWorktree, detectBaseBranch, isGitRepo, removeWorktree, resolveBaseBranch, run, worktreeDir } from "../src/server/git";
+import { addWorktree, detectBaseBranch, enableVersionHistory, isGitRepo, removeWorktree, repoKind, resolveBaseBranch, run, SNAPSHOT_MAX_BYTES, worktreeDir } from "../src/server/git";
 import { tempDir } from "./helpers";
 
 let repo: string;
@@ -72,4 +72,57 @@ test("resolveBaseBranch is null for a repo with no commits", async () => {
 
 test("addWorktree failure explains itself", async () => {
   await expect(addWorktree(repo, join(repo + "-wt", "t4"), "ck/t4", "nope-branch")).rejects.toThrow(/Could not create an isolated git worktree[\s\S]*git worktree add failed/);
+});
+
+test("repoKind and enableVersionHistory: plain folder, repo with no commits, existing repo", async () => {
+  const plain = tempDir("ck-plain-");
+  expect(await repoKind(plain)).toBe("plain");
+  writeFileSync(join(plain, "notes.txt"), "hi\n");
+  writeFileSync(join(plain, "debug.log"), "x\n");
+  // Over 50 MB: left out of the snapshot and listed by path in the new .gitignore (sparse, so it's quick).
+  const big = Bun.file(join(plain, "video.mov"));
+  await Bun.write(big, "");
+  await run(["truncate", "-s", String(SNAPSHOT_MAX_BYTES + 1), join(plain, "video.mov")], plain);
+  const r = await enableVersionHistory(plain);
+  expect(r.changed).toBe(true);
+  expect(r.ignored).toEqual(["video.mov"]);
+  const ignore = readFileSync(join(plain, ".gitignore"), "utf8");
+  for (const line of [".env*", "node_modules/", ".DS_Store", "*.log", "/video.mov"]) expect(ignore).toContain(line);
+  expect((await run(["git", "ls-files"], plain)).stdout.trim().split("\n").sort()).toEqual([".gitignore", "notes.txt"]);
+  expect(await repoKind(plain)).toBe("local");
+
+  // A repo with no commits keeps its own .gitignore; it isn't re-initialised.
+  const empty = tempDir("ck-empty-");
+  await run(["git", "init", "-q", "-b", "trunk"], empty);
+  writeFileSync(join(empty, ".gitignore"), "secret.txt\n");
+  writeFileSync(join(empty, "secret.txt"), "s\n");
+  writeFileSync(join(empty, "a.txt"), "a\n");
+  expect(await repoKind(empty)).toBe("empty");
+  expect((await enableVersionHistory(empty)).changed).toBe(true);
+  expect(readFileSync(join(empty, ".gitignore"), "utf8")).toBe("secret.txt\n");
+  expect((await run(["git", "branch", "--show-current"], empty)).stdout.trim()).toBe("trunk");
+  expect((await run(["git", "ls-files"], empty)).stdout.trim().split("\n").sort()).toEqual([".gitignore", "a.txt"]);
+
+  // An existing repo is left alone.
+  const head = (await run(["git", "rev-parse", "HEAD"], repo)).stdout.trim();
+  expect(await enableVersionHistory(repo)).toEqual({ changed: false, sha: head, ignored: [] });
+  expect(existsSync(join(repo, ".gitignore"))).toBe(false);
+  await run(["git", "remote", "add", "origin", "https://example.com/x.git"], repo);
+  expect(await repoKind(repo)).toBe("remote");
+  await run(["git", "remote", "remove", "origin"], repo);
+});
+
+test("enableVersionHistory: a folder inside an outer repo with no commits gets its own; home and disk are refused", async () => {
+  const outer = tempDir("ck-outer-");
+  await run(["git", "init", "-q"], outer);
+  writeFileSync(join(outer, "secret-outside.txt"), "s\n");
+  mkdirSync(join(outer, "proj"));
+  writeFileSync(join(outer, "proj", "a.txt"), "a\n");
+  // Staged in the outer repo already: must not leak into the project's snapshot.
+  await run(["git", "add", "."], outer);
+  expect((await enableVersionHistory(join(outer, "proj"))).changed).toBe(true);
+  expect((await run(["git", "ls-files"], join(outer, "proj"))).stdout.trim().split("\n").sort()).toEqual([".gitignore", "a.txt"]);
+  expect(existsSync(join(outer, "proj", ".git"))).toBe(true);
+  await expect(enableVersionHistory(homedir())).rejects.toThrow("whole home folder");
+  await expect(enableVersionHistory("/")).rejects.toThrow("whole home folder");
 });

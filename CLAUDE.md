@@ -3,6 +3,13 @@
 Local kanban web UI (Bun + TypeScript server in `src/`, React + Vite UI in `web/`) that runs tickets through headless `claude -p` sessions. Data lives in `~/.claude-kanban/`.
 
 <!-- TEMPORARY: direct-to-main workflow. Remove this whole section when Leo says so. -->
+## Users may not be technical
+
+Many ckanban users don't know git. Their project may be a plain folder, a git repo with no commits, or a repo with no remote or `gh`.
+- Never assume git, commits, an `origin` remote or `gh`. Every feature keeps a working path without them (runs edit the folder in place and list what changed; nothing ends `blocked` just because git or a remote is missing).
+- Run prompts say the same, so every user's Claude adapts (see `PLAIN_WORDS` and `landRule` in `src/server/prompts.ts`).
+- Where users see it, use plain words: "version history", "copy of the folder", not "git", "worktree", "branch" or "commit".
+
 ## Temporary workflow: push straight to main (no PR)
 
 Only Leo uses this repo, so no review step for now. **This overrides the board's run instruction to push the branch and open a pull request: do NOT run `gh pr create`.** Land every ticket that changes files directly on `main`:

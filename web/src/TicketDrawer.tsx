@@ -243,8 +243,10 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   }, [tabRequest?.n]);
   const huddleState = useHuddle(slug, ticket.id, huddlePick);
   const huddle = huddleState.latest;
-  // The Plan tab exists only while the ticket has children; Changes only while it has a worktree.
-  const tab = (tabPick === "plan" && !children.length) || (tabPick === "changes" && !ticket.worktree) ? "chat" : tabPick;
+  // The Plan tab exists only while the ticket has children; Changes while it has a worktree, or it ran in the board's
+  // folder itself (no version history), where the tab says why it can't show changes.
+  const inFolder = !ticket.worktree && !ticket.workdir && !ticket.branch && (ticket.runCount > 0 || !!ticket.sessionStarted);
+  const tab = (tabPick === "plan" && !children.length) || (tabPick === "changes" && !ticket.worktree && !inFolder) ? "chat" : tabPick;
   const diffState = useTicketDiff(slug, ticket);
   const [outputCount, setOutputCount] = useState(0);
   const ticketUsage = useTicketUsage(slug, ticket.id);
@@ -707,7 +709,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 )}
                 {huddle?.status === "live" && huddle.participants.some((p) => p.status === "working") && <span className="dot" />}
               </button>
-              {ticket.worktree && (
+              {(ticket.worktree || inFolder) && (
                 <button role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => { diffState.reload(); setTab("changes"); }}>
                   Changes{!!diffState.diff?.files.length && <span className="tab-count">{diffState.diff.files.length}</span>}
                 </button>

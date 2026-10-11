@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, normalize } from "node:path";
+import { basename, isAbsolute, join, normalize } from "node:path";
 import { runArtifactJob, type ArtifactJob, type ArtifactOutcome } from "./artifact";
 import { ConflictError, recoveryFor, type Board } from "./board";
 import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
 import type { Bus, BusEvent } from "./events";
 import { listCommands } from "./commands";
 import { DiffError, ticketDiff } from "./diff";
-import { detectBaseBranch, isGitRepo, resolveBaseBranch, which } from "./git";
+import { detectBaseBranch, enableVersionHistory, isGitRepo, repoKind, resolveBaseBranch, which } from "./git";
 import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, resolveConflicts, sendFailures, type PrDeps } from "./prpoller";
 import { resumeCommand } from "./prompts";
 import { cronError, describeCron, nextRuns, parseCron } from "./cron";
@@ -293,6 +293,8 @@ export function createServer(deps: ServerDeps) {
       recovery: running ? null : recoveryFor(t.error),
       /** Ticket.needs: holds them now, or which ones another ticket holds while this one would start. */
       resources: board.resourceState(p.slug, t),
+      /** It would start now but another ticket is editing the board's folder in place (see Board.folderBusy). */
+      folderWait: board.folderWait(p.slug, t),
       /** A plan child waiting on the user (never started by the plan until then). */
       userWait: t.parentId && !isComplete(t) ? userWaitReason(t, session) : null,
       attention,
@@ -557,6 +559,31 @@ export function createServer(deps: ServerDeps) {
     }
     if (parts[0] === "claude" && parts[1] === "defaults" && m === "GET") return json(claudeDefaults());
     if (parts[0] === "pick-folder" && m === "POST") return json({ path: await pickFolder() });
+    // A folder's version history, for the "Turn on version history" offer (New board, board settings).
+    if (parts[0] === "version-history" && parts.length === 1) {
+      const path = m === "GET" ? url.searchParams.get("path") ?? "" : String((await body(req))?.path ?? "");
+      if (!path.trim() || !isAbsolute(path)) throw new HttpError(400, "an absolute folder path is required");
+      const git = await which("git");
+      if (m === "GET") return json({ git, repo: git && existsSync(path) ? await repoKind(path) : null });
+      if (m === "POST") {
+        if (!git) throw new HttpError(400, "git isn't installed on this computer");
+        if (!existsSync(path)) throw new HttpError(404, `folder does not exist: ${path}`);
+        // A ticket editing the folder in place right now would leave half-done files in the first snapshot.
+        const busy = store.listProfiles().filter((p) => p.path === path)
+          .flatMap((p) => store.listTickets(p.slug).filter((t) => board.isRunning(p.slug, t.id) && board.runsInFolder(p.slug, t) !== false));
+        if (busy.length) throw new HttpError(409, `Wait until "${busy[0].title}" finishes: Claude is changing files in this folder right now.`);
+        let r;
+        try {
+          r = await enableVersionHistory(path);
+        } catch (e) {
+          throw new HttpError(500, `Couldn't turn on version history: ${(e as Error).message}`);
+        }
+        const repo = await repoKind(path);
+        // Boards on this folder: their next ticket gets a worktree of its own.
+        for (const p of store.listProfiles()) if (p.path === path) board.noteRepo(p.slug, repo);
+        return json({ ...r, repo });
+      }
+    }
     if (parts[0] === "restart" && parts.length === 1) {
       if (m === "GET") return json(board.restartState());
       if (m === "POST") {
@@ -998,7 +1025,7 @@ export function createServer(deps: ServerDeps) {
     if (action === "diff" && m === "GET") {
       // The Changes tab: the worktree (committed, uncommitted and untracked) against its merge-base with the base branch.
       const t = store.getTicket(slug, id)!;
-      if (!t.worktree) throw new HttpError(404, "this ticket has no worktree");
+      if (!t.worktree) throw new HttpError(404, "No version history for this folder, so changes can't be shown.");
       try {
         const base = profile.baseBranch || (await detectBaseBranch(t.worktree));
         return json(await ticketDiff(t.worktree, base, { ignoreWhitespace: url.searchParams.get("w") === "1" }));

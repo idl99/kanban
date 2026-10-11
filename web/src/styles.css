@@ -2149,3 +2149,9 @@ button.hd-mode:disabled { cursor: default; }
 .usage-teammates-huddle + .usage-teammates-huddle { margin-top: 6px; }
 .usage-teammate { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
 .usage-teammate .n { font-variant-numeric: tabular-nums; }
+
+/* "This folder has no version history" offer (New board, board settings). */
+.vh-offer { background: var(--warn-soft); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.vh-offer b { color: var(--warn); }
+.vh-actions { display: flex; gap: 8px; margin-top: 6px; }
+.vh-ok { background: var(--ok-soft); color: var(--ok); border-radius: 8px; padding: 8px 12px; margin-top: 8px; font-size: 13px; }

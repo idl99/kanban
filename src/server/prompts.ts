@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { helperCommand } from "./artifact";
 import { huddleLine, summaryFile } from "./huddle-roster";
 import { MOCKUPS_DIR } from "./mockups";
+import type { RepoKind } from "./git";
 import { MAX_RETRIES } from "./plan";
 import type { Comment, Huddle, HuddleMessage, HuddleParticipant, Ticket } from "./types";
 import { shellQuote } from "./util";
@@ -56,21 +57,72 @@ function context(note: string, body: string, attrs: Record<string, string> = {})
 const CHROME_RULE = `# Browser
 Claude in Chrome is available (mcp__claude-in-chrome__* tools, in the user's own Chrome). Open your own new tab and don't close or take over the user's tabs. If it isn't connected, say so and carry on without it.`;
 
+/** Every run's Claude adapts to users who may not know git (see CLAUDE.md, "Users may not be technical"). */
+const PLAIN_WORDS = "The user may not be technical: explain results in plain words; if there's no git, just edit the files and list what changed.";
+
+/** The folder has commits to branch from, snapshot and land: a run there commits its work. */
+const canCommit = (repo: RepoKind) => repo === "local" || repo === "remote";
+
+/** Where a work run edits files, for its Rules (inPlace: the board's folder itself, not a worktree). */
+function whereRule(t: Ticket, repo: RepoKind, linked: boolean, inPlace: boolean): string {
+  if (linked) {
+    return canCommit(repo)
+      ? `You are working in the main checkout of this project (not an isolated worktree). If you change code, create or reuse a feature branch; never commit directly to the default branch.`
+      : `You are working in the user's own project folder.`;
+  }
+  if (repo === "plain") return `You are working directly in the project folder. It has no version history (it is not a git repository), so edit its files in place.`;
+  if (repo === "empty") return `You are working directly in the project folder. Its version history has no first snapshot yet, so edit its files in place.`;
+  if (inPlace) return `You are working directly in the project folder (not an isolated worktree). Don't switch branches.`;
+  return `You are working in a dedicated git worktree on this ticket's own branch${t.branch ? ` (\`${t.branch}\`)` : ""}.`;
+}
+
+/** The project folder (the main checkout) and its base branch, where a repo without a remote collects finished work. */
+export interface Home {
+  folder: string;
+  baseBranch: string;
+}
+
+/**
+ * A repo without a remote has no pull requests: the ticket's branch is merged into the base branch in the project
+ * folder itself, so the user sees the change there (and later tickets of a plan build on it).
+ */
+function localLand(home?: Home): string {
+  const folder = home ? `the project folder (\`${home.folder}\`)` : "the project folder (the repo's main checkout, first in `git worktree list`)";
+  const base = home?.baseBranch ? `\`${home.baseBranch}\`` : "its base branch";
+  return `If it changes files: commit them on this branch with a clear message. This repo has no remote (no \`origin\`), so don't push or open a pull request; prUrl is null. Then bring the work into ${folder} so the user sees it there: if that folder is on ${base} and \`git status --porcelain\` there is empty, run \`git -C <folder> merge --no-edit <this branch>\` (on a conflict, \`git merge --abort\` and say so). If it has uncommitted changes or is on another branch, leave it alone and say in your summary that the change is waiting on this ticket's branch. Say in your summary what changed and whether it is in the folder.`;
+}
+
+/**
+ * What a run does with changed files, by the folder's version history. Missing git, commits, a remote or \`gh\` is
+ * never a reason to stop: the run edits in place, commits locally or pushes, whichever the folder allows.
+ */
+function landRule(repo: RepoKind, inPlace: boolean, existing = false, home?: Home): string {
+  const list = `End with status "done" and list every file you created, changed or deleted in your summary.`;
+  if (repo === "plain") return `If it changes files: edit them in place; there is nothing to commit, push or open a pull request for. ${list}`;
+  if (repo === "empty") return `If it changes files: edit them in place; don't commit, push or open a pull request (the folder's version history has no first snapshot yet). ${list}`;
+  if (inPlace) return `If it changes files: edit them in place and commit them only if the ticket asks for it; don't push. ${list}`;
+  if (repo === "local") return localLand(home);
+  return existing
+    ? `If it changes files: commit your changes, push the branch and open a pull request with \`gh pr create\` (if one already exists, push new commits to the same branch to update it), and include the PR URL in the result line. If \`gh\` isn't available, push the branch and say in your summary that the pull request still needs opening.`
+    : `If it changes files: commit your changes, push the branch, open a pull request with \`gh pr create\`, and include the PR URL in the result line. If \`gh\` isn't available, push the branch and say in your summary that the pull request still needs opening.`;
+}
+
 /**
  * Unattended runs on a board with "Auto huddles" on: review important or risky work in a huddle Claude starts itself
  * (start_huddle) before landing it. Planning chats never get this (they propose a huddle instead).
  */
-export function autoHuddleRule(t: Pick<Ticket, "important">): string {
+export function autoHuddleRule(t: Pick<Ticket, "important">, repo: RepoKind = "remote"): string {
+  const commit = canCommit(repo);
   return `# Auto huddle (review before landing)
 ${t.important ? "This ticket is marked ⭐ Important, so it gets a review huddle before you land it." : "Start a review huddle before you land this work if the change is risky: user-facing behaviour, data, security, payments or migrations. Small, low-risk changes don't need one; heavy tasks are split into tickets, not huddled."}
-- When: after the work is done and committed, BEFORE landing it (before pushing it, opening a PR or moving it on). At most once per run; never from a Planning chat (there, propose one with propose_huddle).
+- When: after the work is done${commit ? " and committed, BEFORE landing it (before pushing it, opening a PR or moving it on)" : ", BEFORE you finish (the reviewers read the files in this folder)"}. At most once per run; never from a Planning chat (there, propose one with propose_huddle).
 - How: call the ckanban \`start_huddle\` tool with a one-line reason (it is posted on the ticket) and a template: \`auto-review-important\` when the ticket is ⭐ or the risk is security, data, payments or migrations; otherwise \`auto-review\`. If the ticket asks for a huddle budget (e.g. "~$40"), pass it as \`maxCostUsd\` (capped at $100); without it the template's budget applies. Then end your turn with a short note, no result line needed: the board keeps the ticket In Progress and wakes you with the QA lead's consolidated findings. If the board says another auto huddle is running, end your turn the same way; the board wakes you when the slot frees.
-- Then: fix every MUST finding and commit, ask the same reviewer for one short re-check, then land the work as usual, write the huddle summary and close the huddle with \`huddle_close\`. List the SHOULD and COULD findings in your result summary.
-- Budget: the huddle stops at its cap. If it stops while MUST findings are still open, do NOT land: end with status "blocked" and a summary like "Auto huddle hit its $N cap with N MUST findings open; not landed."`;
+- Then: fix every MUST finding${commit ? " and commit" : ""}, ask the same reviewer for one short re-check, then ${commit ? "land the work as usual" : "finish as usual"}, write the huddle summary and close the huddle with \`huddle_close\`. List the SHOULD and COULD findings in your result summary.
+- Budget: the huddle stops at its cap. If it stops while MUST findings are still open, do NOT ${commit ? "land" : "finish as done"}: end with status "blocked" and a summary like "Auto huddle hit its $N cap with N MUST findings open; not landed."`;
 }
 
 /** The section above, when the board has auto huddles on (absent: nothing). */
-const autoSection = (t: Pick<Ticket, "important">, on?: boolean) => (on ? `\n\n${autoHuddleRule(t)}` : "");
+const autoSection = (t: Pick<Ticket, "important">, on?: boolean, repo?: RepoKind) => (on ? `\n\n${autoHuddleRule(t, repo)}` : "");
 
 const INTERVIEW = `# How to work: interview first
 The user wants to be interviewed before you do the work. In this first run:
@@ -153,7 +205,12 @@ This ticket has HTML mockups from planning in ${dir}. The ticket's "Target desig
 }
 
 export interface PromptContext {
-  isGit: boolean;
+  /** The board folder's version history (see RepoKind). */
+  repo: RepoKind;
+  /** Runs in the board's folder itself rather than a worktree of its own (always so without commits). */
+  inPlace?: boolean;
+  /** Where a repo without a remote merges finished work (see localLand). */
+  home?: Home;
   linked?: boolean;
   comments?: Comment[];
   outputDir: string;
@@ -181,11 +238,7 @@ export function firstRunPrompt(t: Ticket, ctx: PromptContext): string {
     : interview
     ? `You are working a kanban ticket from a board. The user is not watching live; they reply through ticket comments between runs.`
     : `You are an autonomous agent working a kanban ticket. No human is watching; do not ask questions, make reasonable decisions.`;
-  const where = ctx.linked
-    ? `You are working in the main checkout of this project (not an isolated worktree). If you change code, create or reuse a feature branch; never commit directly to the default branch.`
-    : ctx.isGit
-    ? `You are working in a dedicated git worktree on branch for this ticket.`
-    : `You are working in a folder that is NOT a git repository.`;
+  const inPlace = !!ctx.inPlace || !canCommit(ctx.repo);
   return context("Board started work on the ticket", `${intro}
 
 # Ticket: ${t.title}
@@ -193,12 +246,14 @@ export function firstRunPrompt(t: Ticket, ctx: PromptContext): string {
 ${t.body.trim() || "(no description)"}
 ${scheduleNote(ctx.schedule)}${comments.length ? `\n# User notes\n${comments.map((c) => `- ${c.text}`).join("\n")}\n` : ""}
 ${interview ? `${INTERVIEW}\n\n` : ""}# Rules
-- ${where}${t.parentId && ctx.isGit && !ctx.linked ? `
-- This ticket is part of a plan (planner ticket ${t.parentId}): earlier tickets of the plan may have landed on the remote base branch after this worktree was created. Before you start, \`git fetch\` and rebase this branch onto the remote base branch.` : ""}
-- Decide whether this task requires changing files in a code project.
-- If it changes files and this is a git repo with a GitHub remote: commit your changes, push the branch, open a pull request with \`gh pr create\`, and include the PR URL in the result line.
-- If it is a development task but git or a GitHub remote is not available, do NOT fake it. Stop, and report status "blocked" explaining what is missing.
-- If it is a non-code task (research, writing, analysis, file organisation), no PR is needed.${autoSection(t, ctx.autoHuddles)}
+- ${whereRule(t, ctx.repo, !!ctx.linked, inPlace)}${t.parentId && ctx.repo === "remote" && !inPlace && !ctx.linked ? `
+- This ticket is part of a plan (planner ticket ${t.parentId}): earlier tickets of the plan may have landed on the remote base branch after this worktree was created. Before you start, \`git fetch\` and rebase this branch onto the remote base branch.` : t.parentId && ctx.repo === "local" && !inPlace && !ctx.linked ? `
+- This ticket is part of a plan (planner ticket ${t.parentId}): earlier tickets of the plan may have been merged into the local base branch after this worktree was created. Before you start, rebase this branch onto the local base branch (there is no remote to fetch from).` : ""}
+- Decide whether this task requires changing files.
+- ${landRule(ctx.repo, inPlace, false, ctx.home)}
+- A missing git repository, remote or \`gh\` is never a reason to stop or report "blocked": work with what the folder has.
+- If it is a non-code task (research, writing, analysis, file organisation), no PR is needed.
+- ${PLAIN_WORDS}${autoSection(t, ctx.autoHuddles, ctx.repo)}
 
 ${CHROME_RULE}
 
@@ -207,7 +262,7 @@ ${targetDesignRule(ctx.outputDir)}${deliverableRule(ctx.outputDir)}${artifactRul
 ${RESULT_RULE}`);
 }
 
-export function resumePrompt(t: Ticket, newComments: Comment[], outputDir: string, autoHuddles = false, artifacts = false): string {
+export function resumePrompt(t: Ticket, newComments: Comment[], outputDir: string, autoHuddles = false, artifacts = false, repo: RepoKind = "remote", inPlace = false, home?: Home): string {
   const feedback = newComments.length
     ? newComments.map((c) => `- ${c.text}`).join("\n")
     : "- (no new comments; continue the task)";
@@ -216,7 +271,7 @@ export function resumePrompt(t: Ticket, newComments: Comment[], outputDir: strin
 # User feedback since last run
 ${feedback}
 
-${t.mode === "interview" ? `${t.interviewed ? AFTER_ANSWERS : INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}Continue working on the ticket, addressing the feedback. If a pull request already exists, push new commits to the same branch to update it. Update deliverables in ${outputDir} rather than creating duplicates.${autoSection(t, autoHuddles)}
+${t.mode === "interview" ? `${t.interviewed ? AFTER_ANSWERS : INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}Continue working on the ticket, addressing the feedback. ${repo === "remote" && !inPlace ? "If a pull request already exists, push new commits to the same branch to update it." : landRule(repo, inPlace || !canCommit(repo), false, home)} Update deliverables in ${outputDir} rather than creating duplicates. ${PLAIN_WORDS}${autoSection(t, autoHuddles, repo)}
 
 ${targetDesignRule(outputDir)}${CHROME_RULE}${artifactRule(artifacts)}
 
@@ -225,7 +280,9 @@ ${RESULT_RULE}`);
 
 /** Where a fresh session picks up: the old session is gone, the worktree and branch are not. */
 export interface FreshContext {
-  isGit: boolean;
+  repo: RepoKind;
+  inPlace?: boolean;
+  home?: Home;
   /** Runs in the user's own folder (a linked session), not the ticket's worktree. */
   linked: boolean;
   baseBranch: string;
@@ -245,9 +302,10 @@ export function freshSessionPrompt(t: Ticket, ctx: FreshContext): string {
   const comments = ctx.comments.length
     ? ctx.comments.map((c) => `- ${c.author === "user" ? "User" : "Claude"} (${c.at.slice(0, 16).replace("T", " ")}): ${clip(c.text.trim(), 1500).replace(/\n/g, "\n  ")}`).join("\n")
     : "- (none)";
-  const state = ctx.isGit
+  const inPlace = !!ctx.inPlace || !canCommit(ctx.repo);
+  const state = canCommit(ctx.repo) && !inPlace
     ? `Earlier work on this ticket is in ${ctx.linked ? "this folder" : "this worktree"}${ctx.linked ? "" : ` on its branch`}. Before doing anything else, see where it stands: \`git status\`, \`git log --oneline ${ctx.baseBranch}..HEAD\` and \`git diff ${ctx.baseBranch}...HEAD\` (and any uncommitted changes). Continue from that state; don't redo work that is already there.`
-    : `Earlier work on this ticket is in this folder (not a git repository). Look at the files before doing anything else and continue from their current state.`;
+    : `Earlier work on this ticket is in this folder${ctx.repo === "plain" ? " (it has no version history)" : ""}. Look at the files before doing anything else and continue from their current state.`;
   return context("Board started a fresh session on the ticket", `You are continuing a kanban ticket in a new Claude session: the previous session's conversation is no longer available, so you don't have its history. Pick up where it left off.
 
 # Ticket: ${t.title}
@@ -264,9 +322,11 @@ ${comments}
 ${state}
 
 ${t.mode === "interview" && !t.interviewed ? `${INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}# Rules
-- If it changes files and this is a git repo with a GitHub remote: commit your changes, push the branch and open a pull request with \`gh pr create\` (if one already exists, push new commits to the same branch to update it), and include the PR URL in the result line.${ctx.linked ? `
+- ${landRule(ctx.repo, inPlace, true, ctx.home)}${ctx.linked && canCommit(ctx.repo) ? `
 - You are working in the main checkout of this project (not an isolated worktree): use a feature branch, never commit directly to the default branch.` : ""}
-- Update deliverables in ${ctx.outputDir} rather than creating duplicates.${autoSection(t, ctx.autoHuddles)}
+- A missing git repository, remote or \`gh\` is never a reason to stop or report "blocked": work with what the folder has.
+- Update deliverables in ${ctx.outputDir} rather than creating duplicates.
+- ${PLAIN_WORDS}${autoSection(t, ctx.autoHuddles, ctx.repo)}
 
 ${CHROME_RULE}
 
@@ -295,7 +355,7 @@ export function interruptedPrompt(): string {
 }
 
 /** A message the user typed in the ticket's chat. Their text comes first; board instructions are wrapped so the UI can hide them. */
-export function chatPrompt(t: Ticket, text: string, mode: ChatMode, outputDir: string, artifacts = false): string {
+export function chatPrompt(t: Ticket, text: string, mode: ChatMode, outputDir: string, artifacts = false, repo: RepoKind = "remote"): string {
   const typed = text.trim();
   if (mode === "refine") {
     const start = typed ? "" : `The user just moved this ticket to Planning and is waiting for you in the ticket chat. Start now:
@@ -337,7 +397,7 @@ ${TEAMMATE_FORMAT}`)}`;
   return `${typed}
 
 ${context("", `(Sent from the kanban board's ticket chat for "${t.title}". The user reads your reply there, not in a terminal.)
-Act on the message as you would in an interactive session. If a pull request already exists, push new commits to the same branch. Save research/writing deliverables in ${outputDir}.
+Act on the message as you would in an interactive session. ${repo === "remote" ? "If a pull request already exists, push new commits to the same branch." : canCommit(repo) ? "This repo has no remote: commit locally and don't push; then merge this branch into the base branch in the project folder when that folder is clean and on it (as in your earlier instructions)." : "This folder has no version history yet: edit files in place and say which ones you changed."} Save research/writing deliverables in ${outputDir}. ${PLAIN_WORDS}
 If the message only asks you to plan, audit, review, list ideas, propose or discuss, and no changes are wanted yet (e.g. "don't change anything yet"): do not modify any files, answer, and end your reply with <ckanban-move to="planning"/> on its own line. The board then moves the ticket to Planning, where the next steps get shaped before any work.
 If you need decisions from the user, ask with the ask_questions tool.
 ${bugReportRule(t)}
@@ -381,21 +441,27 @@ export type PlanWake = "event" | "final";
  * Wakes a planner ticket's session while its plan runs: either child events to decide on, or the
  * final check once every child is done. The first line is what the ticket chat shows.
  */
-export function orchestratorPrompt(t: Ticket, o: { kind: PlanWake; events: string[]; table: string; board: string; outputDir: string }): string {
+export function orchestratorPrompt(t: Ticket, o: { kind: PlanWake; events: string[]; table: string; board: string; outputDir: string; repo?: RepoKind }): string {
+  const repo = o.repo ?? "remote";
+  const where = repo === "remote"
+    ? "on the latest remote base branch, in a fresh temporary worktree (`git fetch`, then `git worktree add --detach <tmp dir> origin/<base branch>`; remove it afterwards), never in a folder with someone's uncommitted work"
+    : repo === "local"
+    ? "on the local base branch, in a fresh temporary worktree (`git worktree add --detach <tmp dir> <base branch>`; remove it afterwards; there is no remote to fetch from), never in a folder with someone's uncommitted work"
+    : `in the project folder itself (it has ${repo === "plain" ? "no version history" : "no commits yet"}, so there is nothing to fetch or branch; the children edited it in place), if the project has checks at all`;
   const head = o.kind === "final"
     ? "Plan finished: every child ticket is done. Run the final check and write the summary."
     : `Plan update: ${o.events.length} child ticket${o.events.length === 1 ? " needs" : "s need"} a decision.\n${o.events.map((e) => `- ${e}`).join("\n")}`;
   const job = o.kind === "final"
     ? `# Final check
-1. \`git fetch\`, then run the project's full checks (tests, typecheck, build, as its CLAUDE.md / README says) on the latest remote base branch, in a fresh temporary worktree (\`git worktree add --detach <tmp dir> origin/<base branch>\`; remove it afterwards), never in a folder with someone's uncommitted work.
+1. Run the project's full checks (tests, typecheck, build, as its CLAUDE.md / README says) ${where}.
 2. If something is broken, fix it if it is small and safe, following the repo's instructions for landing changes; otherwise add a follow-up child ticket with create_ticket and say so.
-3. Write ${o.outputDir}/plan-summary.md: TL;DR, what shipped per child (commit SHAs or PR links), what was skipped and why, follow-ups.
+3. Write ${o.outputDir}/plan-summary.md in plain words: TL;DR, what shipped per child (${canCommit(repo) ? "commit SHAs or PR links" : "the files each one changed"}), what was skipped and why, follow-ups.
 4. End with status "done" (or "blocked" if a human must step in).`
     : `# What to do
 Decide each event and act with the ckanban MCP tools, then end the run; the board keeps the plan going.
 - Child failed or blocked: read it with get_ticket, add a hint with comment_ticket (the child reads new comments on its next run), fix its description with update_ticket if it was unclear, then move_ticket it to "ready" to retry (at most ${MAX_RETRIES} retries per child). Or split it: create_ticket new children (they land in Backlog and start when their dependsOn are done) and move the old one to "done" with a comment saying why. Or skip it: comment why and move it to "done".
 - Child is asking questions: answer them yourself with chat_ticket when the plan and code give you the answer; only ask the user when it is a business decision you can't make.
-- Child finished with an open PR: review it (\`gh pr view\`, \`gh pr diff\`, its checks). If it is good, merge it with \`gh pr merge --squash\` (the board moves the child to Done once merged). If not, comment what to change and move it to "ready".
+${repo === "remote" ? "- Child finished with an open PR: review it (`gh pr view`, `gh pr diff`, its checks). If it is good, merge it with `gh pr merge --squash` (the board moves the child to Done once merged). If not, comment what to change and move it to \"ready\"." : `- Child finished: review what it changed (${canCommit(repo) ? "its branch's commits; there is no remote, so no pull request" : "the files its summary lists; there is no version history to diff"}). If it is good${canCommit(repo) ? " and its summary says it isn't in the project folder yet, merge its branch into the base branch in the project folder (main checkout) when that folder is clean, then" : ","} move it to "done"; if not, comment what to change and move it to "ready".`}
 - Don't do a child's work yourself in this session; keep this reply short.`;
   return `${head}
 
@@ -487,10 +553,10 @@ export function huddleAgentSystemPrompt(
 ): string {
   const snap = p.snapshot;
   const edit = p.canEdit && p.workspace === "own" && !p.worktree
-    ? `You work in the host ticket's folder (${workdir}), shared with @main, because the repo has no commits yet. Tell @main before you change a file, and don't commit, push or switch branches.`
+    ? `You work in the host ticket's folder (${workdir}), shared with @main, because it has no version history to branch from yet. Tell @main before you change a file, and don't commit, push or switch branches.`
     : p.canEdit
     ? `You work in your own git worktree (${workdir}) on branch ${p.branch ?? "(your branch)"}: edit and commit there. Never push to or edit the host ticket's worktree.`
-    : `You must NOT edit tracked files in this repository (Edit, Write and NotebookEdit are disabled; don't change files through the shell either). You may run the app, tests and read-only commands. Put reports, notes and test scripts in your outputs folder: ${outputDir}${snap ? `
+    : `You must NOT edit tracked files in this project (Edit, Write and NotebookEdit are disabled; don't change files through the shell either). You may run the app, tests and read-only commands. Put reports, notes and test scripts in your outputs folder: ${outputDir}${snap ? `
 - Your working folder is a read-only snapshot: a detached git worktree at the host branch ${snap.branch ?? "(detached)"}, commit ${snap.sha}. The board resets it to the host's latest commit at every wake, dropping any change made in it; never commit, push or switch branches there.
 - Review target: ${snap.branch ? `the commits of ${snap.branch}` : "the host's commits"}${baseBranch ? ` on top of ${baseBranch} (\`git diff ${baseBranch}...${snap.sha}\`)` : ""}, at ${snap.sha}${p.focus ? `, focused on: ${p.focus}` : ""}.
 - You see committed code only; ask @main to commit WIP.` : ""}`;
@@ -540,14 +606,14 @@ export function huddleAgentPrompt(kind: "start" | "wake" | "interrupted", p: Hud
  * Huddle messages for a ticket's own session (@main or an invited ticket), sent into its chat like a message from
  * another ticket: the digest first so the chat shows it, the instructions wrapped so the UI hides them.
  */
-export function huddleMainPrompt(h: Huddle, p: HuddleParticipant, digest: string): string {
+export function huddleMainPrompt(h: Huddle, p: HuddleParticipant, digest: string, committed = true): string {
   const coordinator = p.handle === "main";
-  if (coordinator && h.auto) return autoHuddleMainPrompt(h, p, digest);
+  if (coordinator && h.auto) return autoHuddleMainPrompt(h, p, digest, committed);
   return `${digest}
 
 ${context("Huddle messages", `(Messages from huddle ${h.id}, where you are @${p.handle}${coordinator ? ", the coordinator" : ""}. Participants:
 ${rosterLines(h)}
-${coordinator && p.prompt ? `Your role as coordinator: ${p.prompt}\n` : ""}Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there.${coordinator ? " You may edit the code; the other agents can't (except in their own worktrees). Reviewers and QA see only committed code (a snapshot of your branch's HEAD), so commit your work in progress before you tag them, and mention the commit sha. Keep the pinned findings current with `huddle_findings`, and add participants with `huddle_add_participant` if needed (capped; ask the user when it's full). When the huddle's work is done, write the summary to outputs/" + summaryFile(h.id) + " in your outputs folder and ask the user to close it with `huddle_close`." : ""}
+${coordinator && p.prompt ? `Your role as coordinator: ${p.prompt}\n` : ""}Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there.${coordinator ? " You may edit the code; the other agents can't (except in their own worktrees)." + (committed ? " Reviewers and QA see only committed code (a snapshot of your branch's HEAD), so commit your work in progress before you tag them, and mention the commit sha." : " This folder has no commits, so everyone reads the files in it directly: say which files you changed when you tag them.") + " Keep the pinned findings current with `huddle_findings`, and add participants with `huddle_add_participant` if needed (capped; ask the user when it's full). When the huddle's work is done, write the summary to outputs/" + summaryFile(h.id) + " in your outputs folder and ask the user to close it with `huddle_close`." : ""}
 ${DIGEST_RULE} Don't post only to acknowledge, and tag only who must act.
 If you were in the middle of work, carry on with it afterwards and keep following the instructions you were given for that run, including how to end it. Otherwise just act on these messages and end your turn.)
 ${huddleTools(h)}`, { huddle: h.id })}`;
@@ -557,16 +623,16 @@ ${huddleTools(h)}`, { huddle: h.id })}`;
  * The auto huddle (start_huddle) wakes the ticket's own run: it is unattended work on the ticket, so it ends with the
  * result line; the board keeps the ticket In Progress while the huddle is open.
  */
-function autoHuddleMainPrompt(h: Huddle, p: HuddleParticipant, digest: string): string {
+function autoHuddleMainPrompt(h: Huddle, p: HuddleParticipant, digest: string, committed: boolean): string {
   return `${digest}
 
 ${context("Huddle messages", `(Messages from your auto huddle ${h.id} (${h.template ?? "custom roster"}; reason: ${h.auto?.reason ?? ""}), where you are @main, the coordinator. Participants:
 ${rosterLines(h)}
-Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there. Reviewers and QA see only committed code, so commit before you tag them.
+Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there. ${committed ? "Reviewers and QA see only committed code, so commit before you tag them." : "This folder has no commits, so reviewers read its files directly: say which files you changed when you tag them."}
 What to do:
 - Findings not in yet: end your turn with a short note; the board wakes you again.
-- Fix every MUST finding and commit, then ask the same reviewer for ONE short re-check (tag them with the commit sha) and end your turn.
-- Re-check passed (or no MUST findings): land the work as the ticket's instructions say, write the huddle summary to outputs/${summaryFile(h.id)} in your outputs folder, close the huddle with \`huddle_close\` (an auto huddle closes at once), and end with the result line. List the SHOULD and COULD findings in the summary.
+- Fix every MUST finding${committed ? " and commit" : ""}, then ask the same reviewer for ONE short re-check (tag them${committed ? " with the commit sha" : ", naming the files you changed"}) and end your turn.
+- Re-check passed (or no MUST findings): ${committed ? "land the work as the ticket's instructions say" : "finish as the ticket's instructions say"}, write the huddle summary to outputs/${summaryFile(h.id)} in your outputs folder, close the huddle with \`huddle_close\` (an auto huddle closes at once), and end with the result line. List the SHOULD and COULD findings in the summary.
 - The huddle stopped at its budget with MUST findings open: do NOT land; end with status "blocked" and say how many MUST findings are open.
 ${DIGEST_RULE} Don't post only to acknowledge.)
 ${huddleTools(h)}

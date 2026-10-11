@@ -5,7 +5,7 @@ import { extractFinalText, summarizeEvent } from "./activity";
 import { copyAttachments, deleteAttachments, localizeImages, localizeUrls, referencedAttachments } from "./attachments";
 import type { Bus } from "./events";
 import { isSessionLive as psSessionLive, sessionTitle } from "./claude";
-import { addWorktree, branchesWithPrefix, branchExists, isGitRepo, listWorktrees, removeWorktree, resolveBaseBranch, worktreeDir } from "./git";
+import { addWorktree, branchesWithPrefix, branchExists, isGitRepo, listWorktrees, removeWorktree, repoKind, resolveBaseBranch, worktreeDir, type RepoKind } from "./git";
 import { MOVE_TO_PLANNING_RE, STAY_RE } from "./session";
 import { forkSessionFile } from "./fork";
 import { saveMockups } from "./mockups";
@@ -158,6 +158,22 @@ function takesSlot(chat?: ActiveRun["chat"]): boolean {
 }
 
 const ACTIVITY_THROTTLE_MS = 1000;
+/** How long a board folder's cached version history (see Board.repoState) is trusted. */
+const REPO_TTL_MS = 10_000;
+/** A run that would edit the board's folder while another ticket does waits with this on its card. */
+export const FOLDER_WAIT = "waiting: another ticket is using the folder";
+
+/** Where a ticket's runs work (see Board.ensureSession). */
+export interface Session {
+  dir: string;
+  sessionId: string;
+  existed: boolean;
+  isGit: boolean;
+  /** The board folder's version history. */
+  repo: RepoKind;
+  /** The run edits the board's folder itself (no worktree, not a linked session). */
+  inPlace: boolean;
+}
 /** What a stalled run's session is told when the user restarts it. */
 const STALL_RESTART_TEXT = "Your previous run stopped responding and the user restarted it. Continue where you left off.";
 /** A requested restart waits this long for active runs to finish, then restarts anyway (recover() resumes them). */
@@ -364,24 +380,28 @@ export class Board {
         this.cancelSlotWait(slug, t.id);
         continue;
       }
-      if (this.full(slug)) return;
+      const chat = next.peer || next.hostWake ? chatFor(t, next) : { ...chatFor(t, next), mode: "act" as const, from: t.slotWait!.from };
+      if (takesSlot(chat) && this.full(slug)) return;
+      if (chat.mode === "act" && this.folderBusy(slug, t)) continue;
       this.patch(slug, t.id, { slotWait: null });
-      this.start(slug, t.id, next.peer || next.hostWake ? chatFor(t, next) : { ...chatFor(t, next), mode: "act", from: t.slotWait!.from }, next.id);
+      this.start(slug, t.id, chat, next.id);
     }
     const ready = idle.filter((t) => t.status === "ready").sort((a, b) => a.order - b.order);
     for (const t of ready) {
       if (this.full(slug)) break;
       // Its resource (e.g. the emulator) is in use: it keeps its place and the next ticket starts instead.
       if (t.needs?.length && this.heldResources(slug, t, false).length) continue;
+      // It would edit the board's folder in place while another ticket does: it waits its turn the same way.
+      if (this.folderBusy(slug, t)) continue;
       this.start(slug, t.id);
     }
   }
 
-  /** All slots are busy: the card waits in In Progress with its queued message(s) until dispatch() starts it. */
+  /** All slots are busy (or the folder is): the card waits in In Progress with its queued message(s) until dispatch() starts it. */
   private waitForSlot(slug: string, id: string): Ticket {
     const t = this.store.getTicket(slug, id)!;
     return this.patch(slug, id, {
-      status: "in_progress", outcome: null, error: null, lastActivity: "Waiting for a free slot",
+      status: "in_progress", outcome: null, error: null, lastActivity: this.full(slug) ? "Waiting for a free slot" : FOLDER_WAIT,
       slotWait: t.slotWait ?? { at: nowIso(), from: { status: t.status, outcome: t.outcome } },
     });
   }
@@ -432,7 +452,19 @@ export class Board {
       return this.patch(slug, id, { queued: [...(t.queued ?? []), msg] });
     }
     const chat = chatFor(t, { text, ...opts });
-    if (takesSlot(chat) && (t.slotWait || this.full(slug))) {
+    // A reply that may edit files (not a read-only Planning one) waits while another ticket edits the folder in place.
+    const folderBusy = chat.mode === "act" && this.folderBusy(slug, t);
+    if (!takesSlot(chat) && (folderBusy || t.slotWait)) {
+      // A reply to another session (a huddle) holds no slot: it waits on the ticket without moving the card.
+      const msg: QueuedMessage = { id: crypto.randomUUID(), text, at: nowIso(), state: "queued", ...flags(opts) };
+      this.patch(slug, id, {
+        queued: [...(t.queued ?? []), msg], lastActivity: FOLDER_WAIT,
+        slotWait: t.slotWait ?? { at: nowIso(), from: { status: t.status, outcome: t.outcome } },
+      });
+      this.dispatch(slug);
+      return this.store.getTicket(slug, id)!;
+    }
+    if (takesSlot(chat) && (t.slotWait || this.full(slug) || folderBusy)) {
       // Every run slot is busy: the reply waits on the ticket like a Ready ticket, but starts before them.
       const msg: QueuedMessage = { id: crypto.randomUUID(), text, at: nowIso(), state: "queued", ...flags(opts) };
       this.patch(slug, id, { queued: [...(t.queued ?? []), msg] });
@@ -633,7 +665,7 @@ export class Board {
   private async executeOnce(run: ActiveRun, healed = false, resumeText?: string): Promise<void> {
     const { slug, id } = run;
     const startedAt = nowIso();
-    let session: { dir: string; sessionId: string; existed: boolean; isGit: boolean };
+    let session: Session;
     try {
       session = await this.ensureSession(slug, id);
     } catch (e) {
@@ -675,16 +707,16 @@ export class Board {
     let prompt = resume ?? withSetup(localizeImages(run.chat?.raw
       ? run.chat.text
       : run.chat
-      ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir, !!profile.artifacts)
+      ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir, !!profile.artifacts, session.repo)
       : fresh
-      ? this.freshPrompt(slug, t, session.isGit, outputDir)
+      ? this.freshPrompt(slug, t, session, outputDir)
       : t.runCount === 0 || !session.existed
       ? firstRunPrompt(t, {
-        isGit: session.isGit, linked: !!t.workdir, comments: t.workdir || t.runCount > 0 ? newComments : [], outputDir,
+        repo: session.repo, inPlace: session.inPlace, home: { folder: profile.path, baseBranch: profile.baseBranch }, linked: !!t.workdir, comments: t.workdir || t.runCount > 0 ? newComments : [], outputDir,
         schedule: t.scheduleId ? { id: t.scheduleId, name: this.store.getSchedule(slug, t.scheduleId)?.name ?? null, board: slug } : undefined,
         autoHuddles: autoHuddlesOn(profile), artifacts: !!profile.artifacts,
       })
-      : resumePrompt(t, newComments, outputDir, autoHuddlesOn(profile), !!profile.artifacts), this.store.attachmentsDir), this.takeSetup(slug, id));
+      : resumePrompt(t, newComments, outputDir, autoHuddlesOn(profile), !!profile.artifacts, session.repo, session.inPlace, { folder: profile.path, baseBranch: profile.baseBranch }), this.store.attachmentsDir), this.takeSetup(slug, id));
     // A slash command only runs when it is the whole message: Claude Code passes everything after the name to
     // it as arguments (the board's note too). So the command goes alone and the board's instructions go in
     // the system prompt for this run.
@@ -1033,8 +1065,96 @@ export class Board {
 
   private sessionLocks = new Map<string, Promise<unknown>>();
 
+  /** Each board folder's version history as last seen, by folder path (see repoState); re-checked after REPO_TTL_MS. */
+  private repos = new Map<string, { kind: RepoKind; at: number }>();
+  private repoChecks = new Set<string>();
+
+  /**
+   * The board folder's version history, from the cache (undefined until first checked). A stale or missing entry is
+   * re-checked in the background; a change re-runs dispatch, so tickets held back by an unknown state start then.
+   */
+  repoState(slug: string): RepoKind | undefined {
+    const c = this.repos.get(this.store.getProfile(slug)?.path ?? "");
+    if (!c || Date.now() - c.at > REPO_TTL_MS) void this.checkRepo(slug);
+    return c?.kind;
+  }
+
+  /** Before the first check (just after a restart): guessed from the folder's .git (config names an origin or not). */
+  private guessRepo(slug: string): RepoKind {
+    const path = this.store.getProfile(slug)?.path;
+    if (!path || !existsSync(join(path, ".git"))) return "plain";
+    try {
+      return readFileSync(join(path, ".git", "config"), "utf8").includes('[remote "origin"]') ? "remote" : "local";
+    } catch {
+      return "remote";
+    }
+  }
+
+  /** The board folder has commits (so huddle reviewers get snapshots of committed code); true until known. */
+  committed(slug: string): boolean {
+    const k = this.repoState(slug);
+    return k === undefined || k === "local" || k === "remote";
+  }
+
+  private async checkRepo(slug: string): Promise<void> {
+    const profile = this.store.getProfile(slug);
+    if (!profile || this.repoChecks.has(profile.path)) return;
+    this.repoChecks.add(profile.path);
+    try {
+      this.noteRepo(slug, await repoKind(profile.path));
+    } finally {
+      this.repoChecks.delete(profile.path);
+    }
+  }
+
+  /** Records what the folder is now (e.g. version history was just turned on); a change re-runs dispatch. */
+  noteRepo(slug: string, kind: RepoKind): void {
+    const path = this.store.getProfile(slug)?.path;
+    if (!path) return;
+    const prev = this.repos.get(path)?.kind;
+    this.repos.set(path, { kind, at: Date.now() });
+    if (prev !== kind && !this.shuttingDown) this.dispatch(slug);
+  }
+
+  /**
+   * The ticket's runs edit the board's folder itself rather than a copy of their own: a plain folder or a repo with
+   * no commits (no worktree can be made), or a ticket that already ran there. Null: not known yet (the folder's
+   * version history is still being checked). Linked sessions (workdir) are the user's own and don't count.
+   * Such tickets run one at a time per board (see folderBusy); a board or ticket that opts out of worktrees adds here.
+   */
+  runsInFolder(slug: string, t: Ticket): boolean | null {
+    if (t.workdir || t.worktree || t.branch) return false;
+    if (t.sessionStarted || t.runCount > 0) return true;
+    const kind = this.repoState(slug);
+    return kind === undefined ? null : kind === "plain" || kind === "empty";
+  }
+
+  /**
+   * Another ticket on the board is editing the folder `t` would edit in place: its run (not a read-only Planning
+   * chat) is going, or its auto huddle reviews the work there. An unknown side counts as in place, so nothing starts
+   * on a guess; the version-history check re-runs dispatch.
+   */
+  folderBusy(slug: string, t: Ticket): boolean {
+    if (this.runsInFolder(slug, t) === false) return false;
+    for (const r of this.runs.values()) {
+      if (r.slug !== slug || r.id === t.id || r.chat?.mode === "refine") continue;
+      const o = this.store.getTicket(slug, r.id);
+      if (o && this.runsInFolder(slug, o) !== false) return true;
+    }
+    // Only boards whose tickets edit the folder get here, so listing them stays rare.
+    return this.store.listTickets(slug).some((o) => o.id !== t.id && !!o.autoHuddle && !this.isRunning(slug, o.id) && this.runsInFolder(slug, o) !== false);
+  }
+
+  /** For the card: it would start now (Ready, a reply waiting for a slot, a running plan's next child) but the folder is in use. */
+  folderWait(slug: string, t: Ticket): boolean {
+    if (this.isRunning(slug, t.id)) return false;
+    const parent = t.parentId ? this.store.getTicket(slug, t.parentId) : null;
+    const next = t.status === "ready" || !!t.slotWait || (t.status === "backlog" && planActive(parent?.plan));
+    return next && this.folderBusy(slug, t);
+  }
+
   /** Serialized per ticket: a run and a "copy command" click must not both create the worktree. */
-  ensureSession(slug: string, id: string): Promise<{ dir: string; sessionId: string; existed: boolean; isGit: boolean }> {
+  ensureSession(slug: string, id: string): Promise<Session> {
     const key = this.key(slug, id);
     const prev = this.sessionLocks.get(key) ?? Promise.resolve();
     const next = prev.catch(() => {}).then(() => this.ensureSessionNow(slug, id));
@@ -1045,13 +1165,15 @@ export class Board {
     return next;
   }
 
-  private async ensureSessionNow(slug: string, id: string): Promise<{ dir: string; sessionId: string; existed: boolean; isGit: boolean }> {
+  private async ensureSessionNow(slug: string, id: string): Promise<Session> {
     const profile = this.store.getProfile(slug);
     if (!profile) throw new Error(`board ${slug} not found`);
     if (!existsSync(profile.path)) throw new Error(`board folder does not exist: ${profile.path}`);
     let t = this.store.getTicket(slug, id);
     if (!t) throw new Error(`ticket ${id} not found`);
-    const isGit = await isGitRepo(profile.path);
+    const repo = await repoKind(profile.path);
+    this.noteRepo(slug, repo);
+    const isGit = repo !== "plain";
     const patch: Partial<Ticket> = {};
     if (t.workdir && !existsSync(t.workdir)) throw new Error(`linked session folder no longer exists: ${t.workdir}`);
     // A ticket that already ran in the folder itself stays there: its Claude session belongs to that folder.
@@ -1099,6 +1221,8 @@ export class Board {
       // Only a saved session can be resumed (a run stopped in its first second leaves none); a linked one is the user's.
       existed: (!!t.workdir && !t.freshSession) || this.sessionExists(sessionId),
       isGit,
+      repo,
+      inPlace: !t.workdir && !t.worktree,
     };
   }
 
@@ -1513,7 +1637,7 @@ export class Board {
 
   /** Resume the planner's session with what happened; several events arrive as one message. */
   private wake(slug: string, planner: Ticket, plan: Plan, kind: PlanWake, events: string[], kids: Ticket[]) {
-    const text = orchestratorPrompt(planner, { kind, events, table: planTable(kids), board: slug, outputDir: this.store.outputsDir(slug, planner.id) });
+    const text = orchestratorPrompt(planner, { kind, events, table: planTable(kids), board: slug, outputDir: this.store.outputsDir(slug, planner.id), repo: this.repoState(slug) ?? this.guessRepo(slug) });
     this.patch(slug, planner.id, { plan: { ...plan, inbox: [], awaiting: kind, wakeups: plan.wakeups + 1 } });
     // Back to where it was (In progress only if a restart cut a wake-up off).
     const returnTo = planner.status === "in_progress" ? "review" : planner.status;
@@ -1663,6 +1787,8 @@ export class Board {
         await addWorktree(profile.path, dir, branch, base);
         worktree = dir;
         Object.assign(patch, { worktree: dir, branch });
+      } else {
+        warnings.push("This folder has no version history, so the branch edits the same files as the original; they run one at a time.");
       }
       const fromCwd = src.workdir ?? src.worktree ?? (src.branch ? worktreeDir(profile, src.id) : profile.path);
       const toCwd = patch.workdir ?? worktree ?? profile.path;
@@ -1685,13 +1811,13 @@ export class Board {
   // ---- One-click recovery from a lost or busy session ----
 
   /** The first prompt of a fresh session: ticket, last result, recent comments, and where to look for the work so far. */
-  private freshPrompt(slug: string, t: Ticket, isGit: boolean, outputDir: string): string {
+  private freshPrompt(slug: string, t: Ticket, session: Pick<Session, "repo" | "inPlace">, outputDir: string): string {
     const comments = this.store.listComments(slug, t.id);
     const last = comments.findLast((c) => c.author === "ai" && !BOARD_NOTE_RE.test(c.text));
     const recent = comments.filter((c) => !BOARD_NOTE_RE.test(c.text) && c !== last).slice(-10);
     const profile = this.store.getProfile(slug);
     return freshSessionPrompt(t, {
-      isGit, linked: !!t.workdir, baseBranch: profile?.baseBranch || "main",
+      repo: session.repo, inPlace: session.inPlace, home: profile ? { folder: profile.path, baseBranch: profile.baseBranch } : undefined, linked: !!t.workdir, baseBranch: profile?.baseBranch || "main",
       lastResult: last?.text ?? null, comments: recent, outputDir, autoHuddles: autoHuddlesOn(profile), artifacts: !!profile?.artifacts,
     });
   }

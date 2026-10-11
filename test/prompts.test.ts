@@ -74,7 +74,7 @@ test("extractFinalText prefers result event", () => {
 });
 
 test("prompts include ticket and comments", () => {
-  const p = firstRunPrompt(ticket, { isGit: true, outputDir: "/out" });
+  const p = firstRunPrompt(ticket, { repo: "remote" as const, outputDir: "/out" });
   expect(p).toContain("Add dark mode");
   expect(p).toContain("Use CSS vars.");
   expect(p).toContain("CKANBAN_RESULT:");
@@ -97,7 +97,7 @@ test("parseResult drops non-https prUrl", () => {
 
 test("interview mode asks questions first and never forbids questions", () => {
   const t = { ...ticket, mode: "interview" } as Ticket;
-  const p = firstRunPrompt(t, { isGit: true, outputDir: "/out/t1" });
+  const p = firstRunPrompt(t, { repo: "remote" as const, outputDir: "/out/t1" });
   expect(p).toContain("interview first");
   expect(p).toContain('status "questions"');
   expect(p).not.toContain("do not ask questions");
@@ -110,7 +110,7 @@ test("interview mode asks questions first and never forbids questions", () => {
 });
 
 test("auto mode keeps autonomous wording and still asks for a deliverable", () => {
-  const p = firstRunPrompt({ ...ticket, mode: "auto" } as Ticket, { isGit: false, outputDir: "/out" });
+  const p = firstRunPrompt({ ...ticket, mode: "auto" } as Ticket, { repo: "plain" as const, outputDir: "/out" });
   expect(p).toContain("do not ask questions");
   expect(p).toContain("Outputs folder for this ticket: /out");
   expect(resumePrompt({ ...ticket, mode: "auto" } as Ticket, [], "/out")).not.toContain("Brief");
@@ -122,12 +122,12 @@ test("parseResult accepts questions status", () => {
 
 test("run prompts point Claude at the artifact helper only when the board turns it on", () => {
   const t = { ...ticket, mode: "auto", runCount: 1 } as Ticket;
-  const fresh = { isGit: true, linked: false, baseBranch: "main", lastResult: null, comments: [], outputDir: "/o" };
-  for (const p of [firstRunPrompt(t, { isGit: true, outputDir: "/o", artifacts: true }), resumePrompt(t, [], "/o", false, true), chatPrompt(t, "hi", "act", "/o", true), freshSessionPrompt(t, { ...fresh, artifacts: true })]) {
+  const fresh = { repo: "remote" as const, linked: false, baseBranch: "main", lastResult: null, comments: [], outputDir: "/o" };
+  for (const p of [firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o", artifacts: true }), resumePrompt(t, [], "/o", false, true), chatPrompt(t, "hi", "act", "/o", true), freshSessionPrompt(t, { ...fresh, artifacts: true })]) {
     expect(p).toContain("Artifact tool is not available");
     expect(p).toContain("artifact publish <file.html> --url <url>");
   }
-  for (const p of [firstRunPrompt(t, { isGit: true, outputDir: "/o" }), resumePrompt(t, [], "/o"), chatPrompt(t, "hi", "act", "/o"), freshSessionPrompt(t, fresh)]) {
+  for (const p of [firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o" }), resumePrompt(t, [], "/o"), chatPrompt(t, "hi", "act", "/o"), freshSessionPrompt(t, fresh)]) {
     expect(p).not.toContain("claude.ai artifacts");
     expect(p).not.toContain("artifact publish");
   }
@@ -144,11 +144,11 @@ test("planning chats reach artifacts through the MCP tools, not the Bash helper 
 
 test("a scheduled ticket's first run is told its schedule", () => {
   const t = { ...ticket, scheduleId: "s1" } as Ticket;
-  const p = firstRunPrompt(t, { isGit: true, outputDir: "/out", schedule: { id: "s1", name: "Nightly audit", board: "kanban" } });
+  const p = firstRunPrompt(t, { repo: "remote" as const, outputDir: "/out", schedule: { id: "s1", name: "Nightly audit", board: "kanban" } });
   expect(p).toContain('created by schedule s1 ("Nightly audit") on board kanban');
   expect(p).toContain("update_schedule");
-  expect(firstRunPrompt(t, { isGit: true, outputDir: "/out", schedule: { id: "s1", name: null, board: "kanban" } })).toContain("since been deleted");
-  expect(firstRunPrompt(ticket, { isGit: true, outputDir: "/out" })).not.toContain("schedule");
+  expect(firstRunPrompt(t, { repo: "remote" as const, outputDir: "/out", schedule: { id: "s1", name: null, board: "kanban" } })).toContain("since been deleted");
+  expect(firstRunPrompt(ticket, { repo: "remote" as const, outputDir: "/out" })).not.toContain("schedule");
 });
 
 test("planning and Review/Done chats can propose new tickets, first runs can't", () => {
@@ -166,7 +166,7 @@ test("planning and Review/Done chats can propose new tickets, first runs can't",
   expect(act).toContain("list_tickets");
   expect(act).toContain("follow-up tickets from this ticket");
   expect(act).toContain("<ckanban-stay/>");
-  expect(firstRunPrompt(t, { isGit: true, outputDir: "/o" })).not.toContain("ckanban-tickets");
+  expect(firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o" })).not.toContain("ckanban-tickets");
 });
 
 test("every ticket chat can offer a branch; first runs can't", () => {
@@ -175,7 +175,7 @@ test("every ticket chat can offer a branch; first runs can't", () => {
   const act = chatPrompt(t, "branch this", "act", "/o");
   expect(act).toContain("`propose_branch` tool");
   expect(act).toContain("proposing tickets, a branch or a teammate was all");
-  expect(firstRunPrompt(t, { isGit: true, outputDir: "/o" })).not.toContain("propose_branch");
+  expect(firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o" })).not.toContain("propose_branch");
 });
 
 test("every ticket chat may propose a teammate; it can't save one", () => {
@@ -203,8 +203,8 @@ test("planner wake-ups: events or final check, scoped rights, one visible line f
 
 test("a plan's child is told to rebase onto the remote base branch first", () => {
   const t = { ...ticket, mode: "auto", parentId: "t_plan" } as Ticket;
-  expect(firstRunPrompt(t, { isGit: true, outputDir: "/o" })).toContain("part of a plan (planner ticket t_plan)");
-  expect(firstRunPrompt({ ...t, parentId: null } as Ticket, { isGit: true, outputDir: "/o" })).not.toContain("part of a plan");
+  expect(firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o" })).toContain("part of a plan (planner ticket t_plan)");
+  expect(firstRunPrompt({ ...t, parentId: null } as Ticket, { repo: "remote" as const, outputDir: "/o" })).not.toContain("part of a plan");
 });
 
 test("API connection retries show on the card instead of looking frozen", () => {
@@ -224,4 +224,70 @@ test("ticket chats can manage tickets when the user asks; planners hear about ne
   const wake = orchestratorPrompt(ticket, { kind: "event", events: [], table: "", board: "kanban", outputDir: "/o" });
   expect(wake).toContain("one ticket per exclusive resource (needs) at a time");
   expect(wake).toContain("instead of a dependsOn chain");
+});
+
+test("run prompts adapt to the folder's version history and never block on missing git", () => {
+  const t = { ...ticket, mode: "auto", parentId: "t_plan", branch: "ck/t1-x" } as Ticket;
+  const plain = firstRunPrompt(t, { repo: "plain", outputDir: "/o" });
+  const empty = firstRunPrompt(t, { repo: "empty", outputDir: "/o" });
+  const local = firstRunPrompt(t, { repo: "local", outputDir: "/o" });
+  const remote = firstRunPrompt(t, { repo: "remote", outputDir: "/o" });
+  for (const p of [plain, empty, local, remote]) {
+    expect(p).not.toContain('report status "blocked" explaining what is missing');
+    expect(p).toContain("never a reason to stop or report \"blocked\"");
+    expect(p).toContain("The user may not be technical");
+  }
+  // Plain folder: edit in place, list the files, nothing to commit or push.
+  expect(plain).toContain("no version history");
+  expect(plain).toContain("list every file you created, changed or deleted");
+  expect(plain).not.toContain("gh pr create");
+  expect(plain).not.toContain("git fetch");
+  // No commits: no worktree, no branch, no rebase.
+  for (const word of ["worktree", "branch", "git fetch", "rebase", "gh pr create"]) expect(empty).not.toContain(word);
+  expect(empty).toContain("no first snapshot yet");
+  // No remote: commit locally, no fetch from origin, no push or PR.
+  expect(local).toContain("commit them on this branch");
+  expect(local).not.toContain("git fetch");
+  expect(local).not.toContain("gh pr create");
+  expect(local).toContain("rebase this branch onto the local base branch");
+  // No pull requests: the branch is merged into the project folder so the user sees the change.
+  expect(firstRunPrompt(t, { repo: "local", outputDir: "/o", home: { folder: "/p/shop", baseBranch: "main" } })).toContain("bring the work into the project folder (`/p/shop`) so the user sees it there: if that folder is on `main`");
+  expect(remote).not.toContain("bring the work into");
+  // Remote: the PR flow, with a way out when gh is missing.
+  expect(remote).toContain("gh pr create");
+  expect(remote).toContain("`git fetch` and rebase");
+  expect(remote).toContain("worktree on this ticket's own branch (`ck/t1-x`)");
+  expect(remote).toContain("If `gh` isn't available");
+});
+
+test("resume, fresh, chat and planner prompts drop git steps the folder can't do", () => {
+  const t = { ...ticket, mode: "auto", runCount: 1 } as Ticket;
+  expect(resumePrompt(t, [], "/o", false, false, "plain")).not.toContain("push new commits");
+  expect(resumePrompt(t, [], "/o", false, false, "plain")).toContain("edit them in place");
+  expect(resumePrompt(t, [], "/o")).toContain("push new commits to the same branch");
+  const fresh = { linked: false, baseBranch: "main", lastResult: null, comments: [], outputDir: "/o" };
+  const fp = freshSessionPrompt(t, { ...fresh, repo: "empty" });
+  expect(fp).not.toContain("git log");
+  expect(fp).not.toContain("gh pr create");
+  expect(fp).not.toContain("this worktree");
+  expect(freshSessionPrompt(t, { ...fresh, repo: "remote" })).toContain("git log --oneline main..HEAD");
+  expect(chatPrompt(t, "hi", "act", "/o", false, "plain")).toContain("no version history yet");
+  expect(chatPrompt(t, "hi", "act", "/o", false, "local")).toContain("no remote");
+  const base = { kind: "final" as const, events: [], table: "", board: "kanban", outputDir: "/o" };
+  expect(orchestratorPrompt(t, base)).toContain("origin/<base branch>");
+  for (const repo of ["plain", "empty", "local"] as const) {
+    const fin = orchestratorPrompt(t, { ...base, repo });
+    expect(fin).not.toContain("git fetch");
+    expect(fin).not.toContain("origin/");
+  }
+  expect(orchestratorPrompt(t, { ...base, repo: "plain" })).not.toContain("git worktree add");
+  expect(orchestratorPrompt(t, { ...base, kind: "event", repo: "local" })).not.toContain("gh pr merge");
+});
+
+test("the auto huddle and huddle prompts don't ask to commit in a folder without commits", () => {
+  const t = { ...ticket, mode: "auto" } as Ticket;
+  const plain = firstRunPrompt(t, { repo: "plain", outputDir: "/o", autoHuddles: true });
+  expect(plain).toContain("BEFORE you finish");
+  expect(plain).not.toContain("done and committed");
+  expect(firstRunPrompt(t, { repo: "remote", outputDir: "/o", autoHuddles: true })).toContain("done and committed");
 });

@@ -446,7 +446,7 @@ test("in a repo with no commits yet, agents work in the host's folder instead of
   }
   expect(participant(h, "reviewer").snapshot ?? null).toBeNull();
   expect(processes().map((x) => x.cwd)).toEqual([empty, empty]);
-  expect(processes().some((x) => x.args.join(" ").includes("shared with @main, because the repo has no commits yet"))).toBe(true);
+  expect(processes().some((x) => x.args.join(" ").includes("shared with @main, because it has no version history to branch from yet"))).toBe(true);
   expect(messages(h).filter((m) => m.kind === "system" && m.text.includes("no commits yet")).map((m) => m.text)).toEqual([
     expect.stringContaining("@fixer works in the host's folder"),
   ]);
@@ -456,6 +456,26 @@ test("in a repo with no commits yet, agents work in the host's folder instead of
   expect(heardBy("reviewer").at(-1)).toContain("again");
   expect(processes().every((x) => x.cwd === empty)).toBe(true);
   expect(messages(h).filter((m) => m.text.includes("no commits yet")).length).toBe(1);
+}, 30000);
+
+test("in a plain folder, shared, own and read-only agents all work in the host's folder with a note", async () => {
+  const plain = tempDir("ck-plain-");
+  store.saveProfile({ ...store.getProfile("p")!, path: plain });
+  const t = await host();
+  const h = huddles.create("p", t.id, [
+    { preset: "reviewer" },
+    { role: "Fixer", prompt: "Fix it", workspace: "own", canEdit: true },
+    { role: "Helper", prompt: "Help", workspace: "shared", canEdit: true },
+  ]);
+  await idle();
+  for (const a of ["reviewer", "fixer", "helper"]) {
+    expect(participant(h, a)).toMatchObject({ status: "idle", error: null });
+    expect(participant(h, a).worktree ?? null).toBeNull();
+  }
+  expect(processes().map((x) => x.cwd)).toEqual([plain, plain, plain]);
+  expect(messages(h).filter((m) => m.kind === "system" && m.text.includes("no version history")).map((m) => m.text)).toEqual([
+    expect.stringContaining("@fixer works in the host's folder"),
+  ]);
 }, 30000);
 
 test("an agent that can't start shows why: failed with the error, and a line in the huddle", async () => {

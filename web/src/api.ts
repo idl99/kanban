@@ -24,6 +24,16 @@ export interface Health {
   pty?: boolean;
 }
 
+/** A folder's version history: none (plain), git without commits (empty), commits without a remote (local), or a remote. */
+export type RepoKind = "plain" | "empty" | "local" | "remote";
+
+export interface VersionHistory {
+  /** git is installed (the offer is hidden without it). */
+  git: boolean;
+  /** Null: the folder doesn't exist or git isn't installed. */
+  repo: RepoKind | null;
+}
+
 export interface FileEntry {
   name: string;
   path: string;
@@ -161,6 +171,8 @@ export interface Ticket {
   needs?: string[];
   /** For tickets with needs: holds them now, or which ones another ticket holds while this one would start. */
   resources?: { holding: boolean; waitingFor: string[] } | null;
+  /** It would start now, but another ticket is editing the board's folder in place (no version history). */
+  folderWait?: boolean;
   /** A plan child waiting on the user (questions, a proposal to apply, in Planning); the plan won't start it. */
   userWait?: string | null;
   /** Set once this ticket's plan was started: the board runs its children unattended. */
@@ -885,6 +897,8 @@ export const api = {
   claudeProjects: () => req<ClaudeProject[]>("GET", "/api/claude/projects"),
   claudeDefaults: () => req<{ model: string | null }>("GET", "/api/claude/defaults"),
   pickFolder: () => req<{ path: string | null }>("POST", "/api/pick-folder"),
+  versionHistory: (path: string) => req<VersionHistory>("GET", `/api/version-history?path=${encodeURIComponent(path)}`),
+  enableVersionHistory: (path: string) => req<{ changed: boolean; sha: string | null; ignored: string[]; repo: RepoKind }>("POST", "/api/version-history", { path }),
   /** Claude plan usage (5h / weekly windows) or a plain-words error. */
   usage: () => req<UsageResult>("GET", "/api/usage"),
   /** What every board spent today (local day). */

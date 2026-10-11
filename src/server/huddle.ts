@@ -39,7 +39,7 @@ import { summarizeEvent } from "./activity";
 import { mcpConfig } from "./agents";
 import { claudeSessionExists, type Board } from "./board";
 import type { Bus } from "./events";
-import { addWorktree, branchExists, hasCommits, isGitRepo, removeWorktree, run as git, worktreeDir } from "./git";
+import { addWorktree, branchExists, hasCommits, removeWorktree, run as git, worktreeDir } from "./git";
 import {
   DEFAULT_MAX_PARTICIPANTS, handleBase, HUDDLE_AGENT_ENV, LEGACY_SUMMARY_FILE, MAIN_HANDLE, NO_EDIT_TOOLS, parseMentions, RESERVED_HANDLES,
   rosterEntryError, rosterError, summaryFile, USER_HANDLE, type RosterEntry,
@@ -1577,7 +1577,7 @@ export class Huddles {
       // Its own auto huddle wakes the host as unattended work on the ticket (it ends with a result line and lands).
       const own = this.store.getTicket(slug, p.ticketId!)?.autoHuddle;
       const hostWake = !!h.auto && isCoordinator(h, p) && own?.state === "live" && own.huddleId === h.id;
-      this.board.chat(slug, p.ticketId!, huddleMainPrompt(h, p, u.digest), hostWake ? { hostWake } : { peer: true }).catch((e) => {
+      this.board.chat(slug, p.ticketId!, huddleMainPrompt(h, p, u.digest, this.board.committed(slug)), hostWake ? { hostWake } : { peer: true }).catch((e) => {
         u.undo();
         this.system(slug, hid, `Couldn't reach @${handle}: ${(e as Error).message}`);
       });
@@ -1676,10 +1676,11 @@ export class Huddles {
     const committed = host.isGit && (await hasCommits(host.dir));
     if (p.workspace === "shared") return isSnapshot(p) && committed ? this.snapshot(slug, h, p, host.dir) : host.dir;
     const profile = this.store.getProfile(slug)!;
-    if (!(await isGitRepo(profile.path))) throw new Error("workspace own needs a git repository");
     if (p.worktree && existsSync(p.worktree)) return p.worktree;
     if (!committed) {
-      if (!p.sessionId) this.system(slug, h.id, `@${p.handle} works in the host's folder ${host.dir}, shared with @main, instead of a worktree of its own: this repo has no commits yet. Make a first commit to give new agents their own worktree.`);
+      // A plain folder or a repo with no commits: nothing to branch from, so share the host's folder (as the host does).
+      const why = host.isGit ? "this repo has no commits yet. Make a first commit" : "this folder has no version history. Turn it on in the board's settings";
+      if (!p.sessionId) this.system(slug, h.id, `@${p.handle} works in the host's folder ${host.dir}, shared with @main, instead of a copy of its own: ${why} to give new agents their own copy.`);
       return host.dir;
     }
     const t = this.store.getTicket(slug, h.hostTicket)!;

@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Board } from "../src/server/board";
 import { Bus } from "../src/server/events";
+import { run } from "../src/server/git";
 import { createServer, isAllowedRequest } from "../src/server/http";
 import { ptySupported } from "../src/server/shell";
 import { Store } from "../src/server/store";
@@ -696,4 +697,37 @@ test("notification settings: read, update, validate; board runs are refused", as
   expect(r.status).toBe(403);
   r = await fetch(`${base}/api/notify`, json("POST", { webhookUrl: "" }));
   expect(((await r.json()) as any).webhookUrl).toBe("");
+});
+
+test("version history: offered for a plain folder, turned on with one local commit, a .gitignore and nothing pushed", async () => {
+  const path = tempDir("ck-plain-");
+  writeFileSync(join(path, "index.html"), "<h1>shop</h1>\n");
+  writeFileSync(join(path, ".env"), "SECRET=1\n");
+  mkdirSync(join(path, "node_modules", "x"), { recursive: true });
+  writeFileSync(join(path, "node_modules", "x", "i.js"), "1\n");
+  let r = await fetch(`${base}/api/version-history?path=${encodeURIComponent(path)}`);
+  expect(await r.json()).toEqual({ git: true, repo: "plain" });
+  r = await fetch(`${base}/api/version-history`, json("POST", { path }));
+  expect(r.status).toBe(200);
+  const out = (await r.json()) as any;
+  expect(out).toMatchObject({ changed: true, repo: "local" });
+  const files = (await run(["git", "ls-files"], path)).stdout.trim().split("\n");
+  expect(files.sort()).toEqual([".gitignore", "index.html"]);
+  expect((await run(["git", "log", "--format=%s"], path)).stdout.trim()).toBe("Initial snapshot (ckanban)");
+  expect((await run(["git", "remote"], path)).stdout.trim()).toBe("");
+  // Already on: nothing happens a second time.
+  r = await fetch(`${base}/api/version-history`, json("POST", { path }));
+  expect(((await r.json()) as any).changed).toBe(false);
+  expect((await run(["git", "rev-list", "--count", "HEAD"], path)).stdout.trim()).toBe("1");
+  r = await fetch(`${base}/api/version-history`, json("POST", { path: "relative/path" }));
+  expect(r.status).toBe(400);
+});
+
+test("the Changes tab explains why a ticket without a worktree has nothing to show", async () => {
+  const path = tempDir("ck-plain-");
+  const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Diffless", path }))).json()) as any;
+  const t = (await (await fetch(`${base}/api/profiles/${p.slug}/tickets`, json("POST", { title: "x" }))).json()) as any;
+  const r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}/diff`);
+  expect(r.status).toBe(404);
+  expect(((await r.json()) as any).error).toBe("No version history for this folder, so changes can't be shown.");
 });

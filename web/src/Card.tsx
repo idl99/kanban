@@ -105,6 +105,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
   // Its own huddle works on it: the huddle badge says so, not a stale Blocked or Failed.
   const badge = att || (ticket.huddleBusy && huddle) ? null
     : waitFor.length ? <span className="badge wait" title={`Waiting for ${waitFor.join(", ")}: another ticket is using it`}>waiting</span>
+    : ticket.folderWait ? <span className="badge wait" title="Tickets on a folder without version history run one at a time; this one starts when the other finishes">waiting: another ticket is using the folder</span>
     : queued && !working ? (held
       ? <span className="badge queued" title="A daemon restart is pending; queued tickets start right after it">Waits for restart</span>
       : <span className="badge queued" title="Starts when a run slot is free">Queued · #{queued}</span>)

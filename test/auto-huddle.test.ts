@@ -305,16 +305,16 @@ test("a run that started (or waits for) an auto huddle ends In Progress, not in 
 
 test("the auto huddle prompt section: unattended run prompts only, when the board setting is on", async () => {
   const t = await board.createTicket("p", { title: "Login", body: "Do it", status: "backlog" });
-  const on = firstRunPrompt(t, { isGit: true, outputDir: "/o", autoHuddles: true });
+  const on = firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o", autoHuddles: true });
   expect(on).toContain("# Auto huddle");
   expect(on).toContain("start_huddle");
   expect(on).toContain("At most once per run; never from a Planning chat");
-  expect(firstRunPrompt(t, { isGit: true, outputDir: "/o" })).not.toContain("# Auto huddle");
-  expect(firstRunPrompt(t, { isGit: true, outputDir: "/o", autoHuddles: false })).not.toContain("# Auto huddle");
-  expect(firstRunPrompt({ ...t, important: true }, { isGit: true, outputDir: "/o", autoHuddles: true })).toContain("marked ⭐ Important");
+  expect(firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o" })).not.toContain("# Auto huddle");
+  expect(firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o", autoHuddles: false })).not.toContain("# Auto huddle");
+  expect(firstRunPrompt({ ...t, important: true }, { repo: "remote" as const, outputDir: "/o", autoHuddles: true })).toContain("marked ⭐ Important");
   expect(resumePrompt(t, [], "/o", true)).toContain("# Auto huddle");
   expect(resumePrompt(t, [], "/o")).not.toContain("# Auto huddle");
-  const fresh = { isGit: true, linked: false, baseBranch: "main", lastResult: null, comments: [], outputDir: "/o" };
+  const fresh = { repo: "remote" as const, linked: false, baseBranch: "main", lastResult: null, comments: [], outputDir: "/o" };
   expect(freshSessionPrompt(t, { ...fresh, autoHuddles: true })).toContain("# Auto huddle");
   expect(freshSessionPrompt(t, fresh)).not.toContain("# Auto huddle");
   // Chats and Planning never get it.

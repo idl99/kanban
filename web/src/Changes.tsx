@@ -104,6 +104,9 @@ export function Changes({ slug, ticket, state, onSent, onError }: {
     ...d.files.map((f) => fileRow(f, baseName(f.path), depth)),
   ];
 
+  if (!ticket.worktree) {
+    return <div className="panel-scroll muted small changes-none">No version history for this folder, so changes can't be shown. Claude's summary lists the files it changed.</div>;
+  }
   if (!diff) {
     return <div className="panel-scroll muted small">{error ? <div className="banner error inline">{error}</div> : "Loading changes…"}</div>;
   }
