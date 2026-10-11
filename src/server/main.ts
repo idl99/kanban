@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { cleanupTmuxLeftovers } from "./artifact";
 import { Board } from "./board";
 import { Bus } from "./events";
 import { createServer } from "./http";
@@ -29,6 +30,7 @@ export async function startDaemon(): Promise<void> {
   const bus = new Bus();
   const sessions = new SessionCache();
   const shells = new ShellManager();
+  void cleanupTmuxLeftovers();
   const board = new Board(store, bus, {
     claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude",
     sessionSummary: (id) => sessions.summary(id),

@@ -2,13 +2,15 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { findSessionFile } from "./session";
+import { ptySupported } from "./shell";
 import { shellQuote } from "./util";
 import { IS_BINARY } from "./version";
 
 /**
  * Headless `claude -p` runs never get the built-in Artifact tool (off by design in SDK contexts).
- * This helper publishes/reads artifacts through a short-lived interactive `claude` in a hidden tmux
- * session, which does have it, and reads the result from that session's transcript.
+ * This helper publishes/reads artifacts through a short-lived interactive `claude` on a hidden terminal
+ * (Bun's built-in one; tmux only on Bun builds without it), which does have it, and reads the result from
+ * that session's transcript.
  */
 
 export const TMUX_PREFIX = "ckanban-artifact-";
@@ -31,11 +33,20 @@ export function helperArgv(): string[] {
   return IS_BINARY ? [process.execPath] : [process.execPath, join(import.meta.dir, "..", "cli.ts")];
 }
 
-/** Env for the helper: drop the markers a board run passes down, or the child counts as SDK and loses Artifact. */
+/**
+ * Markers a board run passes down. With the first two the child counts as SDK and loses Artifact; as a child
+ * session it stops saving its transcript, which is where the helper reads the result.
+ */
+const PARENT_MARKERS = new Set([
+  "CLAUDE_CODE_ENTRYPOINT", "CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_PID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_EXECPATH",
+]);
+
+/** Env for the helper: a top-level interactive Claude, not a child of the run that called it. */
 export function helperEnv(env: Record<string, string | undefined>): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
-    if (v === undefined || k === "CLAUDE_CODE_ENTRYPOINT" || k === "CLAUDECODE") continue;
+    if (v === undefined || PARENT_MARKERS.has(k)) continue;
     out[k] = v;
   }
   out.CLAUDE_CODE_ARTIFACT_AUTO_OPEN = "0";
@@ -59,18 +70,6 @@ export function jobPrompts(job: ArtifactJob): string[] {
   return [
     readPrompt(job.url),
     `Now publish the file ${job.file} with the Artifact tool, passing url ${job.url}, so it becomes a new version at that same link.${title} ${rules}`,
-  ];
-}
-
-/**
- * tmux argv. The command runs through `env -u` because the tmux server's global environment may
- * come from a board run too, so unsetting only our own spawn env isn't enough.
- */
-export function tmuxArgs(o: { name: string; cwd: string; bin: string; sessionId: string; model: string; prompt: string }): string[] {
-  return [
-    "tmux", "new-session", "-d", "-s", o.name, "-x", "200", "-y", "50", "-c", o.cwd,
-    "env", "-u", "CLAUDE_CODE_ENTRYPOINT", "-u", "CLAUDECODE", "CLAUDE_CODE_ARTIFACT_AUTO_OPEN=0",
-    o.bin, "--model", o.model, "--permission-mode", "bypassPermissions", "--session-id", o.sessionId, o.prompt,
   ];
 }
 
@@ -110,7 +109,7 @@ export function findOutcome(raw: string, kind: ArtifactJob["kind"]): ArtifactOut
       if (b?.type !== "tool_result") continue;
       const text = resultText(b.content);
       if (/No such tool available: Artifact|Artifact exists but is not enabled/.test(text)) {
-        return { ok: false, error: `Artifact tool is not available in the helper session: ${text.replace(/<\/?tool_use_error>/g, "").trim()}` };
+        return { ok: false, error: ERRORS.noArtifactTool };
       }
       const input = uses.get(b.tool_use_id);
       if (!input) continue;
@@ -131,12 +130,36 @@ export function findOutcome(raw: string, kind: ArtifactJob["kind"]): ArtifactOut
   return null;
 }
 
+/** Screen text from raw terminal output: escape sequences dropped, cursor-forward moves turned back into spaces. */
+export function screenText(raw: string): string {
+  return raw
+    .replace(/\x1b\[(\d*)C/g, (_, n) => " ".repeat(Number(n) || 1))
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\x1b[()][A-Za-z0-9]|\x1b[=>78DEHMc]/g, "");
+}
+
 /** Interactive prompts the helper may hit before its prompt runs. */
-export function paneState(pane: string): "trust" | "bypass" | null {
+export function paneState(pane: string, typed: string[] = []): "trust" | "bypass" | "login" | null {
   if (/Yes, I trust this folder/.test(pane)) return "trust";
   if (/Bypass Permissions mode/i.test(pane) && /Yes, I accept/.test(pane)) return "bypass";
+  // The screen also shows what we typed (title, file path), so a login phrase in there proves nothing.
+  if (LOGIN.test(pane) && !typed.some((t) => LOGIN.test(t))) return "login";
   return null;
 }
+
+const LOGIN = /Select login method|Please run \/login|Not logged in|Invalid API key/i;
+
+export const ERRORS = {
+  login: "Claude Code isn't logged in: open the Claude tab and run /login, then try again.",
+  bypass: "Claude Code needs a one-time OK before it can publish: open the Terminal tab, run `claude --permission-mode bypassPermissions`, choose \"Yes, I accept\", then try again.",
+  exited: "Claude Code closed before publishing finished. Open the Claude tab to check it starts and is logged in, then try again.",
+  notInstalled: "Claude Code isn't installed or can't be found. Install it from claude.com/code, then try again.",
+  noRuntime: "Publishing needs a newer ckanban runtime. Update ckanban.",
+  noArtifactTool: "Your Claude Code can't publish artifacts. Update Claude Code and check you are logged in with a claude.ai account, then try again.",
+  timeout: (s: number, kind: ArtifactJob["kind"]) =>
+    `${kind === "read" ? "Reading the artifact" : "Publishing"} took too long (over ${s}s) and was stopped. Try again in a minute.`,
+};
 
 export interface RunOptions {
   bin?: string;
@@ -145,6 +168,115 @@ export interface RunOptions {
   /** Folder the helper runs in; ckanban owns it, so accepting Claude's trust prompt there is safe. */
   cwd?: string;
   pollMs?: number;
+  /** Environment the helper starts from (default: this process's). */
+  env?: Record<string, string | undefined>;
+  /** Drive the helper on Bun's built-in terminal (default: when this Bun has one), else in tmux. */
+  pty?: boolean;
+}
+
+/** The hidden interactive `claude` a job talks to. */
+interface HelperSession {
+  /** Types a message and submits it. */
+  type(text: string): Promise<void>;
+  /** Accepts the folder trust prompt (its default answer is "No, exit"). */
+  acceptTrust(): Promise<void>;
+  /** What the screen shows lately, or null once Claude has exited. */
+  screen(): Promise<string | null>;
+  /** Forgets the screen so a prompt that was answered doesn't match again. */
+  clear(): void;
+  kill(): void;
+}
+
+interface StartOptions {
+  bin: string;
+  cwd: string;
+  sessionId: string;
+  model: string;
+  prompt: string;
+  env: Record<string, string>;
+}
+
+export function claudeArgs(o: { bin: string; sessionId: string; model: string; prompt: string }): string[] {
+  return [o.bin, "--model", o.model, "--permission-mode", "bypassPermissions", "--session-id", o.sessionId, o.prompt];
+}
+
+const SCREEN_KEEP = 32 * 1024;
+
+/** Claude on Bun's built-in pseudo-terminal: no tmux needed. */
+function startPty(o: StartOptions): HelperSession | string {
+  let out = "";
+  let exited = false;
+  const decoder = new TextDecoder();
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn(claudeArgs(o), {
+      cwd: o.cwd,
+      env: { ...o.env, TERM: "xterm-256color" },
+      terminal: {
+        cols: 200, rows: 50, name: "xterm-256color",
+        data: (_t, d) => {
+          out = (out + decoder.decode(d, { stream: true })).slice(-SCREEN_KEEP);
+        },
+      },
+    });
+  } catch {
+    return ERRORS.notInstalled;
+  }
+  proc.exited.then(() => {
+    exited = true;
+  });
+  const write = (s: string) => {
+    if (!exited) proc.terminal?.write(s);
+  };
+  return {
+    async type(text) {
+      write(text);
+      await Bun.sleep(300);
+      write("\r");
+    },
+    async acceptTrust() {
+      write("\x1b[B");
+      await Bun.sleep(200);
+      write("\r");
+    },
+    async screen() {
+      return exited ? null : screenText(out);
+    },
+    clear() {
+      out = "";
+    },
+    kill() {
+      if (exited) return;
+      // Claude leads its own session on the terminal, so its group holds the tools it started too.
+      try {
+        process.kill(-proc.pid, "SIGTERM");
+      } catch {
+        proc.kill("SIGTERM");
+      }
+      const hard = setTimeout(() => {
+        if (exited) return;
+        try {
+          process.kill(-proc.pid, "SIGKILL");
+        } catch {
+          proc.kill("SIGKILL");
+        }
+      }, 2000);
+      hard.unref?.();
+      proc.terminal?.close();
+    },
+  };
+}
+
+/**
+ * tmux argv, for Bun builds without a built-in terminal. The command runs through `env -u` because the
+ * tmux server's global environment may come from a board run too, so unsetting only our own spawn env isn't enough.
+ */
+export function tmuxArgs(o: { name: string; cwd: string; bin: string; sessionId: string; model: string; prompt: string }): string[] {
+  return [
+    "tmux", "new-session", "-d", "-s", o.name, "-x", "200", "-y", "50", "-c", o.cwd,
+    "env", ...[...PARENT_MARKERS].flatMap((k) => ["-u", k]), "CLAUDE_CODE_ARTIFACT_AUTO_OPEN=0",
+    ...claudeArgs(o),
+  ];
 }
 
 async function tmux(args: string[]): Promise<{ code: number; out: string }> {
@@ -153,65 +285,132 @@ async function tmux(args: string[]): Promise<{ code: number; out: string }> {
   return { code: await p.exited, out };
 }
 
+async function startTmux(o: StartOptions): Promise<HelperSession | string> {
+  const name = `${TMUX_PREFIX}${o.sessionId.slice(0, 8)}`;
+  const p = Bun.spawn(tmuxArgs({ ...o, name }), { env: o.env, stdout: "ignore", stderr: "pipe" });
+  const err = await new Response(p.stderr).text();
+  if ((await p.exited) !== 0) return `Could not start tmux to publish: ${err.trim()}`;
+  return {
+    async type(text) {
+      await tmux(["send-keys", "-t", name, "-l", text]);
+      await Bun.sleep(300);
+      await tmux(["send-keys", "-t", name, "Enter"]);
+    },
+    async acceptTrust() {
+      await tmux(["send-keys", "-t", name, "Down"]);
+      await Bun.sleep(200);
+      await tmux(["send-keys", "-t", name, "Enter"]);
+    },
+    async screen() {
+      const pane = await tmux(["capture-pane", "-p", "-t", name]);
+      if (pane.code !== 0) return null;
+      return pane.out;
+    },
+    clear() {
+      // capture-pane shows the live screen, which redraws itself; nothing to forget.
+    },
+    kill() {
+      Bun.spawnSync(["tmux", "kill-session", "-t", name], { stdout: "ignore", stderr: "ignore" });
+    },
+  };
+}
+
+/**
+ * Removes `ckanban-artifact-*` tmux sessions older versions may have left behind. Only when this Bun has a
+ * built-in terminal, and only ones older than any job may run, since an older ckanban (another profile's daemon,
+ * an old CLI) may still be publishing through tmux.
+ */
+/** Longer than any job's timeout. */
+const LEFTOVER_AGE_S = 15 * 60;
+
+export async function cleanupTmuxLeftovers(): Promise<void> {
+  if (!ptySupported() || !Bun.which("tmux")) return;
+  try {
+    const ls = await tmux(["list-sessions", "-F", "#{session_name} #{session_created}"]);
+    if (ls.code !== 0) return;
+    const before = Date.now() / 1000 - LEFTOVER_AGE_S;
+    for (const line of ls.out.split("\n")) {
+      const [name, created] = line.split(" ");
+      if (name?.startsWith(TMUX_PREFIX) && Number(created) < before) await tmux(["kill-session", "-t", name]);
+    }
+  } catch {}
+}
+
 export async function runArtifactJob(job: ArtifactJob, o: RunOptions = {}): Promise<ArtifactOutcome> {
-  if (!Bun.which("tmux")) return { ok: false, error: "tmux is required for artifact publishing. Install it with: brew install tmux" };
+  const baseEnv = o.env ?? process.env;
+  const pty = o.pty ?? ptySupported();
+  if (!pty && !Bun.which("tmux", { PATH: baseEnv.PATH ?? "" })) {
+    return { ok: false, error: ERRORS.noRuntime };
+  }
   const cwd = o.cwd ?? join(homedir(), ".claude-kanban", "artifact-helper");
   mkdirSync(cwd, { recursive: true });
   const sessionId = crypto.randomUUID();
-  const name = `${TMUX_PREFIX}${sessionId.slice(0, 8)}`;
   const timeoutMs = o.timeoutMs ?? 180_000;
   const pollMs = o.pollMs ?? 1000;
+  const env = helperEnv(baseEnv);
+  const configDir = baseEnv.CLAUDE_CONFIG_DIR;
+  const prompts = jobPrompts(job);
+  const start = { bin: o.bin ?? "claude", cwd, sessionId, model: o.model ?? "haiku", prompt: prompts[0], env };
 
-  const kill = () => {
-    Bun.spawnSync(["tmux", "kill-session", "-t", name], { stdout: "ignore", stderr: "ignore" });
-  };
+  const session = pty ? startPty(start) : await startTmux(start);
+  if (typeof session === "string") return { ok: false, error: session };
   const onSignal = () => {
-    kill();
+    session.kill();
     process.exit(130);
   };
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
   try {
-    const prompts = jobPrompts(job);
     // Each step's outcome is what that turn's tool call returned; only the last one is the job's.
     const steps: ArtifactJob["kind"][] = prompts.map((_, i) => (i < prompts.length - 1 ? "read" : job.kind));
     let step = 0;
-    const [cmd, ...args] = tmuxArgs({ name, cwd, bin: o.bin ?? "claude", sessionId, model: o.model ?? "haiku", prompt: prompts[0] });
-    const p = Bun.spawn([cmd, ...args], { env: helperEnv(process.env), stdout: "ignore", stderr: "pipe" });
-    const err = await new Response(p.stderr).text();
-    if ((await p.exited) !== 0) return { ok: false, error: `could not start tmux: ${err.trim()}` };
-
+    // Once Claude writes its transcript it got past startup, so a login screen is no longer the question.
+    let started = false;
+    const transcript = () => {
+      const file = findSessionFile(sessionId, { configDir });
+      if (file) started = true;
+      return file ? findOutcome(readFileSync(file, "utf8"), steps[step]) : null;
+    };
     const deadline = Date.now() + timeoutMs;
     let trusted = false;
     while (Date.now() < deadline) {
       await Bun.sleep(pollMs);
-      const file = findSessionFile(sessionId);
-      if (file) {
-        const outcome = findOutcome(readFileSync(file, "utf8"), steps[step]);
-        if (outcome && (!outcome.ok || step === prompts.length - 1)) return outcome;
-        if (outcome) {
-          step++;
-          await tmux(["send-keys", "-t", name, "-l", prompts[step]]);
-          await Bun.sleep(300);
-          await tmux(["send-keys", "-t", name, "Enter"]);
-        }
+      const outcome = transcript();
+      if (outcome && (!outcome.ok || step === prompts.length - 1)) return friendly(outcome);
+      if (outcome) {
+        step++;
+        await session.type(prompts[step]);
+        continue;
       }
-      const pane = await tmux(["capture-pane", "-p", "-t", name]);
-      if (pane.code !== 0) return { ok: false, error: "helper Claude session exited before the artifact was done (is Claude Code logged in with /login?)" };
-      const state = paneState(pane.out);
+      const screen = await session.screen();
+      if (screen === null) {
+        // It may have written its answer just before it closed.
+        const last = transcript();
+        if (last && (!last.ok || step === prompts.length - 1)) return friendly(last);
+        return { ok: false, error: ERRORS.exited };
+      }
+      const state = paneState(screen, prompts);
       if (state === "trust" && !trusted) {
         trusted = true;
-        await tmux(["send-keys", "-t", name, "Down"]);
-        await Bun.sleep(200);
-        await tmux(["send-keys", "-t", name, "Enter"]);
+        session.clear();
+        await session.acceptTrust();
       } else if (state === "bypass") {
-        return { ok: false, error: "Claude Code asks to confirm bypass-permissions mode. Run `claude --permission-mode bypassPermissions` once in a terminal and accept, then retry." };
+        return { ok: false, error: ERRORS.bypass };
+      } else if (state === "login" && !started) {
+        return { ok: false, error: ERRORS.login };
       }
     }
-    return { ok: false, error: `timed out after ${Math.round(timeoutMs / 1000)}s waiting for the helper Claude session` };
+    return { ok: false, error: ERRORS.timeout(Math.round(timeoutMs / 1000), job.kind) };
   } finally {
-    kill();
+    session.kill();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
   }
+}
+
+/** Plain wording for errors the helper session reports. */
+function friendly(outcome: ArtifactOutcome): ArtifactOutcome {
+  if (outcome.ok) return outcome;
+  if (LOGIN.test(outcome.error)) return { ok: false, error: ERRORS.login };
+  return outcome;
 }
