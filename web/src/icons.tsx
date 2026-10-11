@@ -42,6 +42,8 @@ export const TeamIcon = (p: IconProps) => svg(<><circle cx="6" cy="5.4" r="2.2" 
 export const RefreshIcon = (p: IconProps) => svg(<><path d="M13 8a5 5 0 1 1-1.5-3.6" /><path d="M13 2.5v3h-3" /></>, p);
 export const KeyboardIcon = (p: IconProps) => svg(<><rect x="1.8" y="4" width="12.4" height="8" rx="1.5" /><path d="M4.5 6.6h.01M7 6.6h.01M9.5 6.6h.01M12 6.6h.01M5 9.4h6" /></>, p);
 /** A shared device or other exclusive resource a ticket needs (Ticket.needs). */
+export const NowIcon = (p: IconProps) => svg(<><circle cx="8" cy="8" r="6.2" /><circle cx="8" cy="8" r="2.2" fill="currentColor" /></>, p);
+export const BoardIcon = (p: IconProps) => svg(<><rect x="2" y="2.5" width="3.4" height="11" rx="1" /><rect x="6.3" y="2.5" width="3.4" height="7.5" rx="1" /><rect x="10.6" y="2.5" width="3.4" height="9" rx="1" /></>, p);
 export const DeviceIcon = (p: IconProps) => svg(<><rect x="4.5" y="1.8" width="7" height="12.4" rx="1.6" /><path d="M7.2 11.8h1.6" /></>, p);
 export const GearIcon = (p: IconProps) => svg(<><circle cx="8" cy="8" r="2.2" /><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7L3.6 3.6" /></>, p);
 export const ClockIcon = (p: IconProps) => svg(<><circle cx="8" cy="8" r="6.2" /><path d="M8 4.6V8l2.4 1.6" /></>, p);

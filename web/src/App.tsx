@@ -3,9 +3,13 @@ import { api, copy, COLUMNS, onReconnect, subscribe, waitsForSlot, type Health, 
 import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
-import { HeaderMenu } from "./HeaderMenu";
-import { AtIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, GearIcon, KeyboardIcon, Logo, PlugIcon, SearchIcon, TeamIcon, TerminalIcon } from "./icons";
+import { HeaderMenu, type MenuItem } from "./HeaderMenu";
+import { AtIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, DeviceIcon, GearIcon, KeyboardIcon, Logo, PlugIcon, PlusIcon, SearchIcon, TeamIcon, TerminalIcon } from "./icons";
 import { Inbox } from "./Inbox";
+import { NowView } from "./NowView";
+import { PhoneAccessDialog } from "./PhoneAccessDialog";
+import { MoreSheet, PhoneNav, type PhoneTab } from "./PhoneNav";
+import { usePhone } from "./usePhone";
 import { UsagePill } from "./UsagePill";
 import { anyLayerOpen } from "./layers";
 import { Board } from "./Board";
@@ -170,6 +174,11 @@ export function App() {
   const [schedulesOpen, setSchedulesOpen] = useState(false);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const schedulesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const phone = usePhone();
+  // Phone home: the Now list or the board (bottom tab bar); More opens the header menu as a sheet.
+  const [phoneTab, setPhoneTab] = useState<PhoneTab>("now");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [phoneAccess, setPhoneAccess] = useState(false);
   const [version, setVersion] = useState<{ version: string; latest: string | null; updateAvailable: boolean } | null>(null);
 
   const loadProfiles = useCallback(async () => {
@@ -539,6 +548,33 @@ export function App() {
     return next;
   });
 
+  const menuItems: MenuItem[] = [
+          ...(profile ? [{
+            label: "Schedules", icon: <ClockIcon />, onSelect: () => setSchedulesOpen(true),
+            title: scheduleErrors ? `${scheduleErrors} schedule${scheduleErrors === 1 ? "" : "s"} could not start their last run` : "Recurring tickets on a cron schedule",
+            badge: scheduleErrors > 0 ? <span className="need-chip">{scheduleErrors}</span>
+              : schedules && schedules.length > 0 ? <span className="muted small">{schedules.filter((s) => s.enabled).length} active</span> : null,
+          }, {
+            label: "Snippets", icon: <AtIcon />, onSelect: () => setSnippetsOpen(true),
+            title: "Reusable prompt text: type @name in a ticket or the chat to insert it",
+          }] : []),
+          {
+            label: "Connections", icon: <PlugIcon />, onSelect: () => setConnections(true), separator: true,
+            title: mcpAttention ? `${mcpAttention} MCP server${mcpAttention === 1 ? "" : "s"} failed or need you to log in again` : "Claude Code MCP servers",
+            badge: mcpAttention > 0 ? <span className="need-chip">{mcpAttention}</span> : null,
+          },
+          ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
+          { label: "Phone access", icon: <DeviceIcon />, onSelect: () => setPhoneAccess(true), title: "Open this board from your phone over Tailscale" },
+          { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
+          { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
+  ];
+  const menuAlert = scheduleErrors > 0 || mcpAttention > 0;
+  const menuFooter = version && version.version !== "dev" ? `ckanban v${version.version} · by Leo` : "by Leo";
+  const openFrom = (board: string, id: string) => {
+    if (board !== slug) setSlug(board);
+    openTicket(id, board);
+  };
+
   // ⌘K actions run the same handlers as their buttons and menu items.
   const commandActions: CommandAction[] = [
     ...(profile ? [
@@ -557,6 +593,7 @@ export function App() {
     { id: "usage", label: "Usage", run: () => setUsageRequest(Date.now()) },
     ...(profile ? [{ id: "settings", label: "Board settings", icon: <GearIcon size={14} />, run: () => setProfileDialog("edit") }] : []),
     { id: "new-board", label: "New board", run: () => setProfileDialog("new") },
+    { id: "phone", label: "Phone access", icon: <DeviceIcon size={14} />, hint: "open the board from your phone", run: () => setPhoneAccess(true) },
     { id: "shortcuts", label: "Keyboard shortcuts", keys: ["?"], icon: <KeyboardIcon size={14} />, run: () => setShortcuts(true) },
     { id: "bug", label: "Report a bug", icon: <BugIcon size={14} />, run: () => setBugReport(true) },
   ];
@@ -616,10 +653,7 @@ export function App() {
           </span>
         )}
         <div className="spacer" />
-        <Inbox items={inbox} openRequest={inboxRequest} onPick={(i) => {
-          if (i.profile !== slug) setSlug(i.profile);
-          openTicket(i.id, i.profile);
-        }} />
+        <Inbox items={inbox} openRequest={inboxRequest} onPick={(i) => openFrom(i.profile, i.id)} />
         {profile && (
           <button className={`btn ghost icon-label${termOpen ? " on" : ""}`}
             onClick={() => (termOpen ? setDockOpen(false) : openDockOn(dockShown === "files" ? "files" : "terminal"))}
@@ -641,29 +675,20 @@ export function App() {
           </button>
         )}
         {profile && (
-          <button className="btn primary" onClick={() => setNewTicket(true)} title="New ticket (N)">
+          <button className="btn ghost phone-only topbar-icon" aria-label="Search tickets"
+            onClick={() => { setPhoneTab("board"); requestAnimationFrame(() => searchRef.current?.focus()); }}>
+            <SearchIcon size={18} />
+          </button>
+        )}
+        {profile && (
+          <button className="btn primary phone-only topbar-icon" aria-label="New ticket" onClick={() => setNewTicket(true)}><PlusIcon size={18} /></button>
+        )}
+        {profile && (
+          <button className="btn primary desktop-only" onClick={() => setNewTicket(true)} title="New ticket (N)">
             New ticket<KeyHint keys="N" />
           </button>
         )}
-        <HeaderMenu alert={scheduleErrors > 0 || mcpAttention > 0} keyHint={<KeyHint keys="?" />} items={[
-          ...(profile ? [{
-            label: "Schedules", icon: <ClockIcon />, onSelect: () => setSchedulesOpen(true),
-            title: scheduleErrors ? `${scheduleErrors} schedule${scheduleErrors === 1 ? "" : "s"} could not start their last run` : "Recurring tickets on a cron schedule",
-            badge: scheduleErrors > 0 ? <span className="need-chip">{scheduleErrors}</span>
-              : schedules && schedules.length > 0 ? <span className="muted small">{schedules.filter((s) => s.enabled).length} active</span> : null,
-          }, {
-            label: "Snippets", icon: <AtIcon />, onSelect: () => setSnippetsOpen(true),
-            title: "Reusable prompt text: type @name in a ticket or the chat to insert it",
-          }] : []),
-          {
-            label: "Connections", icon: <PlugIcon />, onSelect: () => setConnections(true), separator: true,
-            title: mcpAttention ? `${mcpAttention} MCP server${mcpAttention === 1 ? "" : "s"} failed or need you to log in again` : "Claude Code MCP servers",
-            badge: mcpAttention > 0 ? <span className="need-chip">{mcpAttention}</span> : null,
-          },
-          ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
-          { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
-          { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
-        ]} footer={version && version.version !== "dev" ? `ckanban v${version.version} · by Leo` : "by Leo"} />
+        <HeaderMenu alert={menuAlert} keyHint={<KeyHint keys="?" />} items={menuItems} footer={menuFooter} />
       </header>
 
       {version?.updateAvailable && !dismissed.has(updateKey) && (
@@ -705,7 +730,9 @@ export function App() {
           </button>
         </div>
       ) : (
-        <>
+        phone && phoneTab === "now" ? (
+          <NowView inbox={inbox} tickets={tickets} slug={profile.slug} onOpen={openFrom} onMarkDone={(id) => void move(id, "done")} />
+        ) : <>
           <div className="board-bar">
             <div className="search">
               <SearchIcon className="icon search-icon" />
@@ -741,6 +768,12 @@ export function App() {
             huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} />
         </>
       )}
+      {phone && profile && (
+        <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={needYou} scheduleAlert={scheduleErrors > 0} onSchedules={() => setSchedulesOpen(true)}
+          onMore={() => setMoreOpen(true)} moreAlert={mcpAttention > 0} />
+      )}
+      {moreOpen && <MoreSheet items={menuItems.filter((i) => i.label !== "Schedules" && i.label !== "Keyboard shortcuts")} footer={menuFooter} onClose={() => setMoreOpen(false)} />}
+      {phoneAccess && <PhoneAccessDialog onClose={() => setPhoneAccess(false)} />}
 
       {dockOpen && profile && (
         <Suspense fallback={null}>

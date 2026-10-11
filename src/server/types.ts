@@ -311,6 +311,8 @@ export interface Comment {
 export interface Config {
   port: number;
   prPollMinutes: number;
+  /** Loopback port `tailscale serve` points at for phone access (default port + 1, see remote.ts). */
+  remotePort?: number;
 }
 
 export interface OutputFile {

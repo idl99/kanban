@@ -7,6 +7,7 @@ import { Huddles } from "./huddle";
 import { withUtf8Locale } from "./locale";
 import { McpManager } from "./mcp";
 import { startPoller } from "./prpoller";
+import { remoteListenPort } from "./remote";
 import { Scheduler } from "./scheduler";
 import { LimitWatcher } from "./limit";
 import { startHuddleSessionWatcher } from "./huddle-session";
@@ -41,7 +42,8 @@ export async function startDaemon(): Promise<void> {
   const huddles = new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
-  const server = createServer({ store, bus, board, port, webDir, sessions, terminals, shells, mcp, scheduler, huddles, assets: WEB_ASSETS, restart });
+  const remotePort = remoteListenPort(port, config.remotePort);
+  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, huddles, assets: WEB_ASSETS, restart });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   board.recover();
   huddles.recover();
@@ -69,6 +71,7 @@ export async function startDaemon(): Promise<void> {
     stopMcp();
     await Promise.all([board.shutdown(), huddles.shutdown()]);
     server.stop(true);
+    server.remoteServer?.stop(true);
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

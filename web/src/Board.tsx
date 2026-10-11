@@ -4,13 +4,14 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BOARD_COLUMNS, type Huddle, type Status, type Ticket } from "./api";
 import { Card } from "./Card";
 import { groupByColumn } from "./columns";
 import { cardHuddleBadge } from "./huddleText";
 import { CollapseIcon, PlusIcon, SparkIcon } from "./icons";
 import { useNow } from "./useNow";
+import { usePhone } from "./usePhone";
 import { toast } from "./toast";
 
 const COLLAPSED_KEY = "ckanban.collapsedColumns";
@@ -193,8 +194,10 @@ export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restar
   const ctx = useMemo(() => ({
     huddles, onOpenHuddle, limit: slug ? { slug, onError: (msg: string) => toast(msg, { tone: "error" }) } : undefined,
   }), [huddles, onOpenHuddle, slug]);
+  const phone = usePhone();
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    // Phones: long-press picks a card up, so a swipe still scrolls the board.
+    useSensor(PointerSensor, { activationConstraint: phone ? { delay: 300, tolerance: 8 } : { distance: 5 } }),
     // Enter is kept for opening the card, so only Space picks up / drops.
     useSensor(KeyboardSensor, {
       coordinateGetter: keyboardCoordinates,
@@ -253,12 +256,43 @@ export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restar
 
   const dragging = tickets.find((t) => t.id === dragId);
 
+  // Phones show one column at a time (scroll snap): the chips jump to a column and follow the swipe.
+  const boardRef = useRef<HTMLElement>(null);
+  const [shownCol, setShownCol] = useState(0);
+  const onBoardScroll = () => {
+    const el = boardRef.current;
+    if (!el) return;
+    const left = el.getBoundingClientRect().left;
+    const dist = [...el.querySelectorAll<HTMLElement>(":scope > .column")].map((c) => Math.abs(c.getBoundingClientRect().left - left));
+    setShownCol(dist.indexOf(Math.min(...dist)));
+  };
+  const jumpTo = (i: number) => {
+    const el = boardRef.current;
+    const col = el?.querySelectorAll<HTMLElement>(":scope > .column")[i];
+    if (!el || !col) return;
+    const pad = parseFloat(getComputedStyle(el).paddingLeft) || 0;
+    el.scrollTo({ left: el.scrollLeft + col.getBoundingClientRect().left - el.getBoundingClientRect().left - pad, behavior: "smooth" });
+    setShownCol(i);
+  };
+
   return (
     <DndContext sensors={sensors} collisionDetection={collision} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setDragId(null)}>
-      <main className="board">
+      {phone && (
+        <nav className="col-jump" aria-label="Columns">
+          {BOARD_COLUMNS.map((c, i) => {
+            const n = (byColumn.get(c.id)?.length ?? 0) + (c.id === "in_progress" ? byColumn.get("ready")?.length ?? 0 : 0);
+            return (
+              <button key={c.id} className={`chip${i === shownCol ? " on" : ""}`} aria-current={i === shownCol || undefined} onClick={() => jumpTo(i)}>
+                {c.label}<span className="chip-count">{n}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
+      <main className="board" ref={boardRef} onScroll={phone ? onBoardScroll : undefined}>
         {BOARD_COLUMNS.map((c) => (
           <Column key={c.id} {...c} tickets={byColumn.get(c.id) ?? []} queue={c.id === "in_progress" ? byColumn.get("ready") : undefined} held={restartPending} onOpen={onOpen} onAdd={onAdd} filtered={filtered} ctx={ctx}
-            collapsed={collapsed.has(c.id)} onCollapse={(v) => setColumnCollapsed(c.id, v)} />
+            collapsed={!phone && collapsed.has(c.id)} onCollapse={(v) => setColumnCollapsed(c.id, v)} />
         ))}
       </main>
       <DragOverlay>{dragging ? <Card ticket={dragging} dragging huddle={cardHuddleBadge(huddles, dragging.id)} /> : null}</DragOverlay>

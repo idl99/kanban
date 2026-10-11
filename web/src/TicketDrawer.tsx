@@ -9,7 +9,7 @@ import { Changes, useTicketDiff } from "./Changes";
 import { Chat, useStop } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DescriptionEditor, useDescriptionCommands } from "./DescriptionEditor";
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon, CloseIcon, ExternalIcon, FileTextIcon, LinkIcon, SparkIcon } from "./icons";
+import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon, CloseIcon, ExternalIcon, FileTextIcon, LinkIcon, SparkIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
 import { useFocusTrap, useLayer } from "./layers";
 import { isTyping, nextStep, panelStep } from "./keynav";
@@ -30,6 +30,7 @@ import { useHuddle, members } from "./huddle";
 import { HuddlePanel } from "./HuddlePanel";
 import type { HuddleSeed, TeamRequest } from "./Team";
 import { StarToggle } from "./StarToggle";
+import { usePhone } from "./usePhone";
 
 // v2: widths saved under the old 80% default are dropped once so the new default shows.
 const WIDTH_KEY = "ckanban.panelWidth.v2";
@@ -264,13 +265,20 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
       return true;
     }
   });
-  const setDetailsOpen = (fn: (v: boolean) => boolean) => setDetailsOpenState((v) => {
-    const next = fn(v);
-    try {
-      localStorage.setItem("ckanban.detailsOpen", next ? "1" : "0");
-    } catch {}
-    return next;
-  });
+  // Phones open on the chat full screen; Details is a toggle there and isn't remembered.
+  const phone = usePhone();
+  const [phoneDetails, setPhoneDetails] = useState(false);
+  const setDetailsOpen = (fn: (v: boolean) => boolean) => {
+    if (phone) return setPhoneDetails(fn);
+    setDetailsOpenState((v) => {
+      const next = fn(v);
+      try {
+        localStorage.setItem("ckanban.detailsOpen", next ? "1" : "0");
+      } catch {}
+      return next;
+    });
+  };
+  const detailsShown = phone ? phoneDetails : detailsOpen;
   useEffect(() => {
     // ⌘\ / Ctrl+\ toggles the details column, like a sidebar.
     const onKey = (e: KeyboardEvent) => {
@@ -281,7 +289,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [phone]);
   const titleRef = useRef<HTMLInputElement>(null);
   // Leaving for the neighbouring ticket: keep a title edit, and don't drop an unsaved description edit.
   const step = (id: string | null | undefined) => {
@@ -316,7 +324,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const bodyRef = useRef<HTMLDivElement>(null);
   const side = useSidebarWidth(bodyRef);
   // Opens fitted to the sidebar plus the chat's reading column; dragging can make it wider.
-  const panel = usePanelWidth((detailsOpen ? side.pref : 0) + CHAT_ROOM);
+  const panel = usePanelWidth((detailsShown ? side.pref : 0) + CHAT_ROOM);
   const { dragging, handle } = panel;
   const width = (tab === "changes" || tab === "huddle") && !panel.custom ? clampWidth(CHANGES_WIDTH) : panel.width;
   const [descScrolled, setDescScrolled] = useState(false);
@@ -447,14 +455,15 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           title="Drag to resize · double-click to reset" {...handle} />
 
         <header className="panel-head">
-          <button className={`icon-btn sidebar-toggle ${detailsOpen ? "on" : ""}`} onClick={() => setDetailsOpen((v) => !v)}
-            aria-label={detailsOpen ? "Hide details" : "Show details"} aria-pressed={detailsOpen}
-            title={`${detailsOpen ? "Hide" : "Show"} details (⌘\\)`}>
+          {phone && <button className="icon-btn phone-back" onClick={onClose} aria-label="Back to the board"><ChevronLeftIcon size={22} /></button>}
+          <button className={`icon-btn sidebar-toggle ${detailsShown ? "on" : ""}`} onClick={() => setDetailsOpen((v) => !v)}
+            aria-label={detailsShown ? "Hide details" : "Show details"} aria-pressed={detailsShown}
+            title={`${detailsShown ? "Hide" : "Show"} details (⌘\\)`}>
             <KeyHint keys="⌘\" />
             <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden>
               <rect x="2" y="3" width="14" height="12" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
               <line x1="7" y1="3.5" x2="7" y2="14.5" stroke="currentColor" strokeWidth="1.5" />
-              {detailsOpen && <rect x="2.75" y="3.75" width="3.5" height="10.5" rx="1.5" fill="currentColor" opacity="0.35" />}
+              {detailsShown && <rect x="2.75" y="3.75" width="3.5" height="10.5" rx="1.5" fill="currentColor" opacity="0.35" />}
             </svg>
           </button>
           <StarToggle on={!!ticket.important} onChange={(important) => {
@@ -484,6 +493,10 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               <KeyHint keys="↑↓ J K" />
             </span>
           )}
+          {phone && (
+            <Select className="phone-move" ariaLabel="Move to column" value={ticket.status} onChange={(s) => setStatus(s as Status)} renderValue={() => "Move"}
+              options={COLUMNS.map((c) => ({ value: c.id, label: c.label, hint: c.hint, disabled: c.id === "in_progress" && !working }))} />
+          )}
           <TicketMenu ticket={ticket} working={working} live={!!(ticket.terminalOpen || linked?.live)}
             linkedLabel={ticket.workdir && ticket.sessionId ? (linked ? sessionLabel(linked) : ticket.sessionId.slice(0, 8)) : null}
             onBranch={() => setConfirmBranch(true)}
@@ -492,10 +505,10 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             onCheckPr={() => act(() => api.checkPr(slug, ticket.id))}
             onReportBug={() => setReportingBug(true)}
             onDelete={() => setConfirmDelete(true)} />
-          <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /><KeyHint keys="Esc" /></button>
+          {!phone && <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /><KeyHint keys="Esc" /></button>}
         </header>
 
-        <div ref={bodyRef} className={`panel-body ${detailsOpen ? "" : "details-closed"} ${side.dragging ? "resizing" : ""}`}
+        <div ref={bodyRef} className={`panel-body ${detailsShown ? "" : "details-closed"} ${side.dragging ? "resizing" : ""}`}
           style={{ "--side-w": `${side.width}px` } as React.CSSProperties}>
           <div className="panel-details">
             <div className="details-pinned">
@@ -624,7 +637,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             </section>
           </div>
 
-          {detailsOpen && (
+          {detailsShown && (
             <div className="sidebar-resize" role="separator" aria-orientation="vertical" aria-label="Resize details"
               aria-valuenow={side.width} tabIndex={0} title="Drag to resize · double-click to reset" {...side.handle} />
           )}

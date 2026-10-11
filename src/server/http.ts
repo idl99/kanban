@@ -23,6 +23,7 @@ import { BugReportError, draftReport, submitReport, type BugBlockId, type BugSou
 import { AttachmentError, attachmentFile, attachmentType, IMAGE_TYPES, saveAttachment } from "./attachments";
 import { FileError, listDir, openWithSystem, readFileForView } from "./files";
 import { McpError, McpManager } from "./mcp";
+import { LISTENER_HEADER, LOGIN_HEADER, qrSvg, RemoteAccess, RemoteError, remoteUrl, type RemoteConfig } from "./remote";
 import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
 import { SessionCache } from "./session";
 import { ptySupported, ShellManager, type PtyKind, type Shell } from "./shell";
@@ -66,6 +67,10 @@ export interface ServerDeps {
   claudeLogs?: ClaudeLogIndex;
   /** Publishes output files as claude.ai pages (tests pass a fake). */
   publishArtifact?: (job: ArtifactJob) => Promise<ArtifactOutcome>;
+  /** Phone access over Tailscale (tests pass one with a fake tailscale runner). */
+  remote?: RemoteAccess;
+  /** Loopback port `tailscale serve` points at (remote.ts); 0 picks a free one; omitted: no phone access listener. */
+  remotePort?: number;
 }
 
 /** A Share menu publish in progress, or the error of the last one, per output file. Not persisted. */
@@ -102,20 +107,44 @@ const OUTPUT_IMAGE_TYPES: Record<string, string> = {
   jpeg: "image/jpeg",
 };
 
-export function isAllowedRequest(req: Request, port: number): boolean {
+/**
+ * Which listener a request came in on. local: the board's own port, for this Mac. remote: a second loopback port that
+ * only `tailscale serve` points at (phone access, remote.ts), so a tailnet request can't pass as local by sending
+ * `Host: localhost` (serve passes the client's Host header through).
+ */
+export type Listener = "local" | "remote";
+
+/**
+ * Why a request is refused, or null when allowed. Local: Host localhost/127.0.0.1 on our port (DNS rebinding) and,
+ * for mutations, a same-origin Origin (CSRF). Remote: only while phone access is on, the tailnet host, from the
+ * allowed Tailscale login only (`tailscale serve` sets the header and drops any copy the client sent).
+ */
+export function requestRefusal(req: Request, port: number, remote?: RemoteConfig | null, via: Listener = "local"): string | null {
   const host = req.headers.get("host") ?? new URL(req.url).host;
-  if (!LOCAL_HOSTS.some((h) => host === `${h}:${port}`)) return false;
   const origin = req.headers.get("origin");
-  if (req.method !== "GET" && req.method !== "HEAD" && origin) {
-    if (!LOCAL_HOSTS.some((h) => origin === `http://${h}:${port}`)) return false;
+  const mutation = req.method !== "GET" && req.method !== "HEAD";
+  if (via === "local") {
+    if (!LOCAL_HOSTS.some((h) => host === `${h}:${port}`)) return "forbidden";
+    if (mutation && origin && !LOCAL_HOSTS.some((h) => origin === `http://${h}:${port}`)) return "forbidden";
+    return null;
   }
-  return true;
+  if (!remote) return "forbidden: phone access is off (run `ckanban remote on` on the Mac)";
+  if (host !== remote.host && host !== `${remote.host}:443`) return "forbidden";
+  const login = req.headers.get(LOGIN_HEADER)?.trim().toLowerCase();
+  if (!login || login !== remote.allowedLogin.toLowerCase()) return "forbidden: open this board signed in to Tailscale as its owner";
+  if (mutation && origin && origin !== remoteUrl(remote.host)) return "forbidden";
+  return null;
+}
+
+export function isAllowedRequest(req: Request, port: number, remote?: RemoteConfig | null, via: Listener = "local"): boolean {
+  return requestRefusal(req, port, remote, via) === null;
 }
 
 /** WebSocket upgrades are GETs, so they need their own Origin check (browsers always send one). */
-export function isAllowedSocket(req: Request, port: number): boolean {
+export function isAllowedSocket(req: Request, port: number, remote?: RemoteConfig | null, via: Listener = "local"): boolean {
   const origin = req.headers.get("origin");
-  return isAllowedRequest(req, port) && !!origin && LOCAL_HOSTS.some((h) => origin === `http://${h}:${port}`);
+  if (!isAllowedRequest(req, port, remote, via) || !origin) return false;
+  return via === "local" ? LOCAL_HOSTS.some((h) => origin === `http://${h}:${port}`) : origin === remoteUrl(remote!.host);
 }
 
 function json(data: unknown, status = 200): Response {
@@ -146,6 +175,11 @@ export function createServer(deps: ServerDeps) {
   const usage = new UsageCache(deps.usage ?? fetchUsage, (r) => recordWindow(windowsFile, r));
   const claudeLogs = deps.claudeLogs ?? new ClaudeLogIndex();
   const publishArtifact = deps.publishArtifact ?? ((job: ArtifactJob) => runArtifactJob(job));
+  // No listener (not bound): 0, so `on` refuses instead of pointing serve at whatever holds the port.
+  const remote = deps.remote ?? new RemoteAccess(store.root, () => remoteServer?.port ?? 0);
+  // The listener each request came in on, for the routes that care (WebSocket upgrades, /api/remote).
+  const via = new WeakMap<Request, { listener: Listener; srv: import("bun").Server<ShellSocket> }>();
+  const listenerOf = (req: Request): Listener => via.get(req)?.listener ?? "local";
   // "<profile>/<ticket>" -> jobs by output file.
   const shareJobs = new Map<string, Map<string, ShareJob>>();
 
@@ -323,6 +357,22 @@ export function createServer(deps: ServerDeps) {
     // Only JSON mutations: blocks HTML <form> posts (text/plain, urlencoded) that skip CORS preflight.
     if ((m === "POST" || m === "PATCH" || m === "PUT") && type !== "application/json") {
       throw new HttpError(415, "content-type must be application/json");
+    }
+
+    // Phone access (remote.ts): anyone allowed in may see it; only this Mac may turn it on or off.
+    if (parts[0] === "remote" && parts.length === 1) {
+      if (m === "GET") {
+        const st = remote.status();
+        return json({ ...st, qrSvg: st.url ? qrSvg(st.url) : null, local: listenerOf(req) === "local" });
+      }
+      if (m === "POST") {
+        if (listenerOf(req) !== "local") throw new HttpError(403, "phone access can only be changed on this Mac");
+        if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "board runs can't change phone access");
+        const b = await body(req);
+        if (typeof b?.enabled !== "boolean") throw new HttpError(400, "enabled must be true or false");
+        const st = b.enabled ? await remote.on() : await remote.off();
+        return json({ ...st, qrSvg: st.url ? qrSvg(st.url) : null, local: true });
+      }
     }
 
     if (parts[0] === "health" && m === "GET") {
@@ -588,20 +638,20 @@ export function createServer(deps: ServerDeps) {
     // /profiles/:p/shell — WebSocket to the profile's interactive shell
     if (parts[2] === "shell" && parts.length === 3 && m === "GET") {
       if (!ptySupported()) throw new HttpError(501, `terminal needs Bun 1.3.5 or newer (running ${Bun.version})`);
-      if (!isAllowedSocket(req, server.port ?? deps.port)) throw new HttpError(403, "forbidden");
+      if (!isAllowedSocket(req, server.port ?? deps.port, remote.active(), listenerOf(req))) throw new HttpError(403, "forbidden");
       const dim = (k: string, d: number) => Math.min(1000, Math.max(1, Number(url.searchParams.get(k)) || d));
       const data: ShellSocket = { kind: "shell", slug, name: profile.name, cwd: profile.path, cols: dim("cols", 80), rows: dim("rows", 24) };
-      if (server.upgrade(req, { data })) return undefined;
+      if ((via.get(req)?.srv ?? server).upgrade(req, { data })) return undefined;
       throw new HttpError(400, "expected a WebSocket upgrade");
     }
 
     // /profiles/:p/claude — WebSocket to the dock's quick Claude chat (interactive `claude` in the profile folder)
     if (parts[2] === "claude" && parts.length === 3 && m === "GET") {
       if (!ptySupported()) throw new HttpError(501, `terminal needs Bun 1.3.5 or newer (running ${Bun.version})`);
-      if (!isAllowedSocket(req, server.port ?? deps.port)) throw new HttpError(403, "forbidden");
+      if (!isAllowedSocket(req, server.port ?? deps.port, remote.active(), listenerOf(req))) throw new HttpError(403, "forbidden");
       const dim = (k: string, d: number) => Math.min(1000, Math.max(1, Number(url.searchParams.get(k)) || d));
       const data: ShellSocket = { kind: "claude", slug, name: profile.name, cwd: profile.path, cols: dim("cols", 80), rows: dim("rows", 24) };
-      if (server.upgrade(req, { data })) return undefined;
+      if ((via.get(req)?.srv ?? server).upgrade(req, { data })) return undefined;
       throw new HttpError(400, "expected a WebSocket upgrade");
     }
 
@@ -1350,53 +1400,83 @@ export function createServer(deps: ServerDeps) {
     });
   }
 
+  async function handle(req: Request, srv: import("bun").Server<ShellSocket>, listener: Listener): Promise<Response | undefined> {
+    const res = await route(req, srv, listener);
+    if (res && listener === "remote") res.headers.set(LISTENER_HEADER, "remote");
+    return res;
+  }
+
+  async function route(req: Request, srv: import("bun").Server<ShellSocket>, listener: Listener): Promise<Response | undefined> {
+    const refusal = requestRefusal(req, server.port ?? deps.port, remote.active(), listener);
+    if (refusal) return new Response(refusal, { status: 403, headers: { "content-type": "text/plain; charset=utf-8" } });
+    via.set(req, { listener, srv });
+    if (listener === "remote") remote.noteVisit(nowIso());
+    const url = new URL(req.url);
+    if (!url.pathname.startsWith("/api/")) return staticFile(url);
+    try {
+      return (await api(req, url)) as Response;
+    } catch (e) {
+      if (e instanceof HttpError) return json({ error: e.message }, e.status);
+      if (e instanceof ConflictError) return json({ error: e.message }, 409);
+      if (e instanceof McpError) return json({ error: e.message }, e.status);
+      if (e instanceof AgentError) return json({ error: e.message }, e.status);
+      if (e instanceof ScheduleError) return json({ error: e.message }, e.status);
+      if (e instanceof SnippetError) return json({ error: e.message }, e.status);
+      if (e instanceof QuestionError) return json({ error: e.message }, e.status);
+      if (e instanceof HuddleError) return json({ error: e.message }, e.status);
+      if (e instanceof RemoteError) return json({ error: e.message }, e.status);
+      if (e instanceof URIError) return json({ error: "malformed URL" }, 400);
+      console.error(e);
+      return json({ error: (e as Error).message ?? "internal error" }, 500);
+    }
+  }
+
+  const websocket: import("bun").WebSocketHandler<ShellSocket> = {
+    open: (ws) => attachShell(ws),
+    message(ws, raw) {
+      let msg: any;
+      try {
+        msg = JSON.parse(typeof raw === "string" ? raw : raw.toString());
+      } catch {
+        return;
+      }
+      const shell = ws.data.shell;
+      if (msg.type === "input" && typeof msg.data === "string") shell?.write(msg.data);
+      else if (msg.type === "resize") {
+        ws.data.cols = Math.min(1000, Math.max(1, Number(msg.cols) || 80));
+        ws.data.rows = Math.min(1000, Math.max(1, Number(msg.rows) || 24));
+        shell?.resize(ws.data.cols, ws.data.rows);
+      } else if (msg.type === "restart") {
+        // Another tab may already have restarted it: then just join the new shell.
+        ws.send(JSON.stringify({ type: "reset" }));
+        attachShell(ws, shells.current(ws.data.slug, ws.data.kind) === shell, msg.resume === true);
+      }
+    },
+    close: (ws) => ws.data.unsubscribe?.(),
+  };
+
   const server = Bun.serve<ShellSocket>({
     hostname: "127.0.0.1",
     port: deps.port,
     idleTimeout: 0,
-    async fetch(req) {
-      if (!isAllowedRequest(req, server.port ?? deps.port)) return new Response("forbidden", { status: 403 });
-      const url = new URL(req.url);
-      if (!url.pathname.startsWith("/api/")) return staticFile(url);
-      try {
-        return (await api(req, url)) as Response;
-      } catch (e) {
-        if (e instanceof HttpError) return json({ error: e.message }, e.status);
-        if (e instanceof ConflictError) return json({ error: e.message }, 409);
-        if (e instanceof McpError) return json({ error: e.message }, e.status);
-        if (e instanceof AgentError) return json({ error: e.message }, e.status);
-        if (e instanceof ScheduleError) return json({ error: e.message }, e.status);
-        if (e instanceof SnippetError) return json({ error: e.message }, e.status);
-        if (e instanceof QuestionError) return json({ error: e.message }, e.status);
-        if (e instanceof HuddleError) return json({ error: e.message }, e.status);
-        if (e instanceof URIError) return json({ error: "malformed URL" }, 400);
-        console.error(e);
-        return json({ error: (e as Error).message ?? "internal error" }, 500);
-      }
-    },
-    websocket: {
-      open: (ws) => attachShell(ws),
-      message(ws, raw) {
-        let msg: any;
-        try {
-          msg = JSON.parse(typeof raw === "string" ? raw : raw.toString());
-        } catch {
-          return;
-        }
-        const shell = ws.data.shell;
-        if (msg.type === "input" && typeof msg.data === "string") shell?.write(msg.data);
-        else if (msg.type === "resize") {
-          ws.data.cols = Math.min(1000, Math.max(1, Number(msg.cols) || 80));
-          ws.data.rows = Math.min(1000, Math.max(1, Number(msg.rows) || 24));
-          shell?.resize(ws.data.cols, ws.data.rows);
-        } else if (msg.type === "restart") {
-          // Another tab may already have restarted it: then just join the new shell.
-          ws.send(JSON.stringify({ type: "reset" }));
-          attachShell(ws, shells.current(ws.data.slug, ws.data.kind) === shell, msg.resume === true);
-        }
-      },
-      close: (ws) => ws.data.unsubscribe?.(),
-    },
+    fetch: (req, srv) => handle(req, srv, "local"),
+    websocket,
   });
-  return server;
+  // Only `tailscale serve` connects here (it runs on this Mac); every request is checked as a tailnet request.
+  // A busy port only costs phone access, never the board.
+  let remoteServer: import("bun").Server<ShellSocket> | null = null;
+  if (deps.remotePort !== undefined) {
+    try {
+      remoteServer = Bun.serve<ShellSocket>({
+        hostname: "127.0.0.1",
+        port: deps.remotePort,
+        idleTimeout: 0,
+        fetch: (req, srv) => handle(req, srv, "remote"),
+        websocket,
+      });
+    } catch (e) {
+      console.error(`phone access listener on 127.0.0.1:${deps.remotePort} failed: ${(e as Error).message}`);
+    }
+  }
+  return Object.assign(server, { remoteServer });
 }

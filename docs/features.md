@@ -37,6 +37,7 @@ Everything the board does, in depth. Back to the [README](../README.md).
 - **PR tracking and checks**: Review cards with a PR are checked every 5 minutes via `gh`; merged → Done (worktree removed). Cards show chips for checks (passing, failing, pending), conflicts and comments. The ticket's PR box lists every check with a log link, plus mergeability, review and comments. *Send failures to Claude* sends the failing checks' log tails as a chat message. **Merge & done** is enabled only when the PR is open, green, mergeable and has no requested changes; after a confirm the server checks again and runs `gh pr merge --squash --delete-branch` (never `--admin`), then moves the card to Done. The *Has PR* filter shows tickets with an open PR.
 - **Usage limit: continues at reset**: a run that stops on the Claude usage or spend limit isn't marked failed. The card shows *Limit hit · continues at 4:00* and the board sends "continue" a minute after the reset (through the normal run slots). *Continue now* goes at once; *Don't auto-continue* turns it off for that ticket (then it shows *resets 4:00* and counts as needing you). At most 3 automatic continues per ticket per day; any message from you or moving the card cancels the wait.
 - **One-click recovery**: when a ticket's Claude session is lost, *Start fresh session* starts a new one in the same worktree and branch, told the ticket, last result and recent comments and to pick up from git. When the session is open in a terminal, *Take over here* closes it (if it runs in the board's own terminal) and resumes the run; an outside terminal falls back to *Start fresh session*.
+- **Phone access**: `ckanban remote on` (or *⋯ → Phone access*, which also shows a QR code) runs `tailscale serve --bg --https=443` so `https://<your-mac>.<tailnet>.ts.net` reaches the board from devices on your tailnet. Serve points at a second loopback port of the daemon (the board port + 1, e.g. 7778; `remotePort` in `config.json` or `CKANBAN_REMOTE_PORT` to change it) where every request counts as a tailnet request, so a forged `Host: localhost` can't pass as local. It accepts only the tailnet host, only from the Tailscale login that turned it on (the `Tailscale-User-Login` header `tailscale serve` sets) and only while enabled; `ckanban remote off` removes the serve mapping, `ckanban remote status` shows the URL. Needs MagicDNS and HTTPS certificates on for the tailnet; tagged devices aren't supported. Only the Mac can turn it on or off. Narrow screens (≤720px) get a phone layout: **Now** lists what needs you on any board (with *Answer* / *Open* / *Mark done*), what runs and what's in Planning; a bottom bar switches to the **Board** (one column at a time, column chips, long-press to drag), **Schedules** and **More** (the ⋯ menu). Tickets open full screen with *Move* and a *Details* toggle. The board is installable (*Add to Home Screen*): a web manifest plus a service worker that keeps the app shell, never board data.
 - **Huddles**: several Claude sessions work one ticket together. See [Huddles](#huddles).
 - **Team**: the dock's *Team* tab holds your huddle teammates, templates and notes. See [Team](#team).
 
@@ -129,7 +130,8 @@ Board runs are headless (`claude -p`), where Claude Code turns the built-in Arti
 
 ```
 ~/.claude-kanban/
-  config.json                    { "port": 7777, "prPollMinutes": 5 }
+  config.json                    { "port": 7777, "prPollMinutes": 5 } (optional "remotePort", default port + 1)
+  remote.json                    phone access: { enabled, host, allowedLogin } (ckanban remote on|off)
   mcp-seen.json                  MCP servers seen connected (so "needs auth" there counts as expired)
   snippets.json                  prompt snippets (⋯ → Snippets; scope "global" or a board slug), inserted with @name
   huddle-presets.json            teammates saved for all boards (huddle-templates.json: templates)
@@ -144,4 +146,4 @@ Board runs are headless (`claude -p`), where Claude Code turns the built-in Arti
   profiles/<slug>/huddle-presets.json            this board's teammates (also huddle-templates.json, huddle-notes/)
 ```
 
-Env overrides: `CKANBAN_HOME`, `CKANBAN_PORT`, `CKANBAN_CLAUDE_BIN`.
+Env overrides: `CKANBAN_HOME`, `CKANBAN_PORT`, `CKANBAN_REMOTE_PORT`, `CKANBAN_CLAUDE_BIN`.

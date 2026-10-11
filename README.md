@@ -68,10 +68,15 @@ Every feature in detail: **[docs/features.md](docs/features.md)**. What changed 
 ckanban update      # get the latest release (the board also shows a banner when one is out)
 ckanban restart     # restart the background service once active runs finish (--now: at once)
 ckanban open        # open the board
+ckanban remote on   # open the board from your phone over Tailscale (off / status too)
 ckanban uninstall   # stop and remove the service (your boards in ~/.claude-kanban stay)
 ```
 
 It runs in the background and survives restarts ([details](docs/features.md#runs-in-the-background-survives-restarts)). Logs: `~/.claude-kanban/daemon.log`. If `ckanban` isn't found, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc`.
+
+## On your phone
+
+With [Tailscale](https://tailscale.com/download) on your Mac and phone (same account, MagicDNS and HTTPS certificates on for the tailnet), run `ckanban remote on` or use **⋯ → Phone access**. You get `https://<your-mac>.<tailnet>.ts.net` and a QR code. On a phone the board opens on **Now** (what needs you, what runs, what's being planned); tickets open full screen. Add it to the Home Screen to use it like an app.
 
 ## Use the board from Claude Code / Codex
 
@@ -88,6 +93,8 @@ Found a bug? **⋯ → Report a bug** in the header ([how it works](docs/feature
 Runs use `--permission-mode bypassPermissions`: Claude can execute any command in the ticket's folder without asking. Only put tickets on boards whose folders you trust Claude to modify.
 
 The server binds to `127.0.0.1` only and rejects requests with a non-localhost `Host` or cross-site `Origin`, so other websites cannot drive it.
+
+Phone access (`ckanban remote on`) uses `tailscale serve`, which reaches only devices on your tailnet (never Tailscale Funnel, never public). Serve points at a separate loopback port (the board port + 1) where every request is treated as coming from the tailnet: it must use the `*.ts.net` name and come from the Tailscale login that turned it on (the `Tailscale-User-Login` header `tailscale serve` sets). Phone access can only be turned on or off on the Mac, and board runs can't change it. `ckanban remote off` turns it off again.
 
 ## Development
 

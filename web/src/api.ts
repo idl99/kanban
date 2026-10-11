@@ -759,6 +759,18 @@ export type BusEvent =
   | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null }
   | { type: "huddle.session"; profile: string; huddleId: string; handle: string };
 
+/** Phone access over Tailscale (src/server/remote.ts). local: this page is open on the Mac, not the phone. */
+export interface RemoteState {
+  enabled: boolean;
+  url: string | null;
+  host: string | null;
+  allowedLogin: string | null;
+  lastVisit: string | null;
+  warning?: string;
+  qrSvg: string | null;
+  local: boolean;
+}
+
 export interface InboxItem {
   profile: string;
   profileName: string;
@@ -828,6 +840,8 @@ export const api = {
   version: () => req<{ version: string; latest: string | null; updateAvailable: boolean; url: string | null }>("GET", "/api/version"),
   health: () => req<Health>("GET", "/api/health"),
   /** pending: a daemon restart holds new runs until the `waiting` active runs finish. */
+  remote: () => req<RemoteState>("GET", "/api/remote"),
+  setRemote: (enabled: boolean) => req<RemoteState>("POST", "/api/remote", { enabled }),
   restartState: () => req<{ pending: boolean; waiting: number }>("GET", "/api/restart"),
   bugDraft: (ref: { profile: string; ticketId: string } | null) =>
     req<{ blocks: BugBlock[]; screenshots: string[] }>("POST", "/api/bug-report/draft", ref ?? {}),

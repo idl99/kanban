@@ -9,7 +9,8 @@ import { LABEL, PLIST_PATH, plistXml } from "./server/launchd";
 import { RESTART_MAX_WAIT_MS } from "./server/board";
 import { startDaemon } from "./server/main";
 import { AgentError } from "./server/agents";
-import { defaultRoot } from "./server/store";
+import { defaultRoot, Store } from "./server/store";
+import { qrTerminal, RemoteAccess, RemoteError, remoteListenPort, type RemoteStatus } from "./server/remote";
 import { latestRelease } from "./server/update";
 import { IS_BINARY, VERSION } from "./server/version";
 import { mcpCommand, profilesCommand, ticketCommand, TICKET_USAGE } from "./ticket-cli";
@@ -25,6 +26,8 @@ Usage:
   ckanban uninstall    Stop and remove the launchd daemon
   ckanban open         Open the board in your browser
   ckanban update       Update to the latest release and restart the daemon
+  ckanban remote on|off|status
+                       Phone access over Tailscale (tailnet only, your login only)
   ckanban artifact publish <file> [--url <artifact url>] [--title <title>]
                        Publish a page to claude.ai (works from headless board runs)
   ckanban artifact read <url> [--out <file>]
@@ -202,6 +205,35 @@ async function artifact(args: string[]) {
   process.exit(1);
 }
 
+/** `ckanban remote on|off|status`: writes remote.json, which the daemon picks up on its next request. */
+async function remoteCommand(action: string | undefined) {
+  const access = new RemoteAccess(defaultRoot(), () => remoteListenPort(boardPort(), new Store(defaultRoot()).config().remotePort));
+  const show = (st: RemoteStatus) => {
+    if (!st.enabled) {
+      console.log("Phone access is off.");
+      if (st.warning) console.error(`Warning: ${st.warning}`);
+      return;
+    }
+    console.log(`Phone access is on: ${st.url}`);
+    console.log(`Only ${st.allowedLogin} can open it, from devices on your tailnet (never public).`);
+    console.log("");
+    console.log(qrTerminal(st.url!));
+  };
+  try {
+    if (action === "on") show(await access.on());
+    else if (action === "off") show(await access.off());
+    else if (action === "status" || action === undefined) show(access.status());
+    else {
+      console.error("usage: ckanban remote on|off|status");
+      process.exit(1);
+    }
+  } catch (e) {
+    if (!(e instanceof RemoteError)) throw e;
+    console.error(e.message);
+    process.exit(1);
+  }
+}
+
 const cmd = process.argv[2];
 switch (cmd) {
   case "dev":
@@ -222,6 +254,9 @@ switch (cmd) {
     break;
   case "update":
     await update();
+    break;
+  case "remote":
+    await remoteCommand(process.argv[3]);
     break;
   case "artifact":
     await artifact(process.argv.slice(3));
