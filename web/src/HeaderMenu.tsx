@@ -12,6 +12,8 @@ export interface MenuItem {
   title?: string;
   /** Draw a divider after this item. */
   separator?: boolean;
+  /** Destructive (red), e.g. Stop agents in the huddle's phone sheet. */
+  danger?: boolean;
 }
 
 /** "⋯" overflow menu at the end of the top bar for things you need now and then. ↑↓ move, Esc closes. */

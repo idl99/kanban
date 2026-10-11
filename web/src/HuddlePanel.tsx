@@ -10,14 +10,17 @@ import {
 } from "./huddle";
 import { DEFAULT_MAX, draftError, RosterEditor, rosterDraft, startFromDraft, TemplatePicker, usePresets, useTemplates, type RosterDraft } from "./HuddleRoster";
 import { applyTemplate, BRIEF_MAX, DEFAULT_BUDGET, POST_MAX } from "./huddleText";
-import { CloseIcon } from "./icons";
+import { CloseIcon, MoreIcon } from "./icons";
 import { KeyHint } from "./KeyHint";
 import { useLayer } from "./layers";
 import { Select } from "./Select";
 import { fullTime } from "./time";
 import { useNow } from "./useNow";
-import { HuddleRounds } from "./HuddleRounds";
+import { HuddleRounds, roundLabel } from "./HuddleRounds";
 import { SessionPanel } from "./HuddleSession";
+import type { MenuItem } from "./HeaderMenu";
+import { MoreSheet } from "./PhoneNav";
+import { usePhone } from "./usePhone";
 import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
 import type { HuddleSeed, TeamRequest } from "./Team";
@@ -180,6 +183,10 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
   // The participant whose session is open beside the feed; Message @handle pre-fills the composer (n: each press).
   const [viewing, setViewing] = useState<string | null>(null);
   const [prefill, setPrefill] = useState<{ handle: string; n: number } | null>(null);
+  // Phone (≤720px): one pane at a time under a one-line bar; the bar's actions sit in a ⋯ sheet (or its invite/rounds lists).
+  const phone = usePhone();
+  const [pane, setPane] = useState<"chat" | "people" | "findings">("chat");
+  const [sheet, setSheet] = useState<"actions" | "invite" | "rounds" | null>(null);
   useEffect(() => setViewing(null), [h.id]);
   const viewable = members(h);
   const viewed = viewable.find((p) => p.handle === viewing) ?? null;
@@ -217,6 +224,7 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
   const invitable = tickets.filter((t) => !h.participants.some((p) => p.ticketId === t.id));
   const handles = h.participants.map((p) => p.handle).concat("all");
   const resume = (add?: number) => run(api.huddleAction(slug, h.id, "resume", add));
+  const openFindings = h.findings.filter((f) => f.status === "open").length;
   const spenders = members(h).filter((p) => (p.costUsd ?? 0) > 0).sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0));
 
   // ↓ next for you: the next highlighted message below the top of the feed, else the first one.
@@ -233,26 +241,75 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
   const rounds = state.list.length > 1;
   const summary = h.summary ? <button className="link-btn" onClick={() => onOpenOutput(h.summary!)} title={`Open ${h.summary} in Outputs`}>summary</button> : null;
 
+  const stateLabel = brake ? (
+    <span className="huddle-state brake">■ Paused</span>
+  ) : quiet ? (
+    <span className="huddle-state quiet" title="Nobody is working, no tag is unanswered and no finding is open: the huddle may be done.">
+      ● All quiet{h.idleSince && !phone ? ` · idle ${idleFor(h.idleSince, now)}` : ""}
+    </span>
+  ) : (
+    <span className={`huddle-state ${h.status}`}>{STATE_LABEL[h.status]}</span>
+  );
+  const budget = (
+    <span className="hd-budget" title="What the huddle spent so far: its agents' runs and @main's huddle replies. It stops at the budget.">
+      ·
+      <span className={`hd-meter${overBudget ? " over" : ""}`} aria-hidden><i style={{ width: `${Math.min(100, (spent / max) * 100)}%` }} /></span>
+      <span className={overBudget ? "hd-over" : undefined}>{money(spent)} / {dollars(max)}</span>
+    </span>
+  );
+  // The phone's ⋯ sheet: every bar action that applies now (a brake's Resume buttons stay in its banner).
+  const actions: MenuItem[] = [];
+  if (!closed) {
+    if (count < h.maxParticipants) {
+      actions.push({ label: "+ Add agent", onSelect: () => { setAdding(true); setPane("chat"); } });
+      if (invitable.length) actions.push({ label: "+ Invite ticket", onSelect: () => setSheet("invite") });
+    }
+  }
+  if (learnings.length) {
+    actions.push({ label: "🎓 Learnings", onSelect: () => setLearningsOpen(true),
+      badge: pending.length ? <span className="for-you-pill">{pending.length}</span> : <span className="hd-learn-done">✓ all reviewed</span> });
+  }
+  if (rounds) actions.push({ label: roundLabel(state.list, h), onSelect: () => setSheet("rounds"), badge: <span className="muted small">Rounds ›</span> });
+  else if (closed) actions.push({ label: "New huddle", onSelect: onNew });
+  if (h.summary) actions.push({ label: "Read the summary", onSelect: () => onOpenOutput(h.summary!) });
+  if (!closed) {
+    if (h.status === "stopped") {
+      if (!brake) {
+        if (!overBudget) actions.push({ label: "▶ Resume", onSelect: () => resume() });
+        actions.push({ label: `▶ Resume +${money(BUDGET_STEP)}`, onSelect: () => resume(BUDGET_STEP) });
+      }
+    } else actions.push({ label: "■ Stop agents", danger: true, title: STOP_AGENTS_TIP, onSelect: () => setConfirm("stop") });
+    actions.push({ label: "Close huddle", onSelect: () => setConfirm("close") });
+  }
+  const current = state.list[0];
+  const roundItems: MenuItem[] = [
+    ...state.list.map((x) => ({
+      label: roundLabel(state.list, x), onSelect: () => onSelect(x.id === current?.id ? null : x.id),
+      badge: <span className={`hd-round-pill ${x.status}`}>{STATE_LABEL[x.status]}</span>,
+    })),
+    ...(current?.status === "closed" ? [{ label: "+ New huddle", onSelect: onNew }] : []),
+  ];
+
   return (
     <div className="huddle">
+      {phone ? (
+        <div className="huddle-bar">
+          {stateLabel}
+          <span>· {h.seq} msg{h.seq === 1 ? "" : "s"}</span>
+          {budget}
+          <span className="spacer" />
+          {forYou > 0 && pane === "chat" && <button className="link-btn hd-jump" onClick={jump}>↓ for you</button>}
+          <button className="btn ghost hd-more" onClick={() => setSheet("actions")} aria-label="Huddle actions" aria-haspopup="menu">
+            <MoreIcon size={18} />{pending.length > 0 && <span className="pn-dot" />}
+          </button>
+        </div>
+      ) : (
       <div className="huddle-bar">
         {rounds && <HuddleRounds list={state.list} shown={h} onPick={onSelect} onNew={onNew} onSummary={(x) => onOpenOutput(x.summary!)} />}
-        {brake ? (
-          <span className="huddle-state brake">■ Paused</span>
-        ) : quiet ? (
-          <span className="huddle-state quiet" title="Nobody is working, no tag is unanswered and no finding is open: the huddle may be done.">
-            ● All quiet{h.idleSince ? ` · idle ${idleFor(h.idleSince, now)}` : ""}
-          </span>
-        ) : (
-          <span className={`huddle-state ${h.status}`}>{STATE_LABEL[h.status]}</span>
-        )}
+        {stateLabel}
         <span title={fullTime(h.createdAt)}>started {clock(h.createdAt)}</span>
         <span>· {h.seq} message{h.seq === 1 ? "" : "s"}</span>
-        <span className="hd-budget" title="What the huddle spent so far: its agents' runs and @main's huddle replies. It stops at the budget.">
-          ·
-          <span className={`hd-meter${overBudget ? " over" : ""}`} aria-hidden><i style={{ width: `${Math.min(100, (spent / max) * 100)}%` }} /></span>
-          <span className={overBudget ? "hd-over" : undefined}>{money(spent)} / {dollars(max)}</span>
-        </span>
+        {budget}
         {forYou > 0 && <button className="link-btn hd-jump" onClick={jump} title={`${forYou} ${forYou === 1 ? "message tags" : "messages tag"} you`}>↓ next for you</button>}
         <span className="spacer" />
         {learnings.length > 0 && (
@@ -293,6 +350,13 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
           </>
         )}
       </div>
+      )}
+      {sheet === "actions" && <MoreSheet label="Huddle actions" items={actions} onClose={() => setSheet(null)}
+        footer={closed && h.closedAt ? `Closed ${clock(h.closedAt)} · read-only` : `Started ${clock(h.createdAt)}`} />}
+      {sheet === "invite" && <MoreSheet label="Invite a ticket" onClose={() => setSheet(null)}
+        items={invitable.map((t) => ({ label: t.title, badge: <span className="muted small">{t.id}</span>, onSelect: () => run(api.inviteToHuddle(slug, h.id, t.id)) }))} />}
+      {sheet === "rounds" && <MoreSheet label="Huddles of this ticket" items={roundItems} onClose={() => setSheet(null)}
+        footer={current && current.status !== "closed" ? "Only one huddle runs at a time: close the current one to start a new round." : null} />}
       {brake && (
         <div className="hd-banner brake" role="alert">
           <span aria-hidden>⛔</span>
@@ -325,20 +389,38 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
         </div>
       )}
       {adding && !closed && <AddAgent key={seed?.n} slug={slug} huddle={h} preset={addSeed ?? undefined} onDone={() => setAdding(false)} onError={onError} />}
-      <div className="huddle-body">
-        <div className="huddle-feed">
-          <Feed huddle={h} state={state} handles={handles} scroller={log} onSeen={(seq) => run(api.huddleSeen(slug, h.id, seq))} />
-          <Composer slug={slug} ticket={ticket} huddle={h} onError={onError} prefill={prefill} onOpenOutput={onOpenOutput} />
+      {phone && (
+        <div className="hd-seg" role="tablist" aria-label="Huddle view">
+          {([["chat", "Chat", forYou], ["people", "People", count], ["findings", "Findings", openFindings]] as const).map(([k, label, n]) => (
+            <button key={k} role="tab" aria-selected={pane === k} className={pane === k ? "on" : undefined} onClick={() => setPane(k)}>
+              {label}{k === "chat" ? n > 0 && <span className="for-you-pill">{n}</span> : <span className="hd-seg-n">{n}</span>}
+            </button>
+          ))}
         </div>
+      )}
+      <div className="huddle-body">
+        {(!phone || pane === "chat") && <div className="huddle-feed">
+          <Feed huddle={h} state={state} handles={handles} scroller={log} onSeen={(seq) => run(api.huddleSeen(slug, h.id, seq))} />
+          <Composer slug={slug} ticket={ticket} huddle={h} onError={onError} prefill={prefill} onPrefilled={() => setPrefill(null)} onOpenOutput={onOpenOutput} />
+        </div>}
         {viewed && (
           <SessionPanel slug={slug} huddle={h} participant={viewed} onClose={() => setViewing(null)} onStep={stepViewing}
-            onMessage={(handle) => setPrefill((x) => ({ handle, n: (x?.n ?? 0) + 1 }))} onOpenChat={onOpenChat} onOpenTicket={onOpenTicket} />
+            onMessage={(handle) => {
+              setPrefill((x) => ({ handle, n: (x?.n ?? 0) + 1 }));
+              if (phone) { setViewing(null); setPane("chat"); }
+            }} onOpenChat={onOpenChat} onOpenTicket={onOpenTicket} />
         )}
-        <aside className="huddle-side">
-          <Brief slug={slug} huddle={h} handles={handles} onError={onError} />
-          <Roster slug={slug} huddle={h} onError={onError} viewing={viewing} onView={(handle) => setViewing((v) => (v === handle ? null : handle))} />
-          <Findings slug={slug} huddle={h} handles={handles} onError={onError} />
-        </aside>
+        {(!phone || pane !== "chat") && (
+          <aside className="huddle-side">
+            {(!phone || pane === "people") && (
+              <>
+                <Brief slug={slug} huddle={h} handles={handles} onError={onError} />
+                <Roster slug={slug} huddle={h} onError={onError} viewing={viewing} onView={(handle) => setViewing((v) => (v === handle ? null : handle))} />
+              </>
+            )}
+            {(!phone || pane === "findings") && <Findings slug={slug} huddle={h} handles={handles} onError={onError} />}
+          </aside>
+        )}
         {showLearnings && <Learnings slug={slug} huddle={h} onClose={() => setLearningsOpen(false)} onError={onError} onOpenTeam={onOpenTeam} />}
       </div>
       {confirm === "stop" && (
@@ -648,8 +730,11 @@ function MentionText({ text, handles }: { text: string; handles: string[] }) {
 }
 
 /** The user's message box, with @ autocomplete (@main, @all, handles). */
-function Composer({ slug, ticket, huddle: h, onError, prefill, onOpenOutput }: {
-  slug: string; ticket: Ticket; huddle: Huddle; onError: (m: string) => void; prefill: { handle: string; n: number } | null; onOpenOutput: (name: string) => void;
+function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOpenOutput }: {
+  slug: string; ticket: Ticket; huddle: Huddle; onError: (m: string) => void; prefill: { handle: string; n: number } | null;
+  /** The prefill is applied: cleared, so a remount (the phone's Chat pane) doesn't apply it again. */
+  onPrefilled: () => void;
+  onOpenOutput: (name: string) => void;
 }) {
   const [draft, setDraft] = usePersistentState(draftKey(slug, `${ticket.id}.huddle`), () => "", (v) => !v.trim(), (v) => typeof v === "string");
   const [sending, setSending] = useState(false);
@@ -670,6 +755,7 @@ function Composer({ slug, ticket, huddle: h, onError, prefill, onOpenOutput }: {
     const tag = `@${prefill.handle} `;
     const next = draft.startsWith(tag) ? draft : tag + draft.replace(/^\s+/, "");
     setDraft(next);
+    onPrefilled();
     requestAnimationFrame(() => {
       const el = ref.current;
       if (!el) return;

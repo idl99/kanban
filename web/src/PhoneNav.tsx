@@ -32,14 +32,14 @@ export function PhoneNav({ tab, onTab, needYou, scheduleAlert, onSchedules, onMo
 }
 
 /** More: the header menu as a bottom sheet, plus whatever the phone top bar has no room for. */
-export function MoreSheet({ items, footer, onClose }: { items: MenuItem[]; footer?: string | null; onClose: () => void }) {
+export function MoreSheet({ items, footer, onClose, label = "More" }: { items: MenuItem[]; footer?: string | null; onClose: () => void; label?: string }) {
   useLayer(onClose);
   return (
     <div className="sheet-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="sheet" role="menu" aria-label="More">
+      <div className="sheet" role="menu" aria-label={label}>
         <span className="sheet-grip" aria-hidden />
         {items.map((it) => (
-          <button key={it.label} role="menuitem" className={`sheet-item${it.separator ? " sep" : ""}`} title={it.title}
+          <button key={it.label} role="menuitem" className={`sheet-item${it.separator ? " sep" : ""}${it.danger ? " danger" : ""}`} title={it.title}
             onClick={() => { onClose(); it.onSelect(); }}>
             {it.icon}<span className="sheet-label">{it.label}</span>{it.badge}
           </button>

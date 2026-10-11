@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { api, copy, onReconnect, subscribe, type Huddle, type HuddleParticipant, type ParticipantSession, type SessionStep } from "./api";
 import { handleColor, handleInitials } from "./huddle";
-import { CloseIcon } from "./icons";
+import { ChevronLeftIcon, CloseIcon } from "./icons";
 import { isTyping, panelStep } from "./keynav";
 import { KeyHint } from "./KeyHint";
 import { useLayer } from "./layers";
 import { mergeSteps, sessionMeta, sessionState, toolIcon } from "./sessionText";
 import { fullTime } from "./time";
 import { ToolRow, type ToolItem } from "./ToolRows";
+import { usePhone } from "./usePhone";
 
 /**
  * A huddle participant's own Claude session, read-only, beside the feed: its reasoning, tool calls (expand for the
@@ -25,6 +26,8 @@ export function SessionPanel({ slug, huddle: h, participant: p, onClose, onStep,
   onOpenChat: () => void;
   onOpenTicket: (id: string) => void;
 }) {
+  // Phone: full screen over the huddle, a back arrow instead of the close button.
+  const phone = usePhone();
   const [s, setS] = useState<ParticipantSession | null>(null);
   const [steps, setSteps] = useState<SessionStep[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -146,6 +149,7 @@ export function SessionPanel({ slug, huddle: h, participant: p, onClose, onStep,
   return (
     <section className="hd-session" aria-label={`@${handle}'s session (read-only)`}>
       <header className="hd-session-head">
+        {phone && <button className="icon-btn phone-back" onClick={onClose} aria-label="Back to the huddle"><ChevronLeftIcon size={22} /></button>}
         <span className="hd-av" style={{ background: handleColor(handle) }} aria-hidden>{handleInitials(handle)}</span>
         <div className="hd-session-title">
           <div><b>@{handle}</b> <span className="hd-ro">read-only</span></div>
@@ -155,7 +159,7 @@ export function SessionPanel({ slug, huddle: h, participant: p, onClose, onStep,
         {!closed && (
           <button className="btn small primary" onClick={() => onMessage(handle)} title={`Write to @${handle} in the huddle`}>Message @{handle}</button>
         )}
-        <button className="icon-btn" onClick={onClose} aria-label="Close the session" title="Close (Esc)"><CloseIcon size={12} /><KeyHint keys="Esc" /></button>
+        {!phone && <button className="icon-btn" onClick={onClose} aria-label="Close the session" title="Close (Esc)"><CloseIcon size={12} /><KeyHint keys="Esc" /></button>}
       </header>
       {view.kind !== "agent" ? (
         <div className="hd-session-steps">

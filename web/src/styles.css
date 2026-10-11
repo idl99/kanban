@@ -1856,7 +1856,7 @@ button.hd-mode:disabled { cursor: default; }
 .hd-chk.done { color: var(--muted); text-decoration: line-through; cursor: default; }
 .hd-add-finding { width: 100%; font-size: 12.5px; padding: 4px 8px; margin-top: 4px; }
 @container (max-width: 760px) { .huddle-side { width: 230px; } }
-@media (max-width: 900px) { .huddle-body { flex-direction: column; } .huddle-side { width: auto; border-left: 0; border-top: 1px solid var(--border); max-height: 40%; } }
+@media (max-width: 900px) { .huddle-body { flex-direction: column; } .huddle-feed { min-height: 0; } .huddle-side { width: auto; border-left: 0; border-top: 1px solid var(--border); max-height: 40%; } }
 .hn-acts .link-btn.danger { color: var(--err); }
 
 /* Roster rows open the participant's session (HuddleSession.tsx); the row is one big button under its controls. */
@@ -2029,4 +2029,58 @@ button.hd-mode:disabled { cursor: default; }
   .qkey { display: none; }
   .qcard .btn { min-height: 40px; }
   .composer-actions .btn { min-height: 40px; padding-left: 14px; padding-right: 14px; }
+}
+
+/* huddle on a phone (HuddlePanel, ≤720px): a one-line bar with a ⋯ sheet, Chat / People / Findings panes, the session full screen */
+.hd-seg { display: none; }
+@media (max-width: 720px) {
+  div.huddle { position: relative; }
+  .huddle-bar { padding: 6px 8px 6px 12px; flex-wrap: nowrap; white-space: nowrap; min-height: 44px; overflow: hidden; }
+  .huddle-bar > * { flex: none; }
+  .huddle-bar .hd-meter { width: 40px; }
+  @media (max-width: 380px) { .huddle-bar .hd-meter { display: none; } }
+  .hd-more { position: relative; width: 40px; height: 36px; padding: 0; justify-content: center; align-items: center; display: inline-flex; border-radius: 10px; }
+  .hd-more .pn-dot { top: 6px; right: 6px; }
+  .sheet-item.danger { color: var(--err); }
+  .sheet .hd-round-pill { grid-column: auto; }
+
+  .hd-seg { display: flex; flex: none; margin: 8px 12px 4px; padding: 3px; background: var(--surface-2); border-radius: 10px; }
+  .hd-seg button { flex: 1; min-height: 36px; border: 0; background: none; border-radius: 8px; font: inherit; font-size: 13.5px; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+  .hd-seg button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); }
+  .hd-seg-n { font-size: 12px; color: var(--muted); font-weight: 500; }
+
+  /* one pane fills the height and scrolls; the session and learnings cover the whole huddle */
+  .huddle-body { flex-direction: column; position: static; }
+  .huddle-side, .huddle-body:has(.hd-session) .huddle-side { flex: 1; min-height: 0; width: auto; max-height: none; border: 0; padding: 8px 12px max(16px, env(safe-area-inset-bottom)); gap: 16px; }
+  .huddle-log { padding: 10px 12px; }
+  .hd-msg-body { overflow-wrap: anywhere; }
+  .panel-main .huddle .composer { margin: 0 12px max(10px, env(safe-area-inset-bottom)); }
+  .huddle-closed { margin: 0 12px max(10px, env(safe-area-inset-bottom)); }
+  .hd-banner { margin: 8px 12px 0; padding: 8px 10px; gap: 6px 8px; }
+  .hd-banner .btn.small { min-height: 36px; }
+  .huddle-close-ask { padding-left: 12px; padding-right: 12px; }
+  .huddle-add { max-height: 50dvh; overflow-y: auto; flex: none; }
+  .huddle-add .btn.small { min-height: 40px; }
+
+  .hd-p { min-height: 48px; padding: 6px 0; }
+  .hd-p.viewable { padding: 6px 8px; margin: 0 -8px; }
+  .hd-p-stop { opacity: 1; }
+  .hd-add-finding { min-height: 40px; }
+  .hd-chk { padding: 7px 0; }
+  .hd-chk input { width: 18px; height: 18px; margin-top: 1px; }
+  .hd-brief .btn.small { min-height: 40px; }
+  .hd-brief-text { max-height: none; overflow: visible; }
+
+  .hd-session, .huddle-body:has(.hd-session) .hd-session {
+    position: absolute; inset: 0; z-index: 6; width: auto; max-height: none; border: 0; box-shadow: none;
+  }
+  .hd-session-head { padding: 6px 12px 6px 4px; gap: 6px; }
+  .hd-session-head .btn.small { min-height: 36px; }
+  .hd-session-steps { padding: 10px 12px; }
+  .hd-session-keys { display: none; }
+  .hd-session-foot { padding: 8px 12px max(8px, env(safe-area-inset-bottom)); }
+  .hd-session-foot .link-btn { min-height: 32px; }
+
+  .hd-learnings { width: 100%; border-left: 0; z-index: 7; }
+  .hd-learnings-list { padding-bottom: env(safe-area-inset-bottom); }
 }
