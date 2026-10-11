@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, safeHref, type PrCheck, type Profile, type Ticket } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ExternalIcon, RefreshIcon } from "./icons";
+import { ResolveConflicts } from "./ResolveConflicts";
 import { currentPr, mergeBlock, reviewText } from "./prText";
 import { fullTime, timeAgo } from "./time";
 import { useNow } from "./useNow";
@@ -16,7 +17,7 @@ const MARK: Record<PrCheck["state"], { sym: string; tone: string; verb: string }
 
 /**
  * Review drawer box for the ticket's pull request: one row per check, conflicts, reviews and comments, plus
- * "Send failures to Claude" and "Merge & done". Asks the server for a fresh status on open (it reuses one under 30s old).
+ * "Send failures to Claude", "Resolve conflicts" and "Merge & done". Asks the server for a fresh status on open (it reuses one under 30s old).
  */
 export function PrBox({ profile, ticket, onError }: { profile: Profile; ticket: Ticket & { prUrl: string }; onError: (msg: string) => void }) {
   useNow();
@@ -98,7 +99,7 @@ export function PrBox({ profile, ticket, onError }: { profile: Profile; ticket: 
           })}
           <div className="pr-line">
             {pr.conflicts
-              ? <><span className="pr-mark bad">✗</span>Conflicts with the base branch</>
+              ? <><span className="pr-mark bad">✗</span>Conflicts with the base branch<span className="pr-sp" /><ResolveConflicts slug={slug} ticket={ticket} onError={onError} /></>
               : pr.mergeable === "MERGEABLE"
                 ? <><span className="pr-mark ok">✓</span>No conflicts · mergeable</>
                 : <><span className="pr-mark plain">?</span>GitHub is still checking for conflicts</>}

@@ -1,8 +1,8 @@
 import { beforeEach, expect, test } from "bun:test";
 import { Board } from "../src/server/board";
 import { Bus } from "../src/server/events";
-import { mergePr, PrError, refreshPr, sendFailures } from "../src/server/prpoller";
-import { actionsIds, failureMessage, mergeBlock, parsePrStatus, PER_CHECK_LOG, TOTAL_LOG } from "../src/server/prstatus";
+import { mergePr, PrError, refreshPr, resolveConflicts, sendFailures } from "../src/server/prpoller";
+import { actionsIds, conflictMessage, failureMessage, mergeBlock, parsePrStatus, PER_CHECK_LOG, TOTAL_LOG } from "../src/server/prstatus";
 import { Store } from "../src/server/store";
 import { tempDir } from "./helpers";
 
@@ -169,6 +169,32 @@ test("send failures refuses when nothing fails any more", async () => {
   expect(err.status).toBe(409);
 });
 
+
+test("resolve conflicts chats the rebase instructions to the ticket", async () => {
+  let sent = "";
+  board.chat = async (s, i, text) => ((sent = text), store.getTicket(s, i)!);
+  await resolveConflicts(board, store, "p", id, { status: async () => parsePrStatus(URL, raw({ mergeable: "CONFLICTING" })) });
+  expect(sent).toContain("PR #7");
+  expect(sent).toContain("rebase");
+  expect(sent).toContain("--force-with-lease");
+  expect(store.getTicket("p", id)!.pr?.conflicts).toBe(true);
+});
+
+test("resolve conflicts refuses without conflicts or while Claude runs", async () => {
+  board.chat = async () => { throw new Error("should not chat"); };
+  expect((await resolveConflicts(board, store, "p", id, { status: async () => green() }).catch((e) => e)).status).toBe(409);
+  board.isRunning = () => true;
+  const conflicting = async () => parsePrStatus(URL, raw({ mergeable: "CONFLICTING" }));
+  expect((await resolveConflicts(board, store, "p", id, { status: conflicting }).catch((e) => e)).status).toBe(409);
+});
+
+test("conflict message names the base branch and keeps force pushes on the ticket branch", () => {
+  const msg = conflictMessage(parsePrStatus(URL, raw({ mergeable: "CONFLICTING" })), "main");
+  expect(msg).toContain("origin/main");
+  expect(msg).toContain("both sides' intent");
+  expect(msg).toContain("this ticket's branch only");
+  expect(conflictMessage(green(), "")).toContain("the remote base branch");
+});
 
 test("card chips and the UI's merge guard match the server", async () => {
   const web = await import("../web/src/prText");

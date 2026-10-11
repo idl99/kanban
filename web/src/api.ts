@@ -1034,6 +1034,7 @@ export const api = {
   /** force: skip the server's 30s reuse of a fresh status. */
   prRefresh: (slug: string, id: string, force = false) => req<{ pr: PrStatus | null; ticket: Ticket }>("POST", `${t(slug, id)}/pr/refresh`, { force }),
   prSendFailures: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/send-failures`),
+  prResolveConflicts: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/resolve-conflicts`),
   prMerge: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/pr/merge`),
   /** Usage limit: send "continue" now. */
   /** "Continue with +$Y" after a run stopped at its spending cap. */

@@ -7,7 +7,7 @@ import type { Bus, BusEvent } from "./events";
 import { listCommands } from "./commands";
 import { DiffError, ticketDiff } from "./diff";
 import { detectBaseBranch, isGitRepo, resolveBaseBranch, which } from "./git";
-import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, sendFailures, type PrDeps } from "./prpoller";
+import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, resolveConflicts, sendFailures, type PrDeps } from "./prpoller";
 import { resumeCommand } from "./prompts";
 import { cronError, describeCron, nextRuns, parseCron } from "./cron";
 import { RUN_HEADER, ScheduleError, Scheduler } from "./scheduler";
@@ -1131,16 +1131,18 @@ export function createServer(deps: ServerDeps) {
       const state = await checkPr(board, store, slug, id);
       return json({ state, ticket: view(profile, store.getTicket(slug, id)!) });
     }
-    // Review PR box: refresh (rate-limited unless force), send failing CI logs to Claude, Merge & done.
-    if (m === "POST" && action === "pr" && ["refresh", "send-failures", "merge"].includes(parts[5])) {
-      if (parts[5] !== "refresh" && req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can merge a PR or send its CI failures from the board");
+    // Review PR box: refresh (rate-limited unless force), send failing CI logs to Claude, resolve conflicts, Merge & done.
+    if (m === "POST" && action === "pr" && ["refresh", "send-failures", "resolve-conflicts", "merge"].includes(parts[5])) {
+      if (parts[5] !== "refresh" && req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can merge a PR or send its CI failures or conflicts from the board");
       try {
         if (parts[5] === "refresh") {
           const force = !!(await body(req).catch(() => ({} as Record<string, unknown>))).force;
           const pr = await refreshPr(board, store, slug, id, { ...deps.pr, maxAgeMs: force ? 0 : REFRESH_MIN_MS });
           return json({ pr, ticket: view(profile, store.getTicket(slug, id)!) });
         }
-        const t = parts[5] === "merge" ? await mergePr(board, store, slug, id, deps.pr) : await sendFailures(board, store, slug, id, deps.pr);
+        const t = parts[5] === "merge" ? await mergePr(board, store, slug, id, deps.pr)
+          : parts[5] === "resolve-conflicts" ? await resolveConflicts(board, store, slug, id, deps.pr)
+          : await sendFailures(board, store, slug, id, deps.pr);
         return json(view(profile, t), parts[5] === "merge" ? 200 : 202);
       } catch (e) {
         if (e instanceof PrError) throw new HttpError(e.status, e.message);

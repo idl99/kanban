@@ -89,6 +89,19 @@ export function failureMessage(pr: PrStatus, logs: { name: string; log: string |
   return parts.join("\n\n");
 }
 
+/** The chat message "Resolve conflicts" sends: rebase the ticket branch onto the base, fix conflicts, check, push. */
+export function conflictMessage(pr: PrStatus, base: string): string {
+  const b = base || "the base branch";
+  const remote = base ? `origin/${base}` : "the remote base branch";
+  return [
+    `PR #${pr.number ?? "?"} (${pr.url}) has conflicts with ${b}. Resolve them:`,
+    `1. \`git fetch\` and rebase this branch onto the remote base branch (\`${remote}\`).`,
+    "2. Resolve every conflict keeping both sides' intent: the base branch's changes and this ticket's.",
+    "3. Run the repo's checks (tests, typecheck, build) and fix anything the rebase broke.",
+    "4. Push with `git push --force-with-lease` to this ticket's branch only. Never force-push the base branch or any other branch.",
+  ].join("\n");
+}
+
 /** owner/repo, run id and job id from an Actions details URL (.../owner/repo/actions/runs/<run>/job/<job>). */
 export function actionsIds(url: string | null): { repo: string; run: string; job: string | null } | null {
   const m = url?.match(/github\.com\/([^/]+\/[^/]+)\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/);

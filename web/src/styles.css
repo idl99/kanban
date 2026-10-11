@@ -240,6 +240,7 @@ body.show-hints .sortable-card:not(:focus) .key-hint.card-keys { display: none; 
 .badge.pr-chip.bad { background: var(--err-soft); color: var(--err); }
 .badge.pr-chip.pend { background: var(--warn-soft); color: var(--warn); }
 .badge.pr-chip.plain { background: var(--surface-2); color: var(--muted); }
+.btn.small.pr-resolve { padding: 1px 7px; font-size: 11px; line-height: 1.4; }
 button.badge.huddle { border: 0; font: inherit; font-size: 11px; font-weight: 560; cursor: pointer; background: var(--info-soft); color: var(--info); }
 button.badge.huddle:hover { filter: brightness(0.96); text-decoration: underline; }
 button.badge.huddle.closed { background: var(--surface-2); color: var(--muted); }

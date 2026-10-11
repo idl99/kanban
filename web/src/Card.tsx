@@ -9,6 +9,7 @@ import { LimitActions } from "./LimitActions";
 import { limitLabel, limitWait } from "./limitText";
 import { ResourceChip, resourceWait } from "./Needs";
 import { currentPr, prChips } from "./prText";
+import { ResolveConflicts } from "./ResolveConflicts";
 import { ImportantStar } from "./StarToggle";
 import { elapsed, fullTime, plainPreview, timeAgo } from "./time";
 import { costText } from "./usage";
@@ -155,6 +156,9 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           {ticket.status === "review" && prChips(currentPr(ticket)).map((c) => (
             <span key={c.label} className={`badge pr-chip ${c.tone}`} title={c.title}>{c.label}</span>
           ))}
+          {ticket.status === "review" && limit && !dragging && currentPr(ticket)?.state === "OPEN" && currentPr(ticket)?.conflicts && (
+            <ResolveConflicts slug={limit.slug} ticket={ticket} onError={limit.onError} small />
+          )}
           {!!ticket.costUsd && (
             <span className="badge cost" title={`API-equivalent cost of this ticket's runs so far${ticket.runCap ? ` · runs stop at ${costText(ticket.runCap)}` : ""}`}>
               {costText(ticket.costUsd)}

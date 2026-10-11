@@ -1,6 +1,6 @@
 import type { Board } from "./board";
 import { run } from "./git";
-import { failureMessage, ghFailedLog, ghMerge, ghPrStatus, mergeBlock } from "./prstatus";
+import { conflictMessage, failureMessage, ghFailedLog, ghMerge, ghPrStatus, mergeBlock } from "./prstatus";
 import type { Store } from "./store";
 import type { PrCheck, PrStatus, Ticket } from "./types";
 
@@ -113,6 +113,19 @@ export async function sendFailures(board: Board, store: Store, slug: string, id:
   const failedLog = deps.failedLog ?? ghFailedLog;
   const logs = await Promise.all(failing.map(async (c) => ({ name: c.name, url: c.url, log: await failedLog(c).catch(() => null) })));
   return board.chat(slug, id, failureMessage(pr, logs));
+}
+
+/** Resolve conflicts: re-check the PR, then ask the ticket's Claude to rebase onto the base branch and push. */
+export async function resolveConflicts(board: Board, store: Store, slug: string, id: string, deps: PrDeps = {}): Promise<Ticket> {
+  const t = reviewPr(store, slug, id);
+  if (board.isRunning(slug, id)) throw new PrError(409, "Claude is already working on this ticket.");
+  const pr = await (deps.status ?? ghPrStatus)(t.prUrl).catch((e) => {
+    throw new PrError(502, `Could not read the PR: ${(e as Error).message}`);
+  });
+  board.setPr(slug, id, pr);
+  if (pr.state !== "OPEN") throw new PrError(409, "The PR is no longer open.");
+  if (!pr.conflicts) throw new PrError(409, "The PR has no conflicts any more.");
+  return board.chat(slug, id, conflictMessage(pr, store.getProfile(slug)?.baseBranch ?? ""));
 }
 
 export function startPoller(board: Board, store: Store, minutes: number): () => void {
