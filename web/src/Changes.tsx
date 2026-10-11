@@ -18,8 +18,9 @@ export function useTicketDiff(slug: string, ticket: Ticket) {
   const [tick, setTick] = useState(0);
   const seq = useRef(0);
   const running = !!ticket.running;
+  const has = hasChanges(ticket);
   useEffect(() => {
-    if (!ticket.worktree) {
+    if (!has) {
       setDiff(null);
       return;
     }
@@ -29,11 +30,14 @@ export function useTicketDiff(slug: string, ticket: Ticket) {
       .then((d) => { if (n === seq.current) { setDiff(d); setError(null); } })
       .catch((e) => { if (n === seq.current) setError(e.message); })
       .finally(() => { if (n === seq.current) setLoading(false); });
-  }, [slug, ticket.id, ticket.worktree, ignoreWs, running, ticket.status, tick]);
+  }, [slug, ticket.id, has, ignoreWs, running, ticket.status, tick]);
   return { diff, error, loading, ignoreWs, setIgnoreWs, reload: () => setTick((t) => t + 1) };
 }
 
 export type DiffState = ReturnType<typeof useTicketDiff>;
+
+/** The ticket's changes can be shown: it has a worktree, or works in the board's folder since a known commit. */
+const hasChanges = (t: Ticket) => !!t.worktree || (!!t.baseSha && !t.workdir);
 
 const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -57,6 +61,7 @@ export function Changes({ slug, ticket, state, onSent, onError }: {
   const ordered = useMemo(() => (view === "tree" ? treeOrder(tree) : files.slice().sort((a, b) => a.path.localeCompare(b.path))), [tree, files, view]);
   const file = files.find((f) => f.path === picked) ?? ordered[0] ?? null;
   const countFor = (path: string) => comments.filter((c) => c.path === path).length;
+  const inFolder = !ticket.worktree;
 
   const send = async () => {
     if (!comments.length || sending) return;
@@ -104,7 +109,7 @@ export function Changes({ slug, ticket, state, onSent, onError }: {
     ...d.files.map((f) => fileRow(f, baseName(f.path), depth)),
   ];
 
-  if (!ticket.worktree) {
+  if (!hasChanges(ticket)) {
     return <div className="panel-scroll muted small changes-none">No version history for this folder, so changes can't be shown. Claude's summary lists the files it changed.</div>;
   }
   if (!diff) {
@@ -117,13 +122,17 @@ export function Changes({ slug, ticket, state, onSent, onError }: {
         <span>{files.length} file{files.length === 1 ? "" : "s"}</span>
         <span className="diff-add">+{diff.additions}</span>
         <span className="diff-del">−{diff.deletions}</span>
-        <span className="changes-ref">vs <code>{diff.base}</code>{diff.branch && <> · <code>{diff.branch}</code></>}</span>
+        <span className="changes-ref" title={inFolder ? "Everything changed in the project folder since this ticket's first run, including edits made there by others" : undefined}>
+          vs <code>{diff.base}</code>{inFolder && " (this ticket's start)"}{diff.branch && <> · <code>{diff.branch}</code></>}
+        </span>
         <span className="spacer" />
         {error && <span className="changes-err" title={error}>Refresh failed</span>}
         <label className="changes-ws"><input type="checkbox" checked={ignoreWs} onChange={(e) => setIgnoreWs(e.target.checked)} /> Hide whitespace</label>
         <button className="btn small" onClick={reload} disabled={loading}>{loading ? "Loading…" : "↻ Refresh"}</button>
       </div>
-      {files.length === 0 ? (
+      {diff.note ? (
+        <div className="panel-scroll muted small changes-none">{diff.note}</div>
+      ) : files.length === 0 ? (
         <div className="panel-scroll muted small">No changes against <code>{diff.base}</code> yet.</div>
       ) : (
         <div className="changes-body">

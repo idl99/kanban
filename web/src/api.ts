@@ -59,6 +59,8 @@ export interface DiffFile {
   hunks: { header: string; lines: DiffLine[] }[];
 }
 
+export type Workspace = "worktree" | "folder";
+
 export interface TicketDiff {
   base: string;
   mergeBase: string;
@@ -66,6 +68,8 @@ export interface TicketDiff {
   files: DiffFile[];
   additions: number;
   deletions: number;
+  /** Shown instead of files when the changes can't be worked out. */
+  note?: string;
 }
 
 export interface FileContent {
@@ -122,6 +126,8 @@ export interface Profile {
   artifacts?: boolean;
   /** Minutes without output before a run counts as stalled; 0: off. Missing: 20. */
   stallMinutes?: number;
+  /** Where new runs work: a worktree per ticket (missing: this) or the project folder itself. */
+  workspace?: Workspace;
   pathExists?: boolean;
   running?: number;
 }
@@ -139,6 +145,8 @@ export interface Ticket {
   worktree: string | null;
   workdir?: string | null;
   branch: string | null;
+  /** HEAD of the board's folder at the ticket's first run there (its Changes base without a worktree). */
+  baseSha?: string | null;
   prUrl: string | null;
   /** Last fetched PR status; stale when pr.url differs from prUrl. */
   pr?: PrStatus | null;
@@ -918,7 +926,7 @@ export const api = {
   reportBug: (input: { title: string; description: string; include: BugBlockId[]; profile?: string; ticketId?: string }) =>
     req<BugReportResult>("POST", "/api/bug-report", { ...input, source: "ui" }),
   profiles: () => req<Profile[]>("GET", "/api/profiles"),
-  createProfile: (p: { name: string; path: string; maxParallel?: number; model?: string; baseBranch?: string }) =>
+  createProfile: (p: { name: string; path: string; maxParallel?: number; model?: string; baseBranch?: string; workspace?: Workspace }) =>
     req<Profile>("POST", "/api/profiles", p),
   updateProfile: (slug: string, p: Partial<Profile>) => req<Profile>("PATCH", `/api/profiles/${slug}`, p),
   deleteProfile: (slug: string) => req<void>("DELETE", `/api/profiles/${slug}`),

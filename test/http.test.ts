@@ -7,7 +7,7 @@ import { run } from "../src/server/git";
 import { createServer, isAllowedRequest } from "../src/server/http";
 import { ptySupported } from "../src/server/shell";
 import { Store } from "../src/server/store";
-import { tempDir } from "./helpers";
+import { makeRepo, tempDir } from "./helpers";
 
 let server: ReturnType<typeof createServer>;
 let store: Store;
@@ -730,4 +730,18 @@ test("the Changes tab explains why a ticket without a worktree has nothing to sh
   const r = await fetch(`${base}/api/profiles/${p.slug}/tickets/${t.id}/diff`);
   expect(r.status).toBe(404);
   expect(((await r.json()) as any).error).toBe("No version history for this folder, so changes can't be shown.");
+});
+
+test("board Workspace setting: default worktree, folder or worktree only", async () => {
+  const path = await makeRepo();
+  let r = await fetch(`${base}/api/profiles`, json("POST", { name: "Ws board", path }));
+  expect(r.status).toBe(201);
+  const p = (await r.json()) as any;
+  expect(p.workspace).toBeUndefined();
+  r = await fetch(`${base}/api/profiles/${p.slug}`, json("PATCH", { workspace: "folder" }));
+  expect(((await r.json()) as any).workspace).toBe("folder");
+  r = await fetch(`${base}/api/profiles/${p.slug}`, json("PATCH", { workspace: "elsewhere" }));
+  expect(r.status).toBe(400);
+  r = await fetch(`${base}/api/profiles`, json("POST", { name: "Ws board 2", path, workspace: "folder" }));
+  expect(((await r.json()) as any).workspace).toBe("folder");
 });

@@ -2154,4 +2154,12 @@ button.hd-mode:disabled { cursor: default; }
 .vh-offer { background: var(--warn-soft); border-radius: 8px; padding: 10px 12px; margin-top: 8px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
 .vh-offer b { color: var(--warn); }
 .vh-actions { display: flex; gap: 8px; margin-top: 6px; }
+.ws-cards { display: flex; flex-direction: column; gap: 6px; border: 0; padding: 0; margin: 0; }
+.ws-cards legend { font-size: 12.5px; font-weight: 560; padding: 0; margin-bottom: 5px; }
+.form label.ws-card { flex-direction: row; align-items: flex-start; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.form label.ws-card input { width: auto; flex: none; margin: 2px 0 0; }
+.form label.ws-card > span { display: flex; flex-direction: column; gap: 2px; }
+.form label.ws-card .muted { font-weight: 400; }
+.form label.ws-card.on { border-color: var(--accent); background: var(--accent-soft); }
+.form label.ws-card.off { cursor: not-allowed; opacity: .6; }
 .vh-ok { background: var(--ok-soft); color: var(--ok); border-radius: 8px; padding: 8px 12px; margin-top: 8px; font-size: 13px; }

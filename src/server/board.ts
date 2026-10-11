@@ -26,7 +26,7 @@ import { BOARD_COMMANDS, commandText, listCommands, MODEL_HELP, parseSlash, REFU
 import { mcpConfig } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
-import { autoHuddlesOn, runCapFor, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
+import { autoHuddlesOn, runCapFor, workspaceOf, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
 import { CLEANUP_TIMEOUT_MS, prepareWorktree, runShell, withSetup, type SetupResult } from "./worktree-setup";
 import { nowIso, slugify } from "./util";
 
@@ -707,7 +707,7 @@ export class Board {
     let prompt = resume ?? withSetup(localizeImages(run.chat?.raw
       ? run.chat.text
       : run.chat
-      ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir, !!profile.artifacts, session.repo)
+      ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir, !!profile.artifacts, session.repo, session.inPlace)
       : fresh
       ? this.freshPrompt(slug, t, session, outputDir)
       : t.runCount === 0 || !session.existed
@@ -1120,11 +1120,12 @@ export class Board {
    * The ticket's runs edit the board's folder itself rather than a copy of their own: a plain folder or a repo with
    * no commits (no worktree can be made), or a ticket that already ran there. Null: not known yet (the folder's
    * version history is still being checked). Linked sessions (workdir) are the user's own and don't count.
-   * Such tickets run one at a time per board (see folderBusy); a board or ticket that opts out of worktrees adds here.
+   * Such tickets run one at a time per board (see folderBusy), as do new tickets on a board set to work in the folder.
    */
   runsInFolder(slug: string, t: Ticket): boolean | null {
     if (t.workdir || t.worktree || t.branch) return false;
     if (t.sessionStarted || t.runCount > 0) return true;
+    if (workspaceOf(this.store.getProfile(slug)) === "folder") return true;
     const kind = this.repoState(slug);
     return kind === undefined ? null : kind === "plain" || kind === "empty";
   }
@@ -1179,7 +1180,9 @@ export class Board {
     // A ticket that already ran in the folder itself stays there: its Claude session belongs to that folder.
     // One with a branch had a worktree (removed on Done): it gets it back at the same path, so its session resumes.
     const ranInPlace = !t.worktree && !t.branch && (!!t.sessionStarted || t.runCount > 0);
-    if (isGit && !t.workdir && !ranInPlace && (!t.worktree || !existsSync(t.worktree))) {
+    // Board set to "Work in the project folder": new tickets run there; one that already has a worktree keeps it.
+    const folderMode = workspaceOf(profile) === "folder" && !t.worktree && !t.branch;
+    if (isGit && !t.workdir && !ranInPlace && !folderMode && (!t.worktree || !existsSync(t.worktree))) {
       const dir = worktreeDir(profile, id);
       let branch = t.branch ?? `ck/${id}-${slugify(t.title)}`;
       if (t.branch && !existsSync(dir) && !(await branchExists(profile.path, t.branch))) {
@@ -1212,6 +1215,11 @@ export class Board {
     }
     // A worktree made elsewhere (branchTicket) may still be setting up.
     await this.setups.get(this.key(slug, id))?.done;
+    // In place on a repo with commits: the folder's HEAD at the first run is what the Changes tab diffs against.
+    if (!t.workdir && !t.worktree && !patch.worktree && !t.baseSha && (repo === "local" || repo === "remote")) {
+      const head = await runCmd(["git", "rev-parse", "HEAD"], profile.path);
+      if (head.code === 0 && head.stdout.trim()) patch.baseSha = head.stdout.trim();
+    }
     if (!t.sessionId) patch.sessionId = crypto.randomUUID();
     if (Object.keys(patch).length) t = this.patch(slug, id, patch);
     const sessionId = t.sessionId!;
@@ -1788,7 +1796,11 @@ export class Board {
         worktree = dir;
         Object.assign(patch, { worktree: dir, branch });
       } else {
-        warnings.push("This folder has no version history, so the branch edits the same files as the original; they run one at a time.");
+        // The source works in the project folder itself: so does the branch, with the same Changes base.
+        if (src.baseSha) patch.baseSha = src.baseSha;
+        warnings.push((await isGitRepo(profile.path))
+          ? "The original works in the project folder, so the branch edits the same files; they run one at a time."
+          : "This folder has no version history, so the branch edits the same files as the original; they run one at a time.");
       }
       const fromCwd = src.workdir ?? src.worktree ?? (src.branch ? worktreeDir(profile, src.id) : profile.path);
       const toCwd = patch.workdir ?? worktree ?? profile.path;

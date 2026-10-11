@@ -350,6 +350,86 @@ test("a reply to another session (a huddle) also waits for the folder, without m
   expect(store.getTicket("p", a.id)!.slotWait ?? null).toBeNull();
 }, 20000);
 
+test("a board with no Workspace setting gives each ticket a worktree", async () => {
+  const p = await setup();
+  expect(p.workspace).toBeUndefined();
+  const t = await board.createTicket("p", { title: "Default", body: "", status: "ready" });
+  await board.whenIdle();
+  const got = store.getTicket("p", t.id)!;
+  expect(got.worktree).toBe(worktreeDir(p, t.id));
+  expect(got.branch).toStartWith(`ck/${t.id}-`);
+  expect(readArgs()[0].cwd).toBe(got.worktree!);
+});
+
+test("Work in the project folder: no worktree or branch, the folder's HEAD is recorded, no branch or PR instructions", async () => {
+  const p = await setup();
+  store.saveProfile({ ...p, workspace: "folder" });
+  const head = (await run(["git", "rev-parse", "HEAD"], p.path)).stdout.trim();
+  const t = await board.createTicket("p", { title: "In folder", body: "", status: "ready" });
+  await board.whenIdle();
+  const got = store.getTicket("p", t.id)!;
+  expect(got.worktree).toBeNull();
+  expect(got.branch).toBeNull();
+  expect(got.baseSha).toBe(head);
+  expect(existsSync(worktreeDir(p, t.id))).toBe(false);
+  expect((await run(["git", "branch", "--list", "ck/*"], p.path)).stdout.trim()).toBe("");
+  const { cwd, prompt } = readArgs()[0];
+  expect(cwd).toBe(p.path);
+  expect(prompt).toContain("Don't create or switch branches");
+  expect(prompt).toContain("to the current branch");
+  expect(prompt).toContain("uncommitted changes you didn't make");
+  expect(prompt).not.toContain("gh pr create");
+  expect(prompt).not.toContain("push the branch");
+  expect(prompt).not.toContain("feature branch");
+  expect(prompt).not.toContain("merge --no-edit");
+});
+
+test("Work in the project folder runs tickets one at a time", async () => {
+  const p = await setup({ maxParallel: 3 });
+  store.saveProfile({ ...p, workspace: "folder" });
+  process.env.FAKE_MODE = "slow";
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  for (let i = 0; i < 100 && readArgs().length < 1; i++) await Bun.sleep(50);
+  await Bun.sleep(300);
+  expect(board.isRunning("p", a.id)).toBe(true);
+  expect(board.isRunning("p", b.id)).toBe(false);
+  expect(board.folderWait("p", store.getTicket("p", b.id)!)).toBe(true);
+  process.env.FAKE_MODE = "ok";
+  board.stop("p", a.id);
+  await board.whenIdle();
+  expect(store.getTicket("p", b.id)!.outcome).toBe("done");
+  expect(readArgs().map((c) => c.cwd)).toEqual([p.path, p.path]);
+}, 20000);
+
+test("switching Workspace affects new tickets only: existing worktrees stay, switching back brings worktrees back", async () => {
+  const p = await setup({ maxParallel: 3 });
+  const a = await board.createTicket("p", { title: "a", body: "", status: "ready" });
+  await board.whenIdle();
+  const wt = store.getTicket("p", a.id)!.worktree!;
+  expect(wt).toBe(worktreeDir(p, a.id));
+  store.saveProfile({ ...p, workspace: "folder" });
+  // The worktree ticket isn't one that edits the folder, so it doesn't hold folder tickets back.
+  expect(board.runsInFolder("p", store.getTicket("p", a.id)!)).toBe(false);
+  await board.chat("p", a.id, "one more change");
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.cwd).toBe(wt);
+  expect(store.getTicket("p", a.id)!.worktree).toBe(wt);
+  const b = await board.createTicket("p", { title: "b", body: "", status: "ready" });
+  await board.whenIdle();
+  expect(store.getTicket("p", b.id)!.worktree).toBeNull();
+  expect(readArgs().at(-1)!.cwd).toBe(p.path);
+  store.saveProfile({ ...p, workspace: "worktree" });
+  const c = await board.createTicket("p", { title: "c", body: "", status: "ready" });
+  await board.whenIdle();
+  expect(store.getTicket("p", c.id)!.worktree).toBe(worktreeDir(p, c.id));
+  // b already worked in the folder: its session belongs there, so it stays.
+  await board.chat("p", b.id, "again");
+  await board.whenIdle();
+  expect(readArgs().at(-1)!.cwd).toBe(p.path);
+  expect(store.getTicket("p", b.id)!.worktree).toBeNull();
+}, 20000);
+
 test("tickets with worktrees of their own still run side by side", async () => {
   await setup({ maxParallel: 3 });
   process.env.FAKE_MODE = "slow";

@@ -40,6 +40,8 @@ export interface TicketDiff {
   files: DiffFile[];
   additions: number;
   deletions: number;
+  /** Shown instead of files when the changes can't be worked out (e.g. the folder's history was rewritten). */
+  note?: string;
 }
 
 export class DiffError extends Error {
@@ -78,6 +80,28 @@ export async function ticketDiff(dir: string, base: string, opts: { ignoreWhites
   if (!existsSync(dir)) throw new DiffError(404, "the ticket's worktree no longer exists");
   const mb = await mergeBase(dir, base);
   if (!mb) throw new DiffError(400, `no common ancestor with the base branch "${base}"`);
+  return diffFrom(dir, mb, opts);
+}
+
+/** Says why a folder's changes can't be shown since `sha`. */
+export const REWRITTEN_NOTE = "The project folder's version history changed since this ticket started (for example a branch switch or a reset), so its changes can't be shown here. Claude's summary lists the files it changed.";
+
+/**
+ * A ticket that works in the board's folder itself: everything there (commits, staged, unstaged and untracked)
+ * since `sha`, the folder's HEAD at the ticket's first run. If `sha` is no longer an ancestor of HEAD, a note
+ * replaces the files.
+ */
+export async function folderDiff(dir: string, sha: string, opts: { ignoreWhitespace?: boolean } = {}): Promise<TicketDiff> {
+  if (!existsSync(dir)) throw new DiffError(404, "the board's folder no longer exists");
+  const ref = sha.slice(0, 7);
+  if ((await run(["git", "merge-base", "--is-ancestor", sha, "HEAD"], dir)).code !== 0) {
+    const branch = (await run(["git", "branch", "--show-current"], dir)).stdout.trim() || null;
+    return { base: ref, mergeBase: sha, branch, files: [], additions: 0, deletions: 0, note: REWRITTEN_NOTE };
+  }
+  return diffFrom(dir, { ref, sha }, opts);
+}
+
+async function diffFrom(dir: string, mb: { ref: string; sha: string }, opts: { ignoreWhitespace?: boolean }): Promise<TicketDiff> {
   const branch = (await run(["git", "branch", "--show-current"], dir)).stdout.trim() || null;
 
   const index = join(tmpdir(), `ckanban-diff-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.index`);

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type ClaudeProject, type Profile, type SetupDetection } from "./api";
+import { api, type ClaudeProject, type Profile, type RepoKind, type SetupDetection, type Workspace } from "./api";
 import { capInputText, parseCap } from "./capText";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { Modal } from "./Modal";
@@ -38,6 +38,11 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
   const cap = parseCap(capText);
   const capError = cap === undefined ? "An amount in $, e.g. 5 (empty: no cap)" : null;
   const [artifacts, setArtifacts] = useState(!!profile?.artifacts);
+  const [workspace, setWorkspace] = useState<Workspace>(profile?.workspace ?? "worktree");
+  // The folder's version history (VersionHistoryOffer checks it): without commits there is nothing to make copies from.
+  const [repo, setRepo] = useState<RepoKind | null>(null);
+  const noHistory = repo === "plain" || repo === "empty";
+  const shownWorkspace: Workspace = noHistory ? "folder" : workspace;
   const [stallText, setStallText] = useState(String(profile?.stallMinutes ?? 20));
   const stallMinutes = Number(stallText);
   const stallError = /^\d+$/.test(stallText.trim()) && stallMinutes <= 1440 ? null : "Minutes from 0 (off) to 1440";
@@ -95,12 +100,12 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
     try {
       const p = profile
         ? await api.updateProfile(profile.slug, {
-          name, path, maxParallel, model: model || null, autoHuddles, runCapUsd: cap || null, artifacts, stallMinutes,
+          name, path, maxParallel, model: model || null, autoHuddles, runCapUsd: cap || null, artifacts, stallMinutes, workspace,
           // A file typed but not yet added with Enter still counts.
           copyFiles: newFile.trim() && !copyFiles.includes(newFile.trim()) ? [...copyFiles, newFile.trim()] : copyFiles,
           setupCommand: setupCommand.trim(), cleanupCommand: cleanupCommand.trim(), setupDetected: detected,
         })
-        : await api.createProfile({ name, path, maxParallel, model: model || undefined });
+        : await api.createProfile({ name, path, maxParallel, model: model || undefined, workspace });
       onSaved(p);
     } catch (e: any) {
       setErr(e.message);
@@ -180,9 +185,34 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
               aria-label="Folder path" />
             <button type="button" className="btn" onClick={browse} disabled={picking}>{picking ? "Choosing…" : "Browse…"}</button>
           </div>
-          <span className="muted small">With version history, each ticket works on its own copy of the folder. Without it, Claude edits the folder directly, one ticket at a time.</span>
-          <VersionHistoryOffer path={path} />
+          <VersionHistoryOffer path={path} onRepo={setRepo} />
         </div>
+
+        <fieldset className="ws-cards">
+          <legend>Workspace</legend>
+          <label className={`ws-card ${shownWorkspace === "worktree" ? "on" : ""} ${noHistory ? "off" : ""}`}
+            title={noHistory ? "Turn on version history above to use this" : undefined}>
+            <input type="radio" name="workspace" checked={shownWorkspace === "worktree"} disabled={noHistory} onChange={() => setWorkspace("worktree")} />
+            <span>
+              <span>Worktree per ticket <span className="muted small">(default)</span></span>
+              <span className="muted small">
+                {noHistory
+                  ? "Needs version history: turn it on above. Each ticket then gets its own copy of the folder, and tickets run in parallel."
+                  : "Each ticket gets its own branch and copy of the folder (a git worktree), so tickets run in parallel."}
+              </span>
+            </span>
+          </label>
+          <label className={`ws-card ${shownWorkspace === "folder" ? "on" : ""}`}>
+            <input type="radio" name="workspace" checked={shownWorkspace === "folder"} onChange={() => setWorkspace("folder")} />
+            <span>
+              <span>Work in the project folder</span>
+              <span className="muted small">
+                Claude edits your folder directly, with no branches. Tickets run one at a time so they don't clash.
+                {profile && " Changing this affects new tickets only; tickets that already have their own copy keep it."}
+              </span>
+            </span>
+          </label>
+        </fieldset>
 
         <label>
           Name

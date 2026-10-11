@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, type VersionHistory } from "./api";
+import { api, type RepoKind, type VersionHistory } from "./api";
 
 /**
  * "This folder has no version history": offers to turn it on (a local git repo with one first snapshot; nothing is
  * uploaded) for a plain folder or a repo with no commits. Hidden when git isn't installed. New board and board settings.
  */
-export function VersionHistoryOffer({ path }: { path: string }) {
+export function VersionHistoryOffer({ path, onRepo }: { path: string; /** What the folder's version history is (null: unknown). */ onRepo?: (repo: RepoKind | null) => void }) {
   const [info, setInfo] = useState<VersionHistory | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -17,12 +17,17 @@ export function VersionHistoryOffer({ path }: { path: string }) {
     setDismissed(false);
     setDone(false);
     setErr(null);
+    onRepo?.(null);
     const p = path.trim();
     if (!p.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(p)) return;
     let live = true;
     // Typing a path checks it once the user pauses.
     const timer = setTimeout(() => {
-      api.versionHistory(p).then((v) => { if (live) setInfo(v); }).catch(() => {});
+      api.versionHistory(p).then((v) => {
+        if (!live) return;
+        setInfo(v);
+        onRepo?.(v.repo);
+      }).catch(() => {});
     }, 300);
     return () => {
       live = false;
@@ -34,8 +39,9 @@ export function VersionHistoryOffer({ path }: { path: string }) {
     setBusy(true);
     setErr(null);
     try {
-      await api.enableVersionHistory(path.trim());
+      const r = await api.enableVersionHistory(path.trim());
       setDone(true);
+      onRepo?.(r.repo);
     } catch (e: any) {
       setErr(e.message);
     } finally {

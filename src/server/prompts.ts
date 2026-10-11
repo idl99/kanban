@@ -72,7 +72,7 @@ function whereRule(t: Ticket, repo: RepoKind, linked: boolean, inPlace: boolean)
   }
   if (repo === "plain") return `You are working directly in the project folder. It has no version history (it is not a git repository), so edit its files in place.`;
   if (repo === "empty") return `You are working directly in the project folder. Its version history has no first snapshot yet, so edit its files in place.`;
-  if (inPlace) return `You are working directly in the project folder (not an isolated worktree). Don't switch branches.`;
+  if (inPlace) return `You are working directly in the project folder on its current branch (not an isolated worktree). Don't create or switch branches.`;
   return `You are working in a dedicated git worktree on this ticket's own branch${t.branch ? ` (\`${t.branch}\`)` : ""}.`;
 }
 
@@ -93,6 +93,12 @@ function localLand(home?: Home): string {
 }
 
 /**
+ * A run in the project folder itself on a repo with commits (board set to "Work in the project folder"): it commits
+ * to whatever branch is checked out and leaves everyone else's uncommitted work alone.
+ */
+const FOLDER_LAND = "Before you start, run `git status`: if the folder already has uncommitted changes you didn't make, leave them exactly as they are (don't stash, reset, check out, commit or delete them) and mention them in your summary. If it changes files: commit only the files you changed (`git add <paths>`, never `git add -A` or `git commit -a`) to the current branch with a clear message. Don't push or open a pull request unless the project's CLAUDE.md says to; prUrl is null otherwise.";
+
+/**
  * What a run does with changed files, by the folder's version history. Missing git, commits, a remote or \`gh\` is
  * never a reason to stop: the run edits in place, commits locally or pushes, whichever the folder allows.
  */
@@ -100,7 +106,7 @@ function landRule(repo: RepoKind, inPlace: boolean, existing = false, home?: Hom
   const list = `End with status "done" and list every file you created, changed or deleted in your summary.`;
   if (repo === "plain") return `If it changes files: edit them in place; there is nothing to commit, push or open a pull request for. ${list}`;
   if (repo === "empty") return `If it changes files: edit them in place; don't commit, push or open a pull request (the folder's version history has no first snapshot yet). ${list}`;
-  if (inPlace) return `If it changes files: edit them in place and commit them only if the ticket asks for it; don't push. ${list}`;
+  if (inPlace) return `${FOLDER_LAND} ${list}`;
   if (repo === "local") return localLand(home);
   return existing
     ? `If it changes files: commit your changes, push the branch and open a pull request with \`gh pr create\` (if one already exists, push new commits to the same branch to update it), and include the PR URL in the result line. If \`gh\` isn't available, push the branch and say in your summary that the pull request still needs opening.`
@@ -355,7 +361,7 @@ export function interruptedPrompt(): string {
 }
 
 /** A message the user typed in the ticket's chat. Their text comes first; board instructions are wrapped so the UI can hide them. */
-export function chatPrompt(t: Ticket, text: string, mode: ChatMode, outputDir: string, artifacts = false, repo: RepoKind = "remote"): string {
+export function chatPrompt(t: Ticket, text: string, mode: ChatMode, outputDir: string, artifacts = false, repo: RepoKind = "remote", inPlace = false): string {
   const typed = text.trim();
   if (mode === "refine") {
     const start = typed ? "" : `The user just moved this ticket to Planning and is waiting for you in the ticket chat. Start now:
@@ -397,7 +403,7 @@ ${TEAMMATE_FORMAT}`)}`;
   return `${typed}
 
 ${context("", `(Sent from the kanban board's ticket chat for "${t.title}". The user reads your reply there, not in a terminal.)
-Act on the message as you would in an interactive session. ${repo === "remote" ? "If a pull request already exists, push new commits to the same branch." : canCommit(repo) ? "This repo has no remote: commit locally and don't push; then merge this branch into the base branch in the project folder when that folder is clean and on it (as in your earlier instructions)." : "This folder has no version history yet: edit files in place and say which ones you changed."} Save research/writing deliverables in ${outputDir}. ${PLAIN_WORDS}
+Act on the message as you would in an interactive session. ${inPlace && canCommit(repo) ? "You work in the project folder on its current branch: don't create or switch branches, commit only the files you change with a clear message, leave uncommitted changes you didn't make alone, and don't push unless the project's CLAUDE.md says to." : repo === "remote" ? "If a pull request already exists, push new commits to the same branch." : canCommit(repo) ? "This repo has no remote: commit locally and don't push; then merge this branch into the base branch in the project folder when that folder is clean and on it (as in your earlier instructions)." : "This folder has no version history yet: edit files in place and say which ones you changed."} Save research/writing deliverables in ${outputDir}. ${PLAIN_WORDS}
 If the message only asks you to plan, audit, review, list ideas, propose or discuss, and no changes are wanted yet (e.g. "don't change anything yet"): do not modify any files, answer, and end your reply with <ckanban-move to="planning"/> on its own line. The board then moves the ticket to Planning, where the next steps get shaped before any work.
 If you need decisions from the user, ask with the ask_questions tool.
 ${bugReportRule(t)}

@@ -3,7 +3,7 @@ import { readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Board } from "../src/server/board";
-import { MAX_FILE_LINES, parseDiff, ticketDiff, type DiffFile } from "../src/server/diff";
+import { folderDiff, MAX_FILE_LINES, parseDiff, REWRITTEN_NOTE, ticketDiff, type DiffFile } from "../src/server/diff";
 import { Bus } from "../src/server/events";
 import { run } from "../src/server/git";
 import { createServer } from "../src/server/http";
@@ -106,6 +106,35 @@ test("an origin/ copy ahead of the local base branch wins", async () => {
 test("missing worktree and unknown base fail clearly", async () => {
   await expect(ticketDiff(join(repo, "nope"), "main")).rejects.toThrow("no longer exists");
   await expect(ticketDiff(repo, "no-such-branch")).rejects.toThrow("no common ancestor");
+});
+
+test("folderDiff: commits and uncommitted work in the folder since the ticket's first run", async () => {
+  const dir = await makeRepo();
+  const start = (await run(["git", "rev-parse", "HEAD"], dir)).stdout.trim();
+  writeFileSync(join(dir, "README.md"), "hi\nthere\n");
+  await git(dir, "commit", "-qam", "edit readme");
+  writeFileSync(join(dir, "new.ts"), "x\n");
+  const d = await folderDiff(dir, start);
+  expect(d.note).toBeUndefined();
+  expect(d.mergeBase).toBe(start);
+  expect(d.base).toBe(start.slice(0, 7));
+  expect(d.branch).toBe("main");
+  expect(d.files.map((f) => f.path).sort()).toEqual(["README.md", "new.ts"]);
+});
+
+test("folderDiff: a start commit no longer in the folder's history gives a plain note, not an error", async () => {
+  const dir = await makeRepo();
+  writeFileSync(join(dir, "a.ts"), "a\n");
+  await git(dir, "add", ".");
+  await git(dir, "commit", "-qm", "a");
+  const start = (await run(["git", "rev-parse", "HEAD"], dir)).stdout.trim();
+  await git(dir, "reset", "-q", "--hard", "HEAD~1");
+  writeFileSync(join(dir, "b.ts"), "b\n");
+  await git(dir, "add", ".");
+  await git(dir, "commit", "-qm", "b");
+  const d = await folderDiff(dir, start);
+  expect(d.note).toBe(REWRITTEN_NOTE);
+  expect(d.files).toEqual([]);
 });
 
 test("parseDiff marks long files too large and drops their content", () => {

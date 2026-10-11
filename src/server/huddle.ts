@@ -1686,7 +1686,9 @@ export class Huddles {
     const t = this.store.getTicket(slug, h.hostTicket)!;
     const dir = agentDir(profile, h, p);
     const branch = p.branch ?? `ck/${h.hostTicket}-${p.handle}`;
-    await addWorktree(profile.path, dir, branch, t.branch ?? profile.baseBranch);
+    // A host working in the project folder itself has no branch of its own: start from what it has checked out.
+    const head = t.branch || t.workdir ? null : (await git(["git", "rev-parse", "HEAD"], host.dir)).stdout.trim();
+    await addWorktree(profile.path, dir, branch, t.branch ?? (head || profile.baseBranch));
     this.updateP(slug, h.id, p.handle, { worktree: dir, branch });
     return dir;
   }

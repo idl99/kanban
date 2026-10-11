@@ -35,7 +35,17 @@ export interface Profile {
   artifacts?: boolean;
   /** Minutes without stream output before a run counts as stalled (the Inbox asks what to do). 0: off. Missing: 20. */
   stallMinutes?: number;
+  /**
+   * Where new runs work: "worktree", a copy of the repo per ticket on its own branch (parallel); "folder", the board's
+   * folder itself on its current branch (one ticket at a time). Missing: worktree. Only new runs follow a change.
+   */
+  workspace?: Workspace;
 }
+
+export type Workspace = "worktree" | "folder";
+
+/** Board setting "Workspace": a worktree per ticket unless set to the project folder. */
+export const workspaceOf = (p: Pick<Profile, "workspace"> | null | undefined): Workspace => (p?.workspace === "folder" ? "folder" : "worktree");
 
 /** Board setting "Auto huddles": on unless turned off. */
 export const autoHuddlesOn = (p: Pick<Profile, "autoHuddles"> | null | undefined): boolean => p?.autoHuddles !== false;
@@ -91,6 +101,8 @@ export interface Ticket {
   /** Folder of a linked pre-existing Claude session (runs happen here instead of a worktree). */
   workdir?: string | null;
   branch: string | null;
+  /** HEAD of the board's folder when the ticket first ran there in place (the Changes tab's base without a worktree). */
+  baseSha?: string | null;
   prUrl: string | null;
   /** Last fetched state of prUrl's PR (checks, conflicts, reviews); stale once pr.url differs from prUrl. */
   pr?: PrStatus | null;

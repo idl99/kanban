@@ -244,8 +244,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const huddleState = useHuddle(slug, ticket.id, huddlePick);
   const huddle = huddleState.latest;
   // The Plan tab exists only while the ticket has children; Changes while it has a worktree, or it ran in the board's
-  // folder itself (no version history), where the tab says why it can't show changes.
-  const inFolder = !ticket.worktree && !ticket.workdir && !ticket.branch && (ticket.runCount > 0 || !!ticket.sessionStarted);
+  // folder itself: its changes since the first run there, or (no version history) why they can't be shown.
+  const inFolder = !ticket.worktree && !ticket.workdir && !ticket.branch && (ticket.runCount > 0 || !!ticket.sessionStarted || !!ticket.baseSha);
   const tab = (tabPick === "plan" && !children.length) || (tabPick === "changes" && !ticket.worktree && !inFolder) ? "chat" : tabPick;
   const diffState = useTicketDiff(slug, ticket);
   const [outputCount, setOutputCount] = useState(0);

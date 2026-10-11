@@ -291,3 +291,24 @@ test("the auto huddle and huddle prompts don't ask to commit in a folder without
   expect(plain).not.toContain("done and committed");
   expect(firstRunPrompt(t, { repo: "remote", outputDir: "/o", autoHuddles: true })).toContain("done and committed");
 });
+
+test("work in the project folder on a git repo: commit to the current branch, no branch, push or PR steps", () => {
+  const t = { ...ticket, parentId: "t_plan" } as Ticket;
+  for (const repo of ["remote", "local"] as const) {
+    const p = firstRunPrompt(t, { repo, inPlace: true, outputDir: "/out", home: { folder: "/proj", baseBranch: "main" } });
+    expect(p).toContain("Don't create or switch branches");
+    expect(p).toContain("to the current branch");
+    expect(p).toContain("mention them in your summary");
+    expect(p).not.toContain("gh pr create");
+    expect(p).not.toContain("push the branch");
+    expect(p).not.toContain("rebase");
+    expect(p).not.toContain("merge --no-edit");
+    const r = resumePrompt(t, [], "/out", false, false, repo, true);
+    expect(r).toContain("to the current branch");
+    expect(r).not.toContain("gh pr create");
+    expect(r).not.toContain("push new commits");
+    const c = chatPrompt(t, "hi", "act", "/out", false, repo, true);
+    expect(c).toContain("don't create or switch branches");
+    expect(c).not.toContain("push new commits");
+  }
+});

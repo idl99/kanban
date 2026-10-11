@@ -5,7 +5,7 @@ import { ConflictError, recoveryFor, type Board } from "./board";
 import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
 import type { Bus, BusEvent } from "./events";
 import { listCommands } from "./commands";
-import { DiffError, ticketDiff } from "./diff";
+import { DiffError, folderDiff, ticketDiff } from "./diff";
 import { detectBaseBranch, enableVersionHistory, isGitRepo, repoKind, resolveBaseBranch, which } from "./git";
 import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, resolveConflicts, sendFailures, type PrDeps } from "./prpoller";
 import { resumeCommand } from "./prompts";
@@ -36,7 +36,7 @@ import { SpendIndex } from "./spend";
 import { ClaudeLogIndex, readWindows, recordWindow, ticketRuns, ticketUsage, UsageCache, windowsNeeded } from "./ticket-usage";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
-import { runCapFor, STATUSES, type Profile, type ScheduleEditor, type Status, type Ticket } from "./types";
+import { runCapFor, STATUSES, type Profile, type ScheduleEditor, type Status, type Ticket, type Workspace } from "./types";
 import { nowIso, slugify } from "./util";
 import { applyDetection, detectSetup } from "./worktree-setup";
 
@@ -635,6 +635,7 @@ export function createServer(deps: ServerDeps) {
           maxParallel: Math.max(1, Number(b.maxParallel) || DEFAULT_MAX_PARALLEL),
           model: b.model || null,
           createdAt: nowIso(),
+          ...(b.workspace !== undefined ? { workspace: workspaceValue(b.workspace) } : {}),
         };
         const saved = applyDetection(profile, await detectSetup(path));
         store.saveProfile(saved);
@@ -669,6 +670,7 @@ export function createServer(deps: ServerDeps) {
           next.runCapUsd = capValue(b.runCapUsd, true) || null;
         }
         if (b.artifacts !== undefined) next.artifacts = !!b.artifacts;
+        if (b.workspace !== undefined) next.workspace = workspaceValue(b.workspace);
         if (b.stallMinutes !== undefined) {
           const n = b.stallMinutes;
           if (typeof n !== "number" || !Number.isInteger(n) || n < 0 || n > 1440) throw new HttpError(400, "stallMinutes must be a whole number of minutes from 0 (off) to 1440");
@@ -1023,8 +1025,18 @@ export function createServer(deps: ServerDeps) {
       });
     }
     if (action === "diff" && m === "GET") {
-      // The Changes tab: the worktree (committed, uncommitted and untracked) against its merge-base with the base branch.
+      // The Changes tab: the worktree (committed, uncommitted and untracked) against its merge-base with the base branch;
+      // a ticket working in the board's folder itself, that folder against its HEAD at the ticket's first run.
       const t = store.getTicket(slug, id)!;
+      const ws = url.searchParams.get("w") === "1";
+      if (!t.worktree && t.baseSha && !t.workdir) {
+        try {
+          return json(await folderDiff(profile.path, t.baseSha, { ignoreWhitespace: ws }));
+        } catch (e) {
+          if (e instanceof DiffError) throw new HttpError(e.status, e.message);
+          throw e;
+        }
+      }
       if (!t.worktree) throw new HttpError(404, "No version history for this folder, so changes can't be shown.");
       try {
         const base = profile.baseBranch || (await detectBaseBranch(t.worktree));
@@ -1610,4 +1622,10 @@ function capValue(v: unknown, allowZero: boolean): number | null {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0 || (n === 0 && !allowZero)) throw new HttpError(400, `spending cap must be a positive amount${allowZero ? ", 0 for none" : ""}, or null`);
   return n;
+}
+
+/** The board's Workspace setting from a request. */
+function workspaceValue(v: unknown): Workspace {
+  if (v !== "worktree" && v !== "folder") throw new HttpError(400, 'workspace must be "worktree" or "folder"');
+  return v;
 }
