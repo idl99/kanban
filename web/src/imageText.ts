@@ -45,3 +45,11 @@ export function swapHolder(value: string, holder: string, replacement: string, s
   const shift = (i: number) => (i >= b ? i + replacement.length - (b - a) : i > a ? a + replacement.length : i);
   return { value: value.slice(0, a) + replacement + value.slice(b), start: shift(start), end: shift(end) };
 }
+
+/**
+ * Where picked images go: at the selection once the user has been in the box, otherwise at the end (an
+ * untouched box reports its caret at 0, and a phone user who taps the button first wants them below the text).
+ */
+export function pickRange(length: number, start: number, end: number, touched: boolean): [number, number] {
+  return touched ? [start, end] : [length, length];
+}

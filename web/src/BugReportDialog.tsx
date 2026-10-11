@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, safeHref, type BugBlock, type BugBlockId, type BugReportResult } from "./api";
 import { ExternalIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
+import { ImagePickButton } from "./ImagePickButton";
 import { Modal } from "./Modal";
 
 const TEMPLATE = `**What happened**
@@ -30,6 +31,7 @@ export function BugReportDialog({ ticket, onClose }: {
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<BugReportResult | null>(null);
   const images = useImagePaste(setDescription);
+  const descRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     api.bugDraft(ticket ? { profile: ticket.profile, ticketId: ticket.id } : null)
@@ -90,11 +92,15 @@ export function BugReportDialog({ ticket, onClose }: {
         </label>
         <label>
           Description
-          <textarea rows={9} value={description} onChange={(e) => setDescription(e.target.value)}
+          <textarea ref={descRef} rows={9} value={description} onChange={(e) => setDescription(e.target.value)}
             className={images.dragOver ? "drop-target" : undefined} {...images.handlers}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(e); }} />
           {images.error && <span className="form-error">{images.error}</span>}
         </label>
+        <div className="bug-pick">
+          <ImagePickButton images={images} target={descRef} disabled={busy} />
+          <span className="muted small">{images.uploading ? "Uploading image…" : "Screenshots help. You can also paste or drop them into the description."}</span>
+        </div>
         <div className="field">
           <div className="field-label">Included context</div>
           {blocks === null ? (

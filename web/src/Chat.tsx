@@ -15,6 +15,7 @@ import { AgentRows } from "./AgentRow";
 import { ToolRows } from "./ToolRows";
 import { ArrowDownIcon, BranchIcon, CloseIcon, FileCodeIcon, FileTextIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
+import { ImagePickButton } from "./ImagePickButton";
 import { NewTicketsCard } from "./NewTicketsCard";
 import { KeyHint } from "./KeyHint";
 import { ProposalCard } from "./ProposalCard";
@@ -801,6 +802,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             <span className="composer-keys"> Enter to send · Shift+Enter for a new line{queued.some((q) => !q.peer && editable(q)) && " · ↑ to edit your queued message"}</span>
           </span>
           <span className="composer-actions">
+            <ImagePickButton images={images} target={composer} disabled={stopping} />
             {running && <button className="btn danger small" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
             <button className="btn primary small" disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? "Uploading…" : "Send"}<KeyHint keys="↵" /></button>
           </span>

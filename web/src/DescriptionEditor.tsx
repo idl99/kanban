@@ -1,4 +1,5 @@
 import { useMemo, type KeyboardEvent, type RefObject } from "react";
+import { ImagePickButton } from "./ImagePickButton";
 import type { useImagePaste } from "./imagePaste";
 import { useSlashCommands, useSlashPicker } from "./SlashPicker";
 import { useSnippetPicker } from "./SnippetPicker";
@@ -12,7 +13,7 @@ export function useDescriptionCommands(slug: string, ticketId?: string): SlashCo
 
 /**
  * The markdown description box of new tickets, the ticket panel and schedules: `@` inserts a snippet,
- * `/` picks a skill (just text: Claude reads it like the rest), images paste or drop in. One look everywhere.
+ * `/` picks a skill (just text: Claude reads it like the rest), images paste, drop or pick in. One look everywhere.
  */
 export function DescriptionEditor({ slug, ticketId, value, setValue, images, inputRef, rows = 8, placeholder, autoFocus, fill, onKeyDown }: {
   slug: string;
@@ -48,6 +49,7 @@ export function DescriptionEditor({ slug, ticketId, value, setValue, images, inp
         <span><kbd>@</kbd> snippet</span>
         <span><kbd>/</kbd> skill</span>
         {images && <span>{images.uploading ? "Uploading image…" : "Paste images"}</span>}
+        {images && <ImagePickButton images={images} target={inputRef} className="desc-editor-pick" />}
       </div>
       {snippets.popup}
       {slash.popup}

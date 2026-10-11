@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { insertBlock, mapIndex, swapHolder } from "../web/src/imageText";
+import { insertBlock, mapIndex, pickRange, swapHolder } from "../web/src/imageText";
 
 const A = "![uploading image 1…]()";
 const B = "![uploading image 2…]()";
@@ -56,4 +56,10 @@ test("second paste after the first upload landed goes after it", () => {
   e = insertBlock(e.value, e.start, e.end, [B]);
   e = swapHolder(e.value, B, urlB, e.start, e.end);
   expect(e.value).toBe(`look\n${urlA}\n${urlB}`);
+});
+
+test("pickRange uses the selection only once the box was touched", () => {
+  expect(pickRange(20, 0, 0, false)).toEqual([20, 20]);
+  expect(pickRange(20, 5, 8, true)).toEqual([5, 8]);
+  expect(pickRange(0, 0, 0, false)).toEqual([0, 0]);
 });
