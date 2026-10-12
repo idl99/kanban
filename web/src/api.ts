@@ -881,6 +881,16 @@ export interface BugReportResult {
   screenshots: string[];
 }
 
+/** A question the daemon wants the user to answer before it goes on (e.g. a run and a huddle on the same ticket). */
+export interface ServerConfirm { kind: string; message: string }
+let askConfirm: ((q: ServerConfirm) => Promise<boolean>) | null = null;
+/** The user answered a ServerConfirm with Cancel: nothing changed. */
+export class NotStarted extends Error {
+  constructor() { super("Not started."); }
+}
+/** ParallelConfirm registers the dialog that answers ServerConfirm questions (null: unregister). */
+export function setServerConfirm(fn: typeof askConfirm) { askConfirm = fn; }
+
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const hasBody = method === "POST" || method === "PATCH" || method === "PUT";
   const r = await fetch(url, {
@@ -891,6 +901,12 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   });
   if (r.status === 204) return undefined as T;
   const data = await r.json().catch(() => ({}));
+  // The daemon asks first (409 + confirm): resend with the user's yes, or stop with nothing started.
+  const confirm = (data as any).confirm;
+  if (r.status === 409 && typeof confirm === "string" && askConfirm && body && typeof body === "object") {
+    if (await askConfirm({ kind: confirm, message: (data as any).error ?? "" })) return req<T>(method, url, { ...body, confirmParallel: true });
+    throw new NotStarted();
+  }
   if (!r.ok) throw new Error((data as any).error ?? `${r.status} ${r.statusText}`);
   return data as T;
 }

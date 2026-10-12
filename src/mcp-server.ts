@@ -75,6 +75,11 @@ function needsList(args: any): string[] | undefined {
   return args.needs.map((n: string) => n.trim().toLowerCase()).filter(Boolean);
 }
 
+/** Why propose_huddle is refused in Planning, and what to do instead (see REVIEW_HUDDLE_FORMAT in prompts.ts). */
+const PLANNING_HUDDLE =
+  "this ticket's work hasn't started (Backlog or Planning), so no huddle starts before it: put it in the proposed ticket's description as a \"## Review huddle\" section " +
+  "(Template: auto-review or another template, or a short roster; what it should check; Budget: ~$N). The ticket's run does the work first, then starts that huddle itself.";
+
 /** The ticket a board run belongs to ("<profile>/<ticket id>" in CKANBAN_TICKET), or null outside runs. */
 function runTicketId(ctx: ToolContext): string | null {
   return ctx.env[RUN_ENV]?.split("/")[1] || null;
@@ -891,7 +896,8 @@ const HUDDLE_TOOLS: Tool[] = [
       "For each entry choose workspace: shared (read-only in this ticket's worktree) for review and QA, own (its own worktree and branch) when several agents would edit code in parallel. " +
       "A lead (e.g. qa-lead) gathers findings so you are woken with one consolidated list. Keep it small (limit 8 including you). Nothing starts by the call. " +
       `Or give a template (a whole roster with its rules: rounds, budget, report format; built-in: ${BUILTIN_TEMPLATES.map((t) => t.name).join(", ")}; list_huddle_presets lists the board's) ` +
-      "and leave out roster to use the template's.",
+      "and leave out roster to use the template's. " +
+      "Refused while the ticket is in Backlog or Planning: there, write the huddle into the proposed ticket as a \"## Review huddle\" section instead, so the ticket's run does the work first and starts the huddle after it.",
     inputSchema: {
       type: "object",
       properties: {
@@ -905,6 +911,10 @@ const HUDDLE_TOOLS: Tool[] = [
     async run(args, ctx) {
       // The board's presets, when the daemon is reachable; otherwise only the shape is checked here and the daemon checks names at Start.
       const slug = await slugFor(args, ctx).catch(() => null);
+      // In Backlog or Planning the work hasn't started: a huddle started now would run alongside the ticket's own run once it starts.
+      const own = runTicketId(ctx);
+      const host = slug && own ? await ctx.client.getTicket(slug, own).catch(() => null) : null;
+      if (host?.status === "planning" || host?.status === "backlog") throw new ClientError(PLANNING_HUDDLE);
       const names = slug ? await ctx.client.listHuddlePresets(slug).then((ps) => ps.map((p) => p.name), () => undefined) : undefined;
       const template = typeof args?.template === "string" && args.template.trim() ? args.template.trim() : null;
       if (args?.template !== undefined && args?.template !== null && !template) throw new ClientError("template must be a template name");
@@ -926,7 +936,8 @@ const HUDDLE_TOOLS: Tool[] = [
       "yourself, before landing important or risky work, instead of proposing one. Same inputs as propose_huddle plus a required reason (posted on the ticket). " +
       "Default template: auto-review-important for ⭐ tickets, else auto-review. After it starts, end your turn: the board keeps the ticket In Progress and wakes you " +
       "with the findings. If another auto huddle is live on the board, the ticket waits for the slot and the board wakes you when it frees. " +
-      "Refused in chats and Planning, when the setting is off, or when the ticket already has a huddle: use propose_huddle then.",
+      "A ticket whose description has a \"## Review huddle\" section asked for one: start it after the work with that section's template, roster and budget, even when the setting is off. " +
+      "Refused in chats and Planning, when the setting is off and the ticket has no such section, or when the ticket already has a huddle: use propose_huddle then.",
     inputSchema: {
       type: "object",
       properties: {

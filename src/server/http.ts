@@ -97,9 +97,21 @@ interface ShellSocket {
 }
 
 class HttpError extends Error {
-  constructor(public status: number, message: string) {
+  /** confirm: the UI asks the user and resends with `confirmParallel: true` (see parallelWork). */
+  constructor(public status: number, message: string, public confirm?: string) {
     super(message);
   }
+}
+
+/**
+ * The UI is about to make a run and a huddle work the same ticket at once: refused with a question the UI asks
+ * ("Start anyway?"), unless the user already said yes (confirmParallel). Other callers (runs, CLI) aren't asked.
+ */
+function parallelWork(req: Request, b: any, what: "huddle-open" | "run-active"): void {
+  if (req.headers.get(SOURCE_HEADER) !== "ui" || req.headers.get(RUN_HEADER) || b?.confirmParallel === true) return;
+  throw new HttpError(409, what === "huddle-open"
+    ? "A huddle is already working on this ticket."
+    : "This ticket's run is already working on it.", what);
 }
 
 const LOCAL_HOSTS = ["localhost", "127.0.0.1"];
@@ -912,6 +924,11 @@ export function createServer(deps: ServerDeps) {
         if (typeof b.title === "string") patch.title = b.title;
         if (typeof b.body === "string") patch.body = b.body;
         if (b.status) patch.status = b.status;
+        // Starting work while the user's huddle is live on the ticket: both would work on the same thing.
+        const working = (st?: string) => st === "ready" || st === "in_progress";
+        if (working(patch.status) && !working(target.status) && store.listHuddles(slug).some((h) => h.hostTicket === id && h.status === "live" && !h.auto)) {
+          parallelWork(req, b, "huddle-open");
+        }
         if (typeof b.order === "number") patch.order = b.order;
         if (b.notice === null) patch.notice = null;
         if (b.important !== undefined) {
@@ -1324,6 +1341,9 @@ export function createServer(deps: ServerDeps) {
         const b = await body(req);
         const ticketId = String(b.ticketId ?? "");
         if (!ticketId) throw new HttpError(400, "ticketId is required");
+        // The ticket's run is doing the work (not a chat reply in Planning or Review): a huddle now would work alongside it.
+        const host = store.getTicket(slug, ticketId);
+        if (host && (host.status === "ready" || host.status === "in_progress") && board.isRunning(slug, ticketId)) parallelWork(req, b, "run-active");
         const h = huddles.create(slug, ticketId, Array.isArray(b.roster) ? b.roster : [], {
           maxParticipants: Number(b.maxParticipants) || undefined,
           maxCostUsd: b.maxCostUsd === undefined || b.maxCostUsd === null ? undefined : Number(b.maxCostUsd),
@@ -1552,7 +1572,7 @@ export function createServer(deps: ServerDeps) {
     try {
       return (await api(req, url)) as Response;
     } catch (e) {
-      if (e instanceof HttpError) return json({ error: e.message }, e.status);
+      if (e instanceof HttpError) return json({ error: e.message, ...(e.confirm ? { confirm: e.confirm } : {}) }, e.status);
       if (e instanceof ConflictError) return json({ error: e.message }, 409);
       if (e instanceof McpError) return json({ error: e.message }, e.status);
       if (e instanceof AgentError) return json({ error: e.message }, e.status);

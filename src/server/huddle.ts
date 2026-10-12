@@ -42,7 +42,7 @@ import type { Bus } from "./events";
 import { addWorktree, branchExists, hasCommits, removeWorktree, run as git, worktreeDir } from "./git";
 import {
   DEFAULT_MAX_PARTICIPANTS, handleBase, HUDDLE_AGENT_ENV, LEGACY_SUMMARY_FILE, MAIN_HANDLE, NO_EDIT_TOOLS, parseMentions, RESERVED_HANDLES,
-  rosterEntryError, rosterError, summaryFile, USER_HANDLE, type RosterEntry,
+  REVIEW_HUDDLE_HEADING, reviewHuddleRequest, rosterEntryError, rosterError, summaryFile, USER_HANDLE, type RosterEntry,
 } from "./huddle-roster";
 import {
   BUILTIN_PRESETS, deletePreset, type HuddlePreset, type HuddlePresetView, MAIN_PRESET, mergePresets, presetName, savePreset,
@@ -999,16 +999,18 @@ export class Huddles {
     const reason = input.reason.trim().replace(/\s+/g, " ").slice(0, 200);
     if (!reason) throw new HuddleError(400, "reason is required: one line on why this work needs a review huddle");
     const propose = "; use propose_huddle to propose one to the user instead";
-    const asked = input.maxCostUsd;
-    if (asked !== undefined && !(Number.isFinite(asked) && asked > 0)) throw new HuddleError(400, "maxCostUsd must be a positive amount");
+    if (input.maxCostUsd !== undefined && !(Number.isFinite(input.maxCostUsd) && input.maxCostUsd > 0)) throw new HuddleError(400, "maxCostUsd must be a positive amount");
+    // A ticket with a "## Review huddle" section asked for one in Planning: that counts as opt-in, and gives the defaults.
+    const requested = reviewHuddleRequest(host.body);
+    const asked = input.maxCostUsd ?? requested?.maxCostUsd;
     const maxCostUsd = asked === undefined ? undefined : Math.min(asked, AUTO_MAX_COST_USD);
-    if (!autoHuddlesOn(profile)) throw new HuddleError(403, `auto huddles are off on board ${slug}${propose}`);
+    if (!autoHuddlesOn(profile) && !requested) throw new HuddleError(403, `auto huddles are off on board ${slug} and the ticket has no "${REVIEW_HUDDLE_HEADING}" section${propose}`);
     if (!this.board.unattendedRun(slug, hostId)) {
       throw new HuddleError(403, `start_huddle only works in an unattended run of the ticket (Ready / In Progress work, a plan child, a schedule run), not in a chat${propose}`);
     }
     const open = this.store.listHuddles(slug).find((h) => h.hostTicket === hostId && h.status !== "closed");
     if (open) throw new HuddleError(409, `ticket ${hostId} already has an open huddle (${open.id})${propose}, or post in that one`);
-    const template = input.template?.trim() || (input.roster?.length ? "" : host.important ? AUTO_REVIEW_IMPORTANT : AUTO_REVIEW);
+    const template = input.template?.trim() || (input.roster?.length ? "" : requested?.template || (host.important ? AUTO_REVIEW_IMPORTANT : AUTO_REVIEW));
     if (template && !this.templates(slug).some((t) => t.name === template)) {
       throw new HuddleError(404, `no huddle template "${template}" (templates: ${this.templates(slug).map((t) => t.name).join(", ")})`);
     }

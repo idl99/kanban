@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  api, subscribe, type Huddle, type Level, type NewTicketDraft, type OutputFile, type QueuedMessage, type SessionEntry, type TeammateProposal, type Ticket,
+  api, NotStarted, subscribe, type Huddle, type Level, type NewTicketDraft, type OutputFile, type QueuedMessage, type SessionEntry, type TeammateProposal, type Ticket,
 } from "./api";
 import { HuddleCard } from "./HuddleCard";
 import { HuddleDigest } from "./HuddleDigest";
@@ -409,6 +409,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         },
       });
     } catch (err: any) {
+      // Start was cancelled (a huddle works on the ticket): still apply the text, without starting.
+      if (start && err instanceof NotStarted) return applyProposal(p);
       onError(err.message);
     }
   };

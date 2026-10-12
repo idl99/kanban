@@ -32,6 +32,7 @@ import type { DockTab } from "./Dock";
 import type { HuddleSeed, TeamRequest } from "./Team";
 import { useBoardHuddles } from "./huddle";
 import { hasOpenPr, runCounts } from "./boardStats";
+import { ParallelConfirm } from "./ParallelConfirm";
 
 // xterm.js and highlight.js only load once the panel is opened. After an upgrade the old chunk is gone:
 // reload once to get the new build instead of blanking the whole page.
@@ -922,6 +923,7 @@ export function App() {
           }}
         />
       )}
+      <ParallelConfirm />
       <Toaster />
     </div>
   );

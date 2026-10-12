@@ -7,6 +7,7 @@ import { Board, type ChatOptions } from "../src/server/board";
 import { Bus } from "../src/server/events";
 import { createServer } from "../src/server/http";
 import { AUTO_MAX_COST_USD, Huddles, summaryFile } from "../src/server/huddle";
+import { reviewHuddleRequest } from "../src/server/huddle-roster";
 import { chatPrompt, firstRunPrompt, freshSessionPrompt, planningPrompt, resumePrompt } from "../src/server/prompts";
 import { Store } from "../src/server/store";
 import { autoHuddlesOn, type Profile, type Ticket } from "../src/server/types";
@@ -321,4 +322,90 @@ test("the auto huddle prompt section: unattended run prompts only, when the boar
   expect(planningPrompt(t, "/t.md")).not.toContain("start_huddle");
   expect(chatPrompt(t, "hi", "refine", "/o")).not.toContain("start_huddle");
   expect(chatPrompt(t, "hi", "act", "/o")).not.toContain("start_huddle");
+});
+
+const ASKS = "## Goal\nDo it\n\n## Review huddle\nTemplate: `auto-review-important`\nCheck the login copy.\nBudget: ~$30\n\n## Acceptance criteria\n- works";
+
+test("a ticket's ## Review huddle section: parsed for its template and budget", () => {
+  expect(reviewHuddleRequest("## Goal\nx")).toBeNull();
+  expect(reviewHuddleRequest(ASKS)).toEqual({ text: "Template: `auto-review-important`\nCheck the login copy.\nBudget: ~$30", template: "auto-review-important", maxCostUsd: 30 });
+  // Last section, bold labels, no budget.
+  expect(reviewHuddleRequest("# T\n### Review Huddle\n**Template:** auto-review")).toEqual({ text: "**Template:** auto-review", template: "auto-review" });
+  expect(reviewHuddleRequest("## Review huddle\nA reviewer checks the docs.")).toEqual({ text: "A reviewer checks the docs." });
+  // The words inside the check text aren't labels.
+  expect(reviewHuddleRequest("## Review huddle\nCheck the email template copy and the budget: it costs $5.")).toEqual({ text: "Check the email template copy and the budget: it costs $5." });
+  expect(reviewHuddleRequest("## Review huddle\n- **Template**: auto-review\n- Budget (default): about $1,000.50")).toMatchObject({ template: "auto-review", maxCostUsd: 1000.5 });
+});
+
+test("a ticket that asks for a review huddle: its run starts it after the work, even with Auto huddles off", async () => {
+  store.saveProfile({ ...store.getProfile("p")!, autoHuddles: false });
+  const plain = await inProgress("Plain");
+  const asks = await inProgress("Login", { body: ASKS });
+  unattended(plain.id, asks.id);
+  // No section: the setting still decides.
+  const off = await callTool("start_huddle", { reason: "risky" }, runCtx(plain.id));
+  expect(off.isError).toBe(true);
+  expect(text(off)).toContain("auto huddles are off");
+  // The section counts as opt-in and gives the template and budget.
+  const r = await callTool("start_huddle", { reason: "the ticket asks for one" }, runCtx(asks.id));
+  expect(r.isError).toBeUndefined();
+  const a = ticket(asks.id).autoHuddle!;
+  expect(a).toMatchObject({ state: "live", template: "auto-review-important" });
+  expect(store.getHuddle("p", a.huddleId!)!.maxCostUsd).toBe(30);
+  // The run prompt gets the section even with the setting off; it says to do the work first.
+  const t = ticket(asks.id);
+  for (const p of [firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o", autoHuddles: false }), resumePrompt(t, [], "/o", false)]) {
+    expect(p).toContain("# Review huddle (the ticket asks for one)");
+    expect(p).toContain("Do the work yourself first");
+    expect(p).toContain("`auto-review-important`");
+    expect(p).toContain("($30 here)");
+  }
+  expect(firstRunPrompt(ticket(plain.id), { repo: "remote" as const, outputDir: "/o", autoHuddles: false })).not.toContain("start_huddle");
+});
+
+test("Planning: the chat writes the huddle into the ticket; propose_huddle is refused there and works after Planning", async () => {
+  const t = await board.createTicket("p", { title: "Login", body: "Do it", status: "backlog" });
+  store.updateTicket("p", t.id, { status: "planning" });
+  const refine = chatPrompt(ticket(t.id), "I want a huddle", "refine", "/o");
+  expect(refine).toContain("## Review huddle");
+  expect(refine).toContain("Budget: ~$N");
+  const r = await callTool("propose_huddle", { template: "auto-review" }, runCtx(t.id));
+  expect(r.isError).toBe(true);
+  expect(text(r)).toContain("## Review huddle");
+  // Backlog chats too: the work hasn't started there either.
+  store.updateTicket("p", t.id, { status: "backlog" });
+  expect((await callTool("propose_huddle", { template: "auto-review" }, runCtx(t.id))).isError).toBe(true);
+  store.updateTicket("p", t.id, { status: "review" });
+  expect((await callTool("propose_huddle", { template: "auto-review" }, runCtx(t.id))).isError).toBeUndefined();
+});
+
+test("the UI asks before a run and the user's huddle work the same ticket at once", async () => {
+  const ui = { "content-type": "application/json", "x-ckanban-source": "ui" };
+  const patch = (id: string, b: object, headers: Record<string, string> = ui) =>
+    fetch(`${client.url}/api/profiles/p/tickets/${id}`, { method: "PATCH", headers, body: JSON.stringify(b) });
+  const t = await board.createTicket("p", { title: "Login", body: "Do it", status: "backlog" });
+  store.updateTicket("p", t.id, { status: "planning" });
+  huddles.create("p", t.id, [{ preset: "reviewer" }]);
+  // Moving it to Ready while the huddle is live: a question, nothing changes.
+  const asked = await patch(t.id, { body: "New text", status: "ready" });
+  expect(asked.status).toBe(409);
+  expect(await asked.json()).toEqual({ error: "A huddle is already working on this ticket.", confirm: "huddle-open" });
+  expect(ticket(t.id)).toMatchObject({ status: "planning", body: "Do it" });
+  // Other edits don't ask; the user's yes starts it.
+  expect((await patch(t.id, { title: "Login page" })).status).toBe(200);
+  expect((await patch(t.id, { body: "New text", status: "backlog" })).status).toBe(200);
+  board.updateTicket = (async (_s: string, id: string) => ticket(id)) as typeof board.updateTicket;
+  expect((await patch(t.id, { status: "ready", confirmParallel: true })).status).toBe(200);
+  // Callers other than the UI (CLI, runs) aren't asked.
+  expect((await patch(t.id, { status: "ready" }, { "content-type": "application/json" })).status).toBe(200);
+
+  // Starting a huddle while the ticket's run is working on it.
+  const w = await inProgress("Work");
+  board.isRunning = (_s, id) => id === w.id;
+  const start = (b: object) => fetch(`${client.url}/api/profiles/p/huddles`, { method: "POST", headers: ui, body: JSON.stringify({ ticketId: w.id, roster: [{ preset: "reviewer" }], ...b }) });
+  const q = await start({});
+  expect(q.status).toBe(409);
+  expect(((await q.json()) as { confirm: string }).confirm).toBe("run-active");
+  expect(store.listHuddles("p").some((h) => h.hostTicket === w.id)).toBe(false);
+  expect((await start({ confirmParallel: true })).status).toBe(201);
 });

@@ -1,7 +1,7 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { helperCommand } from "./artifact";
-import { huddleLine, summaryFile } from "./huddle-roster";
+import { huddleLine, REVIEW_HUDDLE_HEADING, reviewHuddleRequest, summaryFile } from "./huddle-roster";
 import { MOCKUPS_DIR } from "./mockups";
 import type { RepoKind } from "./git";
 import { MAX_RETRIES } from "./plan";
@@ -43,9 +43,15 @@ If the user asks you here to manage, run, control or take over tickets (existing
 3. Start the plan with \`plan_control\` (action "start", or "resume" for a paused or stuck plan). The board then moves children through Ready, In progress and Review itself, a few at a time, one per resource, and wakes this ticket when one needs a decision. It never starts a child that waits on the user (open questions, a proposal to apply, in Planning). Don't move children to ready yourself unless the user asks.
 If the user only asked to create or adopt tickets, don't start the plan. You can also move, update, chat with, comment on, stop or release (update_ticket release: true) this ticket's own children; every other ticket is refused.`;
 
-/** How a ticket chat offers to branch the ticket; the user's click on the card does the branching. */
+/**
+ * Planning chats: a huddle the user wants goes into the ticket, so the run does the work first and starts it after
+ * (see autoHuddleRule). A huddle card started in Planning would work the ticket alongside its run.
+ */
+export const REVIEW_HUDDLE_FORMAT = `When the user wants a huddle (helper Claude sessions that review, test or improve the work), don't start or propose one now (propose_huddle is refused before the work starts): the ticket's run does the work first, then starts the huddle itself to check and improve the result before it finishes. Put it in the proposed ticket's description as a \`${REVIEW_HUDDLE_HEADING}\` section with a \`Template:\` line (e.g. \`auto-review\`, or \`auto-review-important\` for important or risky work; \`list_huddle_presets\` lists the board's templates and teammates) or a short roster, what the huddle should check, and a \`Budget: ~$N\` line (the template's budget unless the user wants another; at most $100) so the user sees what it may spend. This works even when the board's Auto huddles setting is off.`;
+
 export const TEAMMATE_FORMAT = `When the user wants a teammate (a huddle role) that no existing one covers (e.g. "a teammate that watches X"), or one should change, check \`list_huddle_presets\`, then call the \`propose_teammate\` tool ${TOOL_NOTE} with name, role, prompt, mode, workspace, canEdit, lead, model and a one-line why. An existing name proposes a change to that teammate. The board shows a card and the user saves it with one click (for all boards or this board); you can't save teammates yourself (save_huddle_preset saves nothing here). Don't propose one the user didn't ask for unless the gap is clear.`;
 
+/** How a ticket chat offers to branch the ticket; the user's click on the card does the branching. */
 export const BRANCH_FORMAT = `If the user asks to branch this ticket (fork the conversation, try another direction in parallel without losing this one), call the \`propose_branch\` tool ${TOOL_NOTE} with a one-line reason. The board shows a Branch button; the user's click creates "Branch: <title>" in Planning with a copy of this conversation and its own git branch off this ticket's branch (committed work only). Don't create tickets or start the other direction yourself; after the call, end your turn.`;
 
 function context(note: string, body: string, attrs: Record<string, string> = {}): string {
@@ -114,21 +120,30 @@ function landRule(repo: RepoKind, inPlace: boolean, existing = false, home?: Hom
 }
 
 /**
- * Unattended runs on a board with "Auto huddles" on: review important or risky work in a huddle Claude starts itself
- * (start_huddle) before landing it. Planning chats never get this (they propose a huddle instead).
+ * Unattended runs on a board with "Auto huddles" on, or of a ticket whose "## Review huddle" section asks for one:
+ * review the work in a huddle Claude starts itself (start_huddle) before landing it. Planning chats never get this
+ * (they write the huddle into the ticket instead, so it can't run alongside the work).
  */
-export function autoHuddleRule(t: Pick<Ticket, "important">, repo: RepoKind = "remote"): string {
+export function autoHuddleRule(t: Pick<Ticket, "important" | "body">, repo: RepoKind = "remote"): string {
   const commit = canCommit(repo);
-  return `# Auto huddle (review before landing)
-${t.important ? "This ticket is marked ⭐ Important, so it gets a review huddle before you land it." : "Start a review huddle before you land this work if the change is risky: user-facing behaviour, data, security, payments or migrations. Small, low-risk changes don't need one; heavy tasks are split into tickets, not huddled."}
-- When: after the work is done${commit ? " and committed, BEFORE landing it (before pushing it, opening a PR or moving it on)" : ", BEFORE you finish (the reviewers read the files in this folder)"}. At most once per run; never from a Planning chat (there, propose one with propose_huddle).
-- How: call the ckanban \`start_huddle\` tool with a one-line reason (it is posted on the ticket) and a template: \`auto-review-important\` when the ticket is ⭐ or the risk is security, data, payments or migrations; otherwise \`auto-review\`. If the ticket asks for a huddle budget (e.g. "~$40"), pass it as \`maxCostUsd\` (capped at $100); without it the template's budget applies. Then end your turn with a short note, no result line needed: the board keeps the ticket In Progress and wakes you with the QA lead's consolidated findings. If the board says another auto huddle is running, end your turn the same way; the board wakes you when the slot frees.
+  const asked = reviewHuddleRequest(t.body ?? "");
+  const why = asked
+    ? `This ticket asks for a review huddle (its "${REVIEW_HUDDLE_HEADING.slice(3)}" section). Do the work yourself first; the huddle checks and improves your result, it doesn't do the work.`
+    : t.important ? "This ticket is marked ⭐ Important, so it gets a review huddle before you land it." : "Start a review huddle before you land this work if the change is risky: user-facing behaviour, data, security, payments or migrations. Small, low-risk changes don't need one; heavy tasks are split into tickets, not huddled.";
+  const how = asked
+    ? `call the ckanban \`start_huddle\` tool with a one-line reason (it is posted on the ticket) and what the ticket's "${REVIEW_HUDDLE_HEADING.slice(3)}" section asks for: its template${asked.template ? ` (\`${asked.template}\`)` : ""} or roster, with what it should check in each reviewer's prompt or the reason. Without a template or roster there: \`auto-review-important\` when the ticket is ⭐ or the risk is security, data, payments or migrations; otherwise \`auto-review\`. Pass its budget as \`maxCostUsd\` (capped at $100)${asked.maxCostUsd ? ` ($${asked.maxCostUsd} here)` : ""}; without one the template's budget applies.`
+    : `call the ckanban \`start_huddle\` tool with a one-line reason (it is posted on the ticket) and a template: \`auto-review-important\` when the ticket is ⭐ or the risk is security, data, payments or migrations; otherwise \`auto-review\`. If the ticket asks for a huddle budget (e.g. "~$40"), pass it as \`maxCostUsd\` (capped at $100); without it the template's budget applies.`;
+  return `# ${asked ? "Review huddle (the ticket asks for one)" : "Auto huddle (review before landing)"}
+${why}
+- When: after the work is done${commit ? " and committed, BEFORE landing it (before pushing it, opening a PR or moving it on)" : ", BEFORE you finish (the reviewers read the files in this folder)"}. At most once per run; never from a Planning chat (there, the huddle goes into the ticket as a "${REVIEW_HUDDLE_HEADING}" section).
+- How: ${how} Then end your turn with a short note, no result line needed: the board keeps the ticket In Progress and wakes you with the QA lead's consolidated findings. If the board says another auto huddle is running, end your turn the same way; the board wakes you when the slot frees.
 - Then: fix every MUST finding${commit ? " and commit" : ""}, ask the same reviewer for one short re-check, then ${commit ? "land the work as usual" : "finish as usual"}, write the huddle summary and close the huddle with \`huddle_close\`. List the SHOULD and COULD findings in your result summary.
 - Budget: the huddle stops at its cap. If it stops while MUST findings are still open, do NOT ${commit ? "land" : "finish as done"}: end with status "blocked" and a summary like "Auto huddle hit its $N cap with N MUST findings open; not landed."`;
 }
 
-/** The section above, when the board has auto huddles on (absent: nothing). */
-const autoSection = (t: Pick<Ticket, "important">, on?: boolean, repo?: RepoKind) => (on ? `\n\n${autoHuddleRule(t, repo)}` : "");
+/** The section above, when the board has auto huddles on or the ticket asks for a review huddle (else nothing). */
+const autoSection = (t: Pick<Ticket, "important" | "body">, on?: boolean, repo?: RepoKind) =>
+  (on || reviewHuddleRequest(t.body ?? "") ? `\n\n${autoHuddleRule(t, repo)}` : "");
 
 const INTERVIEW = `# How to work: interview first
 The user wants to be interviewed before you do the work. In this first run:
@@ -397,6 +412,8 @@ ${TICKET_FORMAT}
 ${TICKETS_FORMAT}
 
 ${BRANCH_FORMAT}
+
+${REVIEW_HUDDLE_FORMAT}
 
 ${TEAMMATE_FORMAT}`)}`;
   }
