@@ -1750,6 +1750,11 @@ button.pill:hover { color: var(--text); }
 .hd-brief-text { font-size: 13px; max-height: 180px; overflow-y: auto; border-left: 2px solid var(--accent); padding-left: 8px; }
 .hd-brief-text p { margin: 0 0 4px; }
 .hd-brief textarea { width: 100%; font-size: 13px; resize: vertical; }
+.hd-brief-empty {
+  display: block; width: 100%; text-align: left; font: inherit; font-size: 12px; line-height: 1.4; color: var(--muted); background: none;
+  border: 1px dashed var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer;
+}
+.hd-brief-empty:hover, .hd-brief-empty:focus-visible { border-color: var(--accent); color: var(--text); }
 .hd-brief-actions { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
 .roster-budget { display: inline-flex; align-items: center; gap: 2px; }
 .roster-budget input { width: 52px; padding: 2px 4px; font-size: 12px; }
@@ -1894,24 +1899,27 @@ button.hd-mode:disabled { cursor: default; }
 }
 .hd-pop > div { padding: 5px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hd-pop > div.on { background: var(--accent-soft); }
-.huddle-side { width: 290px; flex: none; border-left: 1px solid var(--border); overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 18px; }
+.huddle-side { width: var(--hd-side-w, 290px); flex: none; border-left: 1px solid var(--border); overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 18px; }
 .huddle-side h3 { display: flex; align-items: center; gap: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0 0 6px; }
 .hd-cap { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px; }
-.hd-p { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
-.hd-p-main { min-width: 0; flex: 1; }
-.hd-p-name { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; }
-/* Long handles ellipsize (full handle and role in the tooltip); the pills give way first. */
-.hd-p-name b { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-.hd-p-name .pill { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.hd-p-st { font-size: 11.5px; color: var(--muted); display: flex; align-items: flex-start; gap: 5px; min-width: 0; }
+/* A roster row: avatar beside three lines (name · role · pills and cost / status / mode, context, stop); names wrap, never ellipsize. */
+.hd-p { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; column-gap: 8px; row-gap: 3px; align-items: center; padding: 6px 0; font-size: 13px; }
+.hd-p > .hd-av { grid-row: 1 / span 3; align-self: start; margin-top: 1px; }
+.hd-p-name { grid-column: 2; min-width: 0; overflow-wrap: anywhere; line-height: 1.35; }
+.hd-p-role { color: var(--muted); }
+.hd-p-name .pill { margin-left: 6px; white-space: nowrap; vertical-align: 1px; }
+.hd-p-st { grid-column: 2 / 4; font-size: 11.5px; color: var(--muted); display: flex; align-items: flex-start; gap: 5px; min-width: 0; }
 .hd-p-st-text { overflow: hidden; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; line-height: 1.35; }
 .hd-p-st .hd-dot { margin-top: 4px; }
 .hd-p-st .hd-dot { flex: none; margin-right: 0; }
+.hd-p-st .hd-redo { margin-left: auto; padding-left: 6px; }
+.hd-p-meta { grid-column: 2 / 4; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.hd-p-meta .hd-p-stop { margin-left: auto; }
 .hd-redo { font-size: 11px; color: var(--info); flex: none; }
 /* Conversation size: what every step re-reads; warn-coloured once it is big (BIG_CONTEXT_TOKENS). */
 .hd-ctx { font-size: 11px; border-radius: 6px; padding: 1px 6px; background: var(--surface-2); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; flex: none; cursor: help; }
 .hd-ctx.big { background: var(--warn-soft); color: var(--warn); }
-.hd-p-cost { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; width: 44px; text-align: right; flex: none; }
+.hd-p-cost { grid-column: 3; align-self: start; font-size: 11.5px; line-height: 1.55; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .hd-mode-select .select-trigger { min-width: 0; padding: 1px 6px; font-size: 11px; }
 .hd-p-st.working { color: var(--text); }
 .hd-p-st.failed { color: var(--err); }
@@ -1932,18 +1940,24 @@ button.hd-mode:disabled { cursor: default; }
 .hd-chk input { width: auto; margin-top: 3px; accent-color: var(--ok); }
 .hd-chk.done { color: var(--muted); text-decoration: line-through; cursor: default; }
 .hd-add-finding { width: 100%; font-size: 12.5px; padding: 4px 8px; margin-top: 4px; }
-@container (max-width: 760px) { .huddle-side { width: 230px; } }
-@media (max-width: 900px) { .huddle-body { flex-direction: column; } .huddle-feed { min-height: 0; } .huddle-side { width: auto; border-left: 0; border-top: 1px solid var(--border); max-height: 40%; } }
+/* Drag the sidebar's left edge to widen it (HuddlePanel's useSideWidth); the width is the --hd-side-w on .huddle-body. */
+.hd-side-resize { flex: none; position: relative; width: 10px; margin: 0 -5px; z-index: 3; cursor: col-resize; touch-action: none; }
+.hd-side-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; background: transparent; transition: background 0.12s; }
+.hd-side-resize:hover::after, .hd-side-resize:focus-visible::after, .huddle-body.resizing .hd-side-resize::after { background: var(--accent); }
+.hd-side-resize:focus-visible { outline: none; }
+.huddle-body.resizing { cursor: col-resize; user-select: none; }
+@media (max-width: 900px) { .huddle-body { flex-direction: column; } .huddle-feed { min-height: 0; } .huddle-side { width: auto; border-left: 0; border-top: 1px solid var(--border); max-height: 40%; } .hd-side-resize { display: none; } }
 .hn-acts .link-btn.danger { color: var(--err); }
 
 /* Roster rows open the participant's session (HuddleSession.tsx); the row is one big button under its controls. */
-.hd-p.viewable { position: relative; border-radius: 6px; padding: 4px 6px; margin: 0 -6px; }
+.hd-p.viewable { position: relative; border-radius: 6px; padding: 6px; margin: 0 -6px; }
 .hd-p.viewable:hover { background: var(--surface-2); }
 .hd-p.sel, .hd-p.sel:hover { background: var(--info-soft); }
 .hd-p.sel .hd-p-name b { color: var(--info); }
 .hd-p-open { position: absolute; inset: 0; z-index: 0; width: 100%; padding: 0; border: 0; border-radius: inherit; background: none; cursor: pointer; }
 .hd-p-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.hd-p.viewable .hd-p-actions, .hd-p.viewable .hd-redo { position: relative; z-index: 1; }
+/* Controls and tooltipped chips sit above the row button. */
+.hd-p.viewable :is(.hd-p-actions, .hd-redo, .hd-p-stop, .hd-ctx, .hd-p-cost) { position: relative; z-index: 1; }
 .hd-session { width: min(470px, 42%); flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); background: var(--surface); box-shadow: -6px 0 18px rgba(0, 0, 0, 0.06); }
 .hd-session-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .hd-session-head .hd-av { width: 26px; height: 26px; font-size: 10px; }
@@ -1982,7 +1996,7 @@ button.hd-mode:disabled { cursor: default; }
 /* The feed stays readable beside the session: the side column narrows while one is open. */
 .huddle-body:has(.hd-session) .huddle-side { width: 250px; }
 /* Mode and stop stay in the full roster; the open session's header shows the mode. */
-.huddle-body:has(.hd-session) .hd-p-actions { display: none; }
+.huddle-body:has(.hd-session) :is(.hd-p-actions, .hd-p-stop) { display: none; }
 .huddle-body:has(.hd-session) .huddle-feed { min-width: 220px; }
 @media (max-width: 900px) { .hd-session { width: auto; border-left: 0; border-top: 1px solid var(--border); max-height: 55%; } }
 

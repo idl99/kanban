@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resetTitle, scopeChip, usageText } from "../web/src/teamText";
 import {
-  applyTemplate, brakeLabel, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity, contextText, BIG_CONTEXT_TOKENS,
+  applyTemplate, brakeLabel, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity, contextText, BIG_CONTEXT_TOKENS, participantRole, clampSideWidth, SIDE_DEFAULT,
 } from "../web/src/huddleText";
 import { mergeSteps, modelLabel, sessionMeta, sessionState, shortSession, toolIcon } from "../web/src/sessionText";
 
@@ -263,4 +263,20 @@ test("context tag: size text, warn threshold, and live updates through huddle.ac
   expect(withActivity(h, "qa", "x", undefined, 1000)).toBe(h);
   expect(withActivity(h, "qa", "x", undefined, 2000).participants[0].contextTokens).toBe(2000);
   expect(withActivity(h, "qa", "y").participants[0].contextTokens).toBe(1000);
+});
+
+test("participantRole: the role unless it only repeats the handle; humans read human", () => {
+  expect(participantRole(p("contact", { role: "Researcher" }))).toBe("Researcher");
+  expect(participantRole(p("checker", { role: "QA lead" }))).toBe("QA lead");
+  expect(participantRole(p("qa-1", { role: "QA-1" }))).toBeNull();
+  expect(participantRole(p("main", { role: "" }))).toBeNull();
+  expect(participantRole(p("you", { kind: "human" }))).toBe("human");
+});
+
+test("clampSideWidth: 240-520px, and the feed keeps 280px", () => {
+  expect(clampSideWidth(SIDE_DEFAULT)).toBe(290);
+  expect(clampSideWidth(100)).toBe(240);
+  expect(clampSideWidth(900)).toBe(520);
+  expect(clampSideWidth(500, 700)).toBe(420);
+  expect(clampSideWidth(500, 400)).toBe(240);
 });

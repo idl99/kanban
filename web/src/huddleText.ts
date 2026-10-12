@@ -93,6 +93,21 @@ export function handleInitials(handle: string): string {
   return `${(handle[0] ?? "?").toUpperCase()}${n ?? ""}`.slice(0, 3);
 }
 
+/** The role shown after a roster handle ("Researcher"); null when it only repeats the handle. Humans read "human". */
+export function participantRole(p: Pick<ParticipantLike, "handle" | "role" | "kind">): string | null {
+  if (p.kind === "human") return "human";
+  const role = p.role?.trim();
+  return role && handleBase(role) !== handleBase(p.handle) ? role : null;
+}
+
+/** The huddle sidebar's width (px): dragged by the user, kept between these and always leaving the feed FEED_MIN. */
+export const SIDE_DEFAULT = 290;
+export const SIDE_MIN = 240;
+export const SIDE_MAX = 520;
+export const FEED_MIN = 280;
+export const clampSideWidth = (w: number, bodyWidth = 0) =>
+  Math.round(Math.max(SIDE_MIN, Math.min(w, SIDE_MAX, bodyWidth ? bodyWidth - FEED_MIN : SIDE_MAX)));
+
 /** One line on what a participant is doing, for the roster. `closed`: the huddle is over, nobody watches. */
 export function participantActivity(p: ParticipantLike, closed = false): string {
   if (p.kind === "human") return "you";
