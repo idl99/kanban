@@ -34,6 +34,7 @@ import { HuddlePanel } from "./HuddlePanel";
 import type { HuddleSeed, TeamRequest } from "./Team";
 import { StarToggle } from "./StarToggle";
 import { usePhone } from "./usePhone";
+import { toast } from "./toast";
 
 // v2: widths saved under the old 80% default are dropped once so the new default shows.
 const WIDTH_KEY = "ckanban.panelWidth.v2";
@@ -398,13 +399,16 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
       .then((t) => { setBaseBody(t.body); setEditing(false); })
       .catch((e) => onError(e.message));
   };
-  // Marked Done: on to the next ticket of the column the drawer walks, or back to the board after its last one.
-  const setStatus = (status: Status) => act(async () => {
-    await api.updateTicket(slug, ticket.id, { status });
-    if (status !== "done" || ticket.status === "done") return;
+  // Marked Done: on to the next ticket of the column the drawer walks, or back to the board after its last one,
+  // at once rather than after the save, so a close in the meantime can't be undone by a late jump.
+  // The drawer may be gone when the save fails, so the error goes to the board's toast.
+  const setStatus = (status: Status) => {
+    if (status !== "done" || ticket.status === "done") return act(() => api.updateTicket(slug, ticket.id, { status }));
+    const title = ticket.title;
+    api.updateTicket(slug, ticket.id, { status }).catch((e) => toast(<>Couldn't mark <b>{title}</b> done: {e.message}</>, { tone: "error" }));
     if (nav?.next) step(nav.next);
     else if (!editing) onClose();
-  });
+  };
   const col = COLUMNS.find((c) => c.id === ticket.status);
   const startTarget = startWorkTarget(ticket);
   const startWork = () => (startTarget === "planning" ? setStatus("planning") : setConfirmStart(true));
