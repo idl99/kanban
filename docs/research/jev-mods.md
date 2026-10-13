@@ -12,6 +12,16 @@ Date: 2026-10-14. Claude Code `2.1.296`. Mods from `github.com/davila7/claude-co
 
 Verdict: install both, with the options in [Install](#install-steps-for-leo). Treat main-model routing as a 1–2 week trial: the sample is small (2 repeats per cell) and the four tasks were not hard enough to show where a downgrade would hurt.
 
+## Decision (2026-10-14)
+
+Leo installed **only `jev-skill-suggestion`**. The router was skipped: most tickets need Opus, and the router only saved money by moving easy tickets to Haiku or Sonnet.
+
+- Mod: `~/.claude/mods/jev-skill-suggestion` (commit `5d3ef64`, without `tests/`).
+- `~/.claude/settings.json`: `env.CLAUDE_CODE_PLUGIN_DIRS` points at that folder, and `pluginConfigs["jev-skill-suggestion"].options` holds the TypeSafe key, `timeoutMs: 1500` and the `neverSuggested` list from the install steps below. Nothing else changed; the backup is `~/.claude/settings.json.bak-jev-2026-10-14`.
+- `/jev-skill-suggestion:setup` was not run (clash 5).
+- Checked after install: a plain `claude -p` loads `jev-skill-suggestion@inline` and logs `ready on typesafe` and `withheld the skill listing`; no router. A board-style review run finished `success`, injected `/caveman:caveman-review`, and its `init` event still listed `simplify`.
+- To undo: remove the `CLAUDE_CODE_PLUGIN_DIRS` entry and `pluginConfigs["jev-skill-suggestion"]`, or copy the backup back if nothing else changed since, then `rm -rf ~/.claude/mods/jev-skill-suggestion`.
+
 ## How it was tested
 
 - Each test is a throwaway `claude -p` session shaped like a board run (`src/server/runner.ts` `buildArgs`: stream-json in/out, `--permission-mode bypassPermissions`, `--session-id`), with the real board run prompt from `firstRunPrompt` (`src/server/prompts.ts`, auto mode, repo kind `local`), in a fresh clone of this repo under `/tmp` with no remote. Left out: `--mcp-config` (keeps tests off the board) and `--chrome` (keeps them out of the browser).
