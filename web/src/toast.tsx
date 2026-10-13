@@ -14,6 +14,7 @@ let nextId = 1;
 const subs = new Set<() => void>();
 const timers = new Map<number, ReturnType<typeof setTimeout>>();
 const emit = () => subs.forEach((f) => f());
+let touch: { x: number; y: number } | null = null;
 
 export function dismissToast(id: number) {
   clearTimeout(timers.get(id));
@@ -45,7 +46,14 @@ export function Toaster() {
     <div className="toaster">
       {list.map((t) => (
         <div key={t.id} className={`toast ${t.tone}`} role={t.tone === "error" ? "alert" : "status"}
-          onMouseEnter={() => clearTimeout(timers.get(t.id))} onMouseLeave={() => arm(t.id, 3000)}>
+          onMouseEnter={() => clearTimeout(timers.get(t.id))} onMouseLeave={() => arm(t.id, 3000)}
+          // Phone: swipe it up (or sideways) to dismiss.
+          onTouchStart={(e) => { touch = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+          onTouchEnd={(e) => {
+            const p = e.changedTouches[0];
+            if (touch && (touch.y - p.clientY > 24 || Math.abs(p.clientX - touch.x) > 60)) dismissToast(t.id);
+            touch = null;
+          }}>
           <span className="toast-text">{t.text}</span>
           {t.action && (
             <button className="toast-action" onClick={() => { t.action!.run(); dismissToast(t.id); }}>{t.action.label}</button>

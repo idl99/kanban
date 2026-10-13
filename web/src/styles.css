@@ -1295,6 +1295,22 @@ textarea.drop-target { border-color: var(--accent); box-shadow: 0 0 0 3px var(--
 .toast .icon-btn { color: inherit; opacity: 0.7; width: 22px; height: 22px; }
 .toast .icon-btn:hover { opacity: 1; background: color-mix(in srgb, currentColor 15%, transparent); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
+/* Phone: a light card at the top (clear of the bottom tabs and the message box), full width, a tone stripe on the left. */
+@media (max-width: 720px) {
+  .toaster { top: calc(8px + env(safe-area-inset-top)); bottom: auto; left: 10px; right: 10px; transform: none; align-items: stretch; gap: 6px; }
+  .toast {
+    max-width: none; min-height: 48px; padding: 6px 6px 6px 12px; gap: 6px; border-radius: 12px; font-size: 14px; line-height: 1.35;
+    background: var(--surface); color: var(--text); border: 1px solid var(--border); border-left: 4px solid var(--muted);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14); animation: toast-drop 0.18s ease-out;
+  }
+  .toast.ok { border-left-color: var(--ok); }
+  .toast.error { background: var(--err-soft); color: var(--err); border-color: var(--err-soft); border-left-color: var(--err); }
+  .toast.ok .toast-text::before { display: none; }
+  .toast-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .toast-action { flex: none; min-height: 36px; padding: 0 14px; border-radius: 9px; text-decoration: none; background: var(--accent-soft); color: var(--accent); font-size: 14px; }
+  .toast .icon-btn { flex: none; width: 36px; height: 36px; opacity: 0.55; }
+}
+@keyframes toast-drop { from { opacity: 0; transform: translateY(-8px); } }
 
 /* shortcuts + board switcher */
 .shortcuts section h4 { margin: 4px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
