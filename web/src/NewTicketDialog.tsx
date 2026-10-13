@@ -9,18 +9,22 @@ import { Modal } from "./Modal";
 import { SessionPicker, sessionLabel } from "./SessionPicker";
 import { MOD } from "./Shortcuts";
 import { StarToggle } from "./StarToggle";
+import { TagEditor } from "./Tags";
 
-export function NewTicketDialog({ slug, folder, onClose, onCreate }: {
+export function NewTicketDialog({ slug, folder, knownTags = [], onClose, onCreate }: {
   slug: string;
   folder: string;
+  /** This board's tags (most used first), offered in the Tags field. */
+  knownTags?: { name: string; count: number }[];
   onClose: () => void;
-  onCreate: (input: { title: string; body: string; status: Status; sessionId?: string; mode?: TicketMode; important?: boolean }) => Promise<void>;
+  onCreate: (input: { title: string; body: string; status: Status; sessionId?: string; mode?: TicketMode; important?: boolean; tags?: string[] }) => Promise<void>;
 }) {
   const [mode, setMode] = useState<TicketMode>("interview");
   const [session, setSession] = useState<ClaudeSession | null>(null);
   const [picking, setPicking] = useState(false);
   const [title, setTitle] = useState("");
   const [important, setImportant] = useState(false);
+  const [tags, setTags] = useState<string[]>([]);
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -35,7 +39,7 @@ export function NewTicketDialog({ slug, folder, onClose, onCreate }: {
     if (busy || !title.trim() || images.uploading) return;
     setBusy(true);
     try {
-      await onCreate({ title: title.trim(), body, status, sessionId: session?.id, mode, ...(important ? { important } : {}) });
+      await onCreate({ title: title.trim(), body, status, sessionId: session?.id, mode, ...(important ? { important } : {}), ...(tags.length ? { tags } : {}) });
     } catch (e: any) {
       setErr(e.message);
       setBusy(false);
@@ -73,6 +77,10 @@ export function NewTicketDialog({ slug, folder, onClose, onCreate }: {
             <input id="new-ticket-title" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What should be done?" />
             <StarToggle on={important} onChange={setImportant} keyHint="⌘D" />
           </div>
+        </div>
+        <div className="field">
+          <div className="field-label">Tags</div>
+          <TagEditor tags={tags} known={knownTags} onChange={setTags} disabled={busy} />
         </div>
         <label>
           Description

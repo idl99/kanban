@@ -79,8 +79,9 @@ const HUDDLE_TOOLS = new Set(["huddle_post", "huddle_read", "huddle_mode", "hudd
 /**
  * Board tools a Planning chat may use when the user asks for it in their message. They never touch files; the
  * daemon still decides per call (Board.userRequestRights), so a Planning run without the user's message gets nothing.
+ * suggest_tags only adds suggestions to the chat's own ticket, which the user keeps or drops.
  */
-const PLANNING_BOARD_TOOLS = new Set(["move_ticket", "update_ticket", "comment_ticket", "create_ticket", "chat_ticket", "stop_ticket", "plan_control", "adopt_tickets"]
+const PLANNING_BOARD_TOOLS = new Set(["move_ticket", "update_ticket", "comment_ticket", "create_ticket", "chat_ticket", "stop_ticket", "plan_control", "adopt_tickets", "suggest_tags"]
   .map((t) => `mcp__ckanban__${t}`));
 
 /**

@@ -273,7 +273,8 @@ ${interview ? `${INTERVIEW}\n\n` : ""}# Rules
 - Decide whether this task requires changing files.
 - ${landRule(ctx.repo, inPlace, false, ctx.home)}
 - A missing git repository, remote or \`gh\` is never a reason to stop or report "blocked": work with what the folder has.
-- If it is a non-code task (research, writing, analysis, file organisation), no PR is needed.
+- If it is a non-code task (research, writing, analysis, file organisation), no PR is needed.${t.tags?.length ? "" : `
+- This ticket has no tags: if one clearly fits (prefer tags the board already uses), you may suggest 1-3 with \`suggest_tags\`; the user keeps or drops them.`}
 - ${PLAIN_WORDS}${autoSection(t, ctx.autoHuddles, ctx.repo)}
 
 ${CHROME_RULE}
@@ -388,7 +389,7 @@ export function chatPrompt(t: Ticket, text: string, mode: ChatMode, outputDir: s
 You are helping the user shape this ticket BEFORE any work starts. Do not modify files or start the work (mockups go in reply blocks, see below); reading code, docs and links to understand the context is fine.
 
 Current ticket
-Title: ${t.title}
+Title: ${t.title}${t.tags?.length ? `\nTags: ${t.tags.join(", ")}` : ""}
 Description:
 ${t.body.trim() || "(empty)"}
 
@@ -396,6 +397,7 @@ How to help:
 - Interview the user about what is still unclear: goal and why, who it is for, scope (must-haves vs nice-to-haves), constraints, how we know it's done. Ask only what matters for this ticket, in small rounds.
 - When you know enough (or the user asks), propose the improved ticket. After the user applies it they will move it to Ready and Claude will work on it autonomously, so make it self-contained.
 - Otherwise reply naturally and briefly, like in a normal chat.
+- Tags: if the ticket has none and one clearly fits (prefer tags the board already uses), you may suggest 1-3 with \`suggest_tags\`; the user keeps or drops them.
 - Managing the board: ONLY when the user asks for it in their message (never on your own initiative), you may change other tickets on this board with the ckanban tools: move_ticket, update_ticket, comment_ticket, create_ticket, chat_ticket, stop_ticket, and adopt_tickets / plan_control to manage or run tickets from this ticket's plan. Every change is logged on the changed ticket. Say in your reply what you changed.
 - To delete tickets, call the \`propose_delete\` tool with their ids and a one-line reason: the board shows a card and the user's click deletes them (delete_ticket is refused here).
 - Never change this ticket itself (move, edit, stop or delete it): ask the user to do it on the board. Editing files and starting this ticket's work stay off-limits while planning; to run a plan the user can also press Start plan in the Plan tab.

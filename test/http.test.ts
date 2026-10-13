@@ -745,3 +745,23 @@ test("board Workspace setting: default worktree, folder or worktree only", async
   r = await fetch(`${base}/api/profiles`, json("POST", { name: "Ws board 2", path, workspace: "folder" }));
   expect(((await r.json()) as any).workspace).toBe("folder");
 });
+
+test("tags: the user sets them; a ticket's own run may only suggest them", async () => {
+  const path = tempDir("ck-tags-");
+  const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Tag Proj", path }))).json()) as any;
+  const tickets = `${base}/api/profiles/${p.slug}/tickets`;
+  const send = (u: string, b: unknown, run?: string, method = "PATCH") =>
+    fetch(u, { method, headers: { "content-type": "application/json", ...(run ? { "x-ckanban-run": run } : {}) }, body: JSON.stringify(b) });
+  const t = (await (await send(tickets, { title: "Post 5", tags: ["Post", "#XHS"] }, undefined, "POST")).json()) as any;
+  expect(t.tags).toEqual(["post", "xhs"]);
+  const run = `${p.slug}/${t.id}`;
+  let r = await send(`${tickets}/${t.id}`, { suggestedTags: ["Video"] }, run);
+  expect(r.status).toBe(200);
+  expect(((await r.json()) as any).suggestedTags).toEqual(["video"]);
+  // Setting tags directly from a run is refused, like other board changes.
+  r = await send(`${tickets}/${t.id}`, { tags: ["video"] }, run);
+  expect(r.status).toBe(403);
+  r = await send(`${tickets}/${t.id}`, { tags: ["post", "xhs", "video"] });
+  const kept = (await r.json()) as any;
+  expect([kept.tags, kept.suggestedTags]).toEqual([["post", "xhs", "video"], []]);
+});

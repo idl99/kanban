@@ -378,7 +378,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       return await api.createTicket(slug, {
         title: d.title, body: d.description, status: "backlog", mode: "interview", parentId: ticket.id,
         ...(d.key ? { planKey: d.key } : {}), ...(d.dependsOn?.length ? { dependsOn: d.dependsOn } : {}),
-        ...(d.needs?.length ? { needs: d.needs } : {}),
+        ...(d.needs?.length ? { needs: d.needs } : {}), ...(d.tags?.length ? { tags: d.tags } : {}),
       });
     } catch (err: any) {
       onError(err.message);

@@ -47,6 +47,10 @@ export interface TicketInfo {
   dependsOn?: string[];
   /** Exclusive resources (e.g. emulator): tickets needing the same one never run at the same time. */
   needs?: string[];
+  /** The user's labels (e.g. "post"), lowercase. */
+  tags?: string[];
+  /** Tags Claude suggested; the user keeps or drops each one. */
+  suggestedTags?: string[];
   resources?: { holding: boolean; waitingFor: string[] } | null;
   /** Plan child waiting on the user: the plan won't start it until then. */
   userWait?: string | null;
@@ -68,6 +72,7 @@ export interface ScheduleInfo {
   cron: string;
   enabled: boolean;
   skipIfRunning: boolean;
+  tags?: string[];
   lastFiredAt: string | null;
   nextRunAt: string | null;
   lastError: string | null;
@@ -83,6 +88,7 @@ export interface ScheduleInput {
   cron?: string;
   enabled?: boolean;
   skipIfRunning?: boolean;
+  tags?: string[];
 }
 
 export interface ScheduleHistoryInfo {
@@ -119,6 +125,8 @@ export interface TicketPatch {
   mode?: TicketMode;
   dependsOn?: string[];
   needs?: string[];
+  tags?: string[];
+  suggestedTags?: string[];
   important?: boolean;
   /** null takes the ticket out of its plan. */
   parentId?: null;
@@ -254,7 +262,7 @@ export class BoardClient {
   // `run` (a board run's CKANBAN_TICKET): the daemon only lets a running plan's planner change its own children.
   createTicket = (
     slug: string,
-    input: { title: string; body?: string; status?: Status; mode?: TicketMode; planKey?: string; dependsOn?: string[]; needs?: string[] },
+    input: { title: string; body?: string; status?: Status; mode?: TicketMode; planKey?: string; dependsOn?: string[]; needs?: string[]; tags?: string[] },
     run?: string | null,
   ) => this.req<TicketInfo>("POST", this.t(slug), input, this.by(run));
   // From a run, only the planner's own plan, and only with planner rights (see Board.plannerRights).
@@ -440,7 +448,10 @@ function state(t: TicketInfo): string {
 }
 
 export function ticketLine(t: TicketInfo): string {
-  const extra = [t.parentId ? `in plan ${t.parentId}` : null, t.needs?.length ? `needs ${t.needs.join(", ")}` : null].filter(Boolean);
+  const extra = [
+    t.parentId ? `in plan ${t.parentId}` : null, t.needs?.length ? `needs ${t.needs.join(", ")}` : null,
+    t.tags?.length ? t.tags.map((g) => `#${g}`).join(" ") : null,
+  ].filter(Boolean);
   return `${t.id}  [${state(t)}]  ${t.important ? "⭐ " : ""}${t.title}${extra.length ? `  (${extra.join("; ")})` : ""}`;
 }
 
@@ -459,6 +470,8 @@ export function ticketText(t: TicketInfo, comments: CommentInfo[] = []): string 
     const now = r?.holding ? " (in use by this ticket)" : r?.waitingFor.length ? ` (waiting for ${r.waitingFor.join(", ")})` : "";
     lines.push(`needs: ${t.needs.join(", ")}${now}`);
   }
+  if (t.tags?.length) lines.push(`tags: ${t.tags.join(", ")}`);
+  if (t.suggestedTags?.length) lines.push(`suggested tags (not kept yet): ${t.suggestedTags.join(", ")}`);
   if (t.userWait) lines.push(`waiting on the user: ${t.userWait}`);
   if (t.branch) lines.push(`branch: ${t.branch}`);
   if (t.prUrl) lines.push(`pr: ${t.prUrl}`);

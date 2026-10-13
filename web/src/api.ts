@@ -177,6 +177,10 @@ export interface Ticket {
   dependsOn?: string[];
   /** Exclusive resources (e.g. emulator): tickets needing the same one never run at the same time, on any board. */
   needs?: string[];
+  /** The user's labels for finding related tickets (e.g. "post"), lowercase. */
+  tags?: string[];
+  /** Tags Claude suggested: shown dashed until the user keeps (moves to tags) or drops each one. */
+  suggestedTags?: string[];
   /** For tickets with needs: holds them now, or which ones another ticket holds while this one would start. */
   resources?: { holding: boolean; waitingFor: string[] } | null;
   /** It would start now, but another ticket is editing the board's folder in place (no version history). */
@@ -264,7 +268,7 @@ export interface Plan {
   reason?: string | null;
 }
 
-export type NewTicketDraft = { title: string; description: string; key?: string; dependsOn?: string[]; needs?: string[] };
+export type NewTicketDraft = { title: string; description: string; key?: string; dependsOn?: string[]; needs?: string[]; tags?: string[] };
 
 export interface QueuedMessage {
   id: string;
@@ -756,6 +760,8 @@ export interface Schedule {
   cron: string;
   enabled: boolean;
   skipIfRunning: boolean;
+  /** Tags every ticket it creates gets. */
+  tags?: string[];
   createdAt: string;
   updatedAt: string;
   lastFiredAt: string | null;
@@ -779,7 +785,7 @@ export interface Snippet {
 
 export type SnippetInput = Pick<Snippet, "name" | "text" | "scope">;
 
-export type ScheduleInput = Pick<Schedule, "name" | "title" | "body" | "mode" | "cron" | "skipIfRunning">;
+export type ScheduleInput = Pick<Schedule, "name" | "title" | "body" | "mode" | "cron" | "skipIfRunning" | "tags">;
 
 export type ScheduleTrigger = "schedule" | "missed" | "manual";
 
@@ -1037,11 +1043,11 @@ export const api = {
   },
   createTicket: (slug: string, input: {
     title: string; body: string; status: Status; sessionId?: string; mode?: TicketMode; parentId?: string; planKey?: string; dependsOn?: string[];
-    needs?: string[]; important?: boolean;
+    needs?: string[]; tags?: string[]; important?: boolean;
   }) => req<Ticket>("POST", t(slug), input),
   plan: (slug: string, id: string, action: "start" | "pause" | "resume" | "done" | "concurrency", maxConcurrent?: number) =>
     req<Ticket>("POST", `${t(slug, id)}/plan`, { action, maxConcurrent }),
-  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "needs" | "important" | "runCapUsd">> & { expectedBody?: string }) =>
+  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "needs" | "tags" | "suggestedTags" | "important" | "runCapUsd">> & { expectedBody?: string }) =>
     req<Ticket>("PATCH", t(slug, id), patch),
   deleteTicket: (slug: string, id: string) => req<void>("DELETE", t(slug, id)),
   /** Inbox Snooze: hide what the ticket waits for now for a day (or until its state changes). */

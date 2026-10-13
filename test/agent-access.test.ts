@@ -234,7 +234,7 @@ test("every tool advertises a profile argument; change tools are flagged", () =>
   // Huddle tools work inside runs: the daemon checks who the run is (lead, coordinator, the participant itself).
   expect(TOOLS.filter((t) => t.allowInRun).map((t) => t.name).sort()).toEqual([
     "create_schedule", "delete_huddle_preset", "delete_schedule", "huddle_add_participant", "huddle_brief", "huddle_close", "huddle_findings", "huddle_mode", "huddle_post", "huddle_status",
-    "save_huddle_preset", "start_huddle", "update_schedule",
+    "save_huddle_preset", "start_huddle", "suggest_tags", "update_schedule",
   ]);
 });
 

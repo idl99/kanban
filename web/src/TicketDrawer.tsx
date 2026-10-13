@@ -29,6 +29,8 @@ import { missingPctReason, UsagePanel, usageChipText, useTicketUsage } from "./U
 import { approxPct } from "./usage";
 import { Markdown } from "./Transcript";
 import { NeedsField } from "./Needs";
+import { TagEditor } from "./Tags";
+import { boardTags } from "./tagText";
 import { useHuddle, members } from "./huddle";
 import { HuddlePanel } from "./HuddlePanel";
 import type { HuddleSeed, TeamRequest } from "./Team";
@@ -565,6 +567,11 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             onDelete={() => setConfirmDelete(true)} />
           {!phone && <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /><KeyHint keys="Esc" /></button>}
         </header>
+        <div className="panel-tags">
+          <TagEditor tags={ticket.tags ?? []} suggested={ticket.suggestedTags ?? []} known={boardTags(tickets)}
+            onChange={(tags) => api.updateTicket(slug, ticket.id, { tags }).catch((e) => onError(`Tags not saved: ${e.message}`))}
+            onSuggested={(suggestedTags) => api.updateTicket(slug, ticket.id, { suggestedTags }).catch((e) => onError(`Tags not saved: ${e.message}`))} />
+        </div>
 
         <div ref={bodyRef} className={`panel-body ${detailsShown ? "" : "details-closed"} ${side.dragging ? "resizing" : ""}`}
           style={{ "--side-w": `${side.width}px` } as React.CSSProperties}>

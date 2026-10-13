@@ -3,6 +3,7 @@ import type { Board } from "./board";
 import { cronError, describeCron, nextRun, parseCron } from "./cron";
 import type { Bus } from "./events";
 import type { Store } from "./store";
+import { normalizeTags } from "./tags";
 import type { Schedule, ScheduleEditAction, ScheduleEditor, ScheduleHistoryEntry, SchedulePrevious, ScheduleTrigger, Ticket } from "./types";
 import { newId } from "./util";
 
@@ -23,6 +24,7 @@ export interface ScheduleInput {
   cron?: unknown;
   enabled?: unknown;
   skipIfRunning?: unknown;
+  tags?: unknown;
 }
 
 /** A due time older than this when the scheduler sees it was missed (daemon off, laptop asleep). */
@@ -30,7 +32,7 @@ const MISSED_AFTER_MS = 90_000;
 const HISTORY_LIMIT = 100;
 /** Old prompt/title/cron kept in an "updated" history entry, cut to this many characters. */
 const PREVIOUS_MAX = 2000;
-const EDITABLE = ["name", "title", "body", "mode", "cron", "enabled", "skipIfRunning"] as const;
+const EDITABLE = ["name", "title", "body", "mode", "cron", "enabled", "skipIfRunning", "tags"] as const;
 
 const editorText = (by: ScheduleEditor) => (by === "user" ? "the user" : `ticket ${by.ticketId}`);
 
@@ -92,6 +94,7 @@ export class Scheduler {
       body: str(input.body, base?.body ?? ""),
       enabled: input.enabled === undefined ? base?.enabled ?? true : input.enabled === true,
       skipIfRunning: input.skipIfRunning === undefined ? base?.skipIfRunning ?? true : input.skipIfRunning === true,
+      tags: input.tags === undefined ? base?.tags ?? [] : normalizeTags(input.tags),
     };
   }
 
@@ -128,7 +131,7 @@ export class Scheduler {
     if (!next.enabled) next.nextRunAt = null;
     else if (!current.enabled || next.cron !== current.cron || !current.nextRunAt) next.nextRunAt = this.nextRunAt(next.cron);
     this.store.saveSchedule(slug, next);
-    const changed: string[] = EDITABLE.filter((k) => next[k] !== current[k]);
+    const changed: string[] = EDITABLE.filter((k) => k === "tags" ? (next.tags ?? []).join() !== (current.tags ?? []).join() : next[k] !== current[k]);
     if (changed.length) {
       const toggle = changed.length === 1 && changed[0] === "enabled";
       const previous: SchedulePrevious = {};
@@ -181,7 +184,7 @@ export class Scheduler {
         if (!profile) throw new Error(`board ${slug} no longer exists`);
         if (!existsSync(profile.path)) throw new Error(`board folder ${profile.path} does not exist`);
         const t = await this.board.createTicket(slug, {
-          title: fillTitle(s.title, now), body: s.body, status: "in_progress", mode: s.mode, scheduleId: s.id,
+          title: fillTitle(s.title, now), body: s.body, status: "in_progress", mode: s.mode, scheduleId: s.id, tags: s.tags,
         });
         entry = { at, kind: "fired", trigger, ticketId: t.id };
         lastError = null;

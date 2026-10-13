@@ -4,6 +4,7 @@ import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu, type MenuItem } from "./HeaderMenu";
+import { boardTags, hasTags, parseSearch, tagStyle } from "./tagText";
 import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, DeviceIcon, GearIcon, KeyboardIcon, Logo, PlugIcon, PlusIcon, SearchIcon, TeamIcon, TerminalIcon } from "./icons";
 import { Inbox } from "./Inbox";
 import { NowView } from "./NowView";
@@ -143,6 +144,11 @@ export function App() {
   const [navOrder, setNavOrder] = useState<{ column: Status; ids: string[] } | null>(null);
   const [inbox, setInbox] = useState<InboxItem[]>([]);
   const [query, setQuery] = useState("");
+  // Tags picked by clicking a card's tag chip, shown as chips in the search box (typed #tags stay in the query).
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  useEffect(() => setTagFilter([]), [slug]);
+  const addTagFilter = useCallback((tag: string) => setTagFilter((f) => (f.includes(tag) ? f : [...f, tag])), []);
+  const clearSearch = () => { setQuery(""); setTagFilter([]); };
   const searchRef = useRef<HTMLInputElement>(null);
   const inboxTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [profileDialog, setProfileDialog] = useState<"new" | "edit" | null>(null);
@@ -512,11 +518,13 @@ export function App() {
   useEffect(() => {
     if (huddleTab && open?.id === huddleTab.id) setHuddleTab(null);
   }, [huddleTab, open?.id]);
-  const q = query.trim().toLowerCase();
+  const search = parseSearch(query);
+  const q = search.text;
+  const tagsWanted = [...new Set([...tagFilter, ...search.tags])];
   const activeFilters = FILTERS.filter((f) => filters.has(f.id));
   const shownTickets = tickets.filter((t) =>
-    (!q || `${t.title}\n${t.body}`.toLowerCase().includes(q)) && (!activeFilters.length || activeFilters.some((f) => f.test(t))));
-  const filtering = !!q || activeFilters.length > 0;
+    (!q || `${t.title}\n${t.body}`.toLowerCase().includes(q)) && hasTags(t, tagsWanted) && (!activeFilters.length || activeFilters.some((f) => f.test(t))));
+  const filtering = !!q || tagsWanted.length > 0 || activeFilters.length > 0;
   // Prev/next walk the visible tickets of the column the drawer opened in, in its order at that time, so
   // moving the open ticket (e.g. Planning to Done) keeps Next in Planning, and the ends of the column stop
   // there. Stepping keeps that order; deleted tickets are skipped.
@@ -804,14 +812,23 @@ export function App() {
           <NowView inbox={inbox} tickets={tickets} slug={profile.slug} onOpen={openFrom} onMarkDone={(i) => void inboxDone(i)} onSnooze={(i) => void inboxSnooze(i, true)} onSwitchBoard={switchBoard} />
         ) : <>
           <div className="board-bar">
-            <div className="search">
+            <div className={`search${tagFilter.length ? " has-tags" : ""}`}>
               <SearchIcon className="icon search-icon" />
-              <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search tickets"
-                aria-label="Search tickets on this board" aria-keyshortcuts="/"
-                onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); if (query) setQuery(""); else e.currentTarget.blur(); } }} />
-              {query ? (
+              {tagFilter.map((g) => (
+                <button key={g} className="tag-chip search-tag" style={tagStyle(g)} title={`Stop filtering by ${g}`} aria-label={`Remove tag filter ${g}`}
+                  onClick={() => setTagFilter((f) => f.filter((x) => x !== g))}>
+                  #{g} <CloseIcon size={9} />
+                </button>
+              ))}
+              <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tagFilter.length ? "Search" : "Search tickets · #tag"}
+                aria-label="Search tickets on this board (#tag filters by tag)" aria-keyshortcuts="/"
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") { e.preventDefault(); if (query || tagFilter.length) clearSearch(); else e.currentTarget.blur(); }
+                  else if (e.key === "Backspace" && !query && tagFilter.length) setTagFilter((f) => f.slice(0, -1));
+                }} />
+              {query || tagFilter.length ? (
                 <button className="search-clear" aria-label="Clear search" title="Clear (Esc)"
-                  onMouseDown={(e) => e.preventDefault()} onClick={() => { setQuery(""); searchRef.current?.focus(); }}>
+                  onMouseDown={(e) => e.preventDefault()} onClick={() => { clearSearch(); searchRef.current?.focus(); }}>
                   <CloseIcon size={12} />
                 </button>
               ) : <kbd className="search-kbd" aria-hidden>/</kbd>}
@@ -830,7 +847,7 @@ export function App() {
             {filtering && (
               <span className="muted small" aria-live="polite">
                 {shownTickets.length} of {tickets.length} ticket{tickets.length === 1 ? "" : "s"}
-                {" · "}<button className="link-btn small" onClick={() => { setQuery(""); setFilters(new Set()); }}>Clear all</button>
+                {" · "}<button className="link-btn small" onClick={() => { clearSearch(); setFilters(new Set()); }}>Clear all</button>
               </span>
             )}
           </div>
@@ -843,7 +860,7 @@ export function App() {
               }} />
           )}
           <Board tickets={shownTickets} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending}
-            huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} />
+            huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} onTag={addTagFilter} />
         </>
       )}
       {phone && profile && (
@@ -913,6 +930,7 @@ export function App() {
         <NewTicketDialog
           slug={profile.slug}
           folder={profile.path}
+          knownTags={boardTags(tickets)}
           onClose={() => setNewTicket(false)}
           onCreate={async (input) => {
             const t = await api.createTicket(profile.slug, input);

@@ -7,6 +7,7 @@ import {
 import { BUILTIN_PRESETS, MAIN_PRESET, presetLine, presetName } from "./server/huddle-presets";
 import { HUDDLE_AGENT_ENV, huddleLine, PROPOSED_MAX_COST_USD, proposedBudget, rosterEntryError, rosterError } from "./server/huddle-roster";
 import { BUILTIN_TEMPLATES, templateLine } from "./server/huddle-templates";
+import { normalizeTags } from "./server/tags";
 import { teammateProposal } from "./server/teammate-proposal";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -49,6 +50,10 @@ const SCHEDULE_FIELDS = {
   },
   enabled: { type: "boolean", description: "false pauses the schedule (no runs, no catch-up when resumed). Default: true." },
   skipIfRunning: { type: "boolean", description: "Skip a run while the previous ticket from this schedule is still queued or running. Default: true." },
+  tags: {
+    type: "array", items: { type: "string" },
+    description: "Tags every ticket it creates gets, e.g. [\"post\"], so the user can filter them on the board. Replaces the list; [] clears it.",
+  },
 };
 
 const DEPENDS_ON = {
@@ -73,6 +78,18 @@ function needsList(args: any): string[] | undefined {
   if (args?.needs === undefined) return undefined;
   if (!Array.isArray(args.needs) || args.needs.some((n: unknown) => typeof n !== "string")) throw new ClientError("needs must be a list of resource names, e.g. [\"emulator\"]");
   return args.needs.map((n: string) => n.trim().toLowerCase()).filter(Boolean);
+}
+
+const TAGS = {
+  type: "array", items: { type: "string" },
+  description: "Tags (short lowercase labels, e.g. [\"post\"]) the user filters the board by. Set them only when the user asked for them " +
+    "(e.g. \"tag it post\") or they come with a schedule or plan the user set up; otherwise suggest tags with suggest_tags. Replaces the list; [] clears it.",
+};
+
+function tagsList(args: any, key = "tags"): string[] | undefined {
+  if (args?.[key] === undefined) return undefined;
+  if (!Array.isArray(args[key]) || args[key].some((n: unknown) => typeof n !== "string")) throw new ClientError(`${key} must be a list of tag names, e.g. ["post"]`);
+  return normalizeTags(args[key]);
 }
 
 /** Why propose_huddle is refused in Planning, and what to do instead (see REVIEW_HUDDLE_FORMAT in prompts.ts). */
@@ -235,6 +252,7 @@ function scheduleText(s: ScheduleInfo): string {
     scheduleLine(s),
     `ticket title: ${s.title}`,
     `mode: ${s.mode}, skip while previous runs: ${s.skipIfRunning ? "yes" : "no"}`,
+    ...(s.tags?.length ? [`tags: ${s.tags.join(", ")}`] : []),
     "", s.body.trim() || "(no prompt)",
   ].join("\n");
 }
@@ -263,6 +281,8 @@ function scheduleInput(args: any, partial: boolean): ScheduleInput {
     if (typeof args[k] !== "boolean") throw new ClientError(`${k} must be true or false`);
     out[k] = args[k];
   }
+  const tags = tagsList(args);
+  if (tags) out.tags = tags;
   return out;
 }
 
@@ -303,7 +323,7 @@ const SCHEDULE_TOOLS: Tool[] = [
   {
     name: "update_schedule",
     description:
-      "Change a schedule: any of name, title, prompt (body), cron, mode, skipIfRunning; enabled false/true pauses/resumes it. " +
+      "Change a schedule: any of name, title, prompt (body), cron, mode, skipIfRunning, tags; enabled false/true pauses/resumes it. " +
       "Only the fields you pass change. A run created by a schedule may update its own schedule (e.g. refine its prompt); " +
       "the old prompt is kept in the schedule's history.",
     inputSchema: { type: "object", properties: { profile: PROFILE, id: SCHEDULE_ID, ...SCHEDULE_FIELDS }, required: ["id"] },
@@ -312,7 +332,7 @@ const SCHEDULE_TOOLS: Tool[] = [
     async run(args, ctx) {
       const slug = await slugFor(args, ctx);
       const patch = scheduleInput(args, true);
-      if (!Object.keys(patch).length) throw new ClientError("nothing to change: pass name, title, body, cron, mode, enabled or skipIfRunning");
+      if (!Object.keys(patch).length) throw new ClientError("nothing to change: pass name, title, body, cron, mode, enabled, skipIfRunning or tags");
       const s = await ctx.client.updateSchedule(slug, str(args, "id")!, patch, ctx.env[RUN_ENV]);
       return `Updated: ${scheduleLine(s)}`;
     },
@@ -425,6 +445,10 @@ export function ticketsError(args: any): string | null {
   for (const [i, t] of ts.entries()) {
     if (t.needs === undefined) continue;
     if (!Array.isArray(t.needs) || t.needs.some((n: unknown) => typeof n !== "string")) return `ticket ${i + 1}: needs must be a list of resource names, e.g. ["emulator"]`;
+  }
+  for (const [i, t] of ts.entries()) {
+    if (t.tags === undefined) continue;
+    if (!Array.isArray(t.tags) || t.tags.some((n: unknown) => typeof n !== "string")) return `ticket ${i + 1}: tags must be a list of tag names, e.g. ["post"]`;
   }
   return null;
 }
@@ -599,6 +623,7 @@ const PLANNING_TOOLS: Tool[] = [
       "Each description must be self-contained (goal, context with relevant files, acceptance criteria). " +
       "key is a short unique name; dependsOn lists keys that must be finished first: give one to tickets that build on each other or likely edit the same files. " +
       "needs lists exclusive resources (e.g. [\"emulator\"]): tickets that need the same one never run at the same time, in any order. " +
+      "tags (e.g. [\"post\"]) label the tickets so the user can filter the board by them; give the tags the user uses for this kind of work. " +
       "Nothing is created by the call.",
     inputSchema: {
       type: "object",
@@ -613,6 +638,7 @@ const PLANNING_TOOLS: Tool[] = [
               description: { type: "string", description: "Markdown description." },
               dependsOn: { type: "array", items: { type: "string" }, description: "Keys of tickets in this list that must be finished first." },
               needs: { type: "array", items: { type: "string" }, description: "Exclusive resources its runs use, e.g. [\"emulator\"]." },
+              tags: { type: "array", items: { type: "string" }, description: "Tags it gets, e.g. [\"post\"]." },
             },
             required: ["key", "title", "description"],
           },
@@ -1099,6 +1125,7 @@ export const TOOLS: Tool[] = [
         key: { type: "string", description: "Planner only: short name siblings can use in dependsOn." },
         dependsOn: DEPENDS_ON,
         needs: NEEDS,
+        tags: TAGS,
       },
       required: ["title"],
     },
@@ -1108,6 +1135,7 @@ export const TOOLS: Tool[] = [
       const slug = await slugFor(args, ctx);
       const deps = depList(args);
       const needs = needsList(args);
+      const tags = tagsList(args);
       const t = await ctx.client.createTicket(slug, {
         title: str(args, "title")!.trim(),
         body: typeof args?.body === "string" ? args.body : "",
@@ -1116,6 +1144,7 @@ export const TOOLS: Tool[] = [
         ...(str(args, "key", false) ? { planKey: str(args, "key")!.trim() } : {}),
         ...(deps ? { dependsOn: deps } : {}),
         ...(needs?.length ? { needs } : {}),
+        ...(tags?.length ? { tags } : {}),
       }, ctx.env[RUN_ENV]);
       return `Created ${t.id} on board ${slug} in ${t.status} (${t.mode} mode): ${t.title}`;
     },
@@ -1123,14 +1152,14 @@ export const TOOLS: Tool[] = [
   {
     name: "update_ticket",
     description:
-      "Edit a ticket's title, description, column, mode, dependsOn, needs or ⭐ important. Moving it to ready starts a Claude run, " +
+      "Edit a ticket's title, description, column, mode, dependsOn, needs, tags or ⭐ important. Moving it to ready starts a Claude run, " +
       "moving it to planning starts the interview in the board chat (same as dragging it on the board). " +
       "A planner can take one of its children out of its plan with release: true.",
     inputSchema: {
       type: "object",
       properties: {
         profile: PROFILE, id: ID, title: { type: "string" }, body: { type: "string", description: "New markdown description (replaces the old one)." },
-        status: STATUS, mode: MODE, dependsOn: DEPENDS_ON, needs: NEEDS,
+        status: STATUS, mode: MODE, dependsOn: DEPENDS_ON, needs: NEEDS, tags: TAGS,
         important: {
           type: "boolean",
           description: "⭐ Important: unattended runs review the work in an auto huddle before landing it. Set it only when the user says the task is very important; " +
@@ -1153,11 +1182,44 @@ export const TOOLS: Tool[] = [
       if (deps) patch.dependsOn = deps;
       const needs = needsList(args);
       if (needs) patch.needs = needs;
+      const tags = tagsList(args);
+      if (tags) patch.tags = tags;
       if (args?.release === true) patch.parentId = null;
       if (typeof args?.important === "boolean") patch.important = args.important;
-      if (!Object.keys(patch).length) throw new ClientError("nothing to change: pass title, body, status, mode, dependsOn, needs, important or release");
+      if (!Object.keys(patch).length) throw new ClientError("nothing to change: pass title, body, status, mode, dependsOn, needs, tags, important or release");
       const t = await ctx.client.updateTicket(slug, str(args, "id")!, patch, ctx.env[RUN_ENV]);
       return `Updated ${t.id}: ${ticketLine(t)}`;
+    },
+  },
+  {
+    name: "suggest_tags",
+    description:
+      "Suggest tags for the ticket you are working on (your board run or its chat), e.g. [\"post\"] for a posting task. " +
+      "The board shows them as suggestions on the ticket; the user keeps or drops each one, nothing is tagged until then. " +
+      "Prefer tags the board already uses (list_tickets shows them as #tag). Suggest only when it helps the user find the ticket; don't repeat its tags.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tags: { type: "array", items: { type: "string" }, description: "1-3 short tag names, e.g. [\"post\", \"xhs\"]." },
+        profile: PROFILE,
+        id: { ...ID, description: "Ticket id. Omit inside a board run to use your own ticket." },
+      },
+      required: ["tags"],
+    },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      const tags = tagsList(args);
+      if (!tags?.length) throw new ClientError("tags must list at least one tag name, e.g. [\"post\"]");
+      const own = runTicketId(ctx);
+      const id = str(args, "id", false)?.trim() || own;
+      if (!id) throw new ClientError("id is required outside a board run");
+      const slug = await slugFor(args, ctx);
+      const t = await ctx.client.getTicket(slug, id);
+      const fresh = tags.filter((g) => !t.tags?.includes(g));
+      if (!fresh.length) return `${t.id} already has ${tags.map((g) => `#${g}`).join(" ")}; nothing to suggest.`;
+      const u = await ctx.client.updateTicket(slug, id, { suggestedTags: [...(t.suggestedTags ?? []), ...fresh] }, ctx.env[RUN_ENV]);
+      return `Suggested ${fresh.map((g) => `#${g}`).join(" ")} on ${u.id}: the user keeps or drops them on the board.`;
     },
   },
   {

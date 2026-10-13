@@ -234,7 +234,7 @@ test("without idleMs input ends as soon as Claude is idle; endWhenIdle ends a ke
 test("controlResponse allows the board tools only for Planning runs; Chrome and huddle tools work for every run", () => {
   const ask = (tool: string, planning?: boolean) =>
     (controlResponse({ request_id: "r", request: { subtype: "can_use_tool", tool_name: tool, input: { id: "t_1" } } }, planning) as any).response.response.behavior;
-  const board = ["move_ticket", "update_ticket", "comment_ticket", "create_ticket", "chat_ticket", "stop_ticket", "plan_control", "adopt_tickets"];
+  const board = ["move_ticket", "update_ticket", "comment_ticket", "create_ticket", "chat_ticket", "stop_ticket", "plan_control", "adopt_tickets", "suggest_tags"];
   for (const t of board) {
     expect(ask(`mcp__ckanban__${t}`, true)).toBe("allow");
     expect(ask(`mcp__ckanban__${t}`)).toBe("deny");

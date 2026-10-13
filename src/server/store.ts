@@ -160,7 +160,7 @@ export class Store {
     slug: string,
     input: {
       title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[];
-      needs?: string[]; important?: boolean;
+      needs?: string[]; tags?: string[]; important?: boolean;
     },
   ): Ticket {
     const at = nowIso();
@@ -173,6 +173,7 @@ export class Store {
       ...(input.planKey ? { planKey: input.planKey } : {}),
       ...(input.dependsOn?.length ? { dependsOn: input.dependsOn } : {}),
       ...(input.needs?.length ? { needs: input.needs } : {}),
+      ...(input.tags?.length ? { tags: input.tags } : {}),
       ...(input.important ? { important: true } : {}),
     };
     atomicWrite(this.ticketPath(slug, t.id), serializeTicket(t));

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { NewTicketDraft as Draft, Ticket } from "./api";
+import { TagChip } from "./Tags";
 import { Markdown } from "./Transcript";
 
 /** Tickets a planner's chat proposed; Create adds each to Backlog, linked to the planner. */
@@ -69,6 +70,7 @@ export function NewTicketsCard({ drafts, created, onCreate, onOpen }: {
               <span className="muted small">After: {d.dependsOn.map((k) => drafts.find((x) => x.key === k)?.title ?? k).join(", ")}</span>
             )}
             {!!d.needs?.length && <span className="muted small">Needs: {d.needs.join(", ")} (one ticket at a time)</span>}
+            {!!d.tags?.length && <span className="draft-tags">{d.tags.map((g) => <TagChip key={g} name={g} />)}</span>}
             {open.has(i) && d.description && <div className="proposal-body"><Markdown text={d.description} /></div>}
           </div>
         );

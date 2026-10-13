@@ -7,6 +7,8 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { Modal } from "./Modal";
 import { ModeToggle } from "./ModeToggle";
+import { TagChip, TagEditor } from "./Tags";
+import { boardTags } from "./tagText";
 import { timeAgo, timeUntil } from "./time";
 import { useNow } from "./useNow";
 
@@ -18,7 +20,7 @@ export const CRON_PRESETS: { label: string; cron: string }[] = [
 ];
 
 const FIELD_LABEL: Record<string, string> = {
-  name: "name", title: "ticket title", body: "prompt", mode: "mode", cron: "timing", enabled: "on/off", skipIfRunning: "skip setting",
+  name: "name", title: "ticket title", body: "prompt", mode: "mode", cron: "timing", enabled: "on/off", skipIfRunning: "skip setting", tags: "tags",
 };
 
 const ACTION_LABEL = { created: "Created", updated: "Edited", paused: "Paused", resumed: "Resumed" } as const;
@@ -90,6 +92,7 @@ export function SchedulesDialog({ profile, schedules, tickets, onOpenTicket, onC
             {s.enabled ? <span className="badge ok">Active</span> : <span className="badge stopped">Paused</span>}
             {s.active && <span className="badge running"><span className="spinner" /> Running</span>}
             <span className="badge stopped">{s.mode === "auto" ? "Just do it" : "Interview first"}</span>
+            {s.tags?.map((g) => <TagChip key={g} name={g} />)}
           </div>
           <div className="sched-when">
             {s.summary} <code>{s.cron}</code>
@@ -115,7 +118,7 @@ export function SchedulesDialog({ profile, schedules, tickets, onOpenTicket, onC
         </div>
       </div>
       {editing !== "new" && editing?.id === s.id && (
-        <ScheduleForm slug={profile.slug} initial={s} onDone={() => setEditing(null)} />
+        <ScheduleForm slug={profile.slug} initial={s} knownTags={boardTags(tickets)} onDone={() => setEditing(null)} />
       )}
       {historyOf === s.id && <History slug={profile.slug} schedule={s} tickets={tickets} onOpenTicket={onOpenTicket} />}
     </div>
@@ -134,7 +137,7 @@ export function SchedulesDialog({ profile, schedules, tickets, onOpenTicket, onC
             {editing === "new" ? "Close form" : "New schedule"}
           </button>
         </div>
-        {editing === "new" && <ScheduleForm slug={profile.slug} onDone={() => setEditing(null)} />}
+        {editing === "new" && <ScheduleForm slug={profile.slug} knownTags={boardTags(tickets)} onDone={() => setEditing(null)} />}
         {err && <div className="form-error">{err}</div>}
         {note && <div className="muted small">{note}</div>}
         {!schedules && <div className="muted">Loading…</div>}
@@ -223,7 +226,9 @@ function History({ slug, schedule, tickets, onOpenTicket }: {
   );
 }
 
-function ScheduleForm({ slug, initial, onDone }: { slug: string; initial?: Schedule; onDone: () => void }) {
+function ScheduleForm({ slug, initial, knownTags, onDone }: {
+  slug: string; initial?: Schedule; knownTags: { name: string; count: number }[]; onDone: () => void;
+}) {
   const [name, setName] = useState(initial?.name ?? "");
   const [title, setTitle] = useState(initial?.title ?? "");
   const [body, setBody] = useState(initial?.body ?? "");
@@ -232,6 +237,7 @@ function ScheduleForm({ slug, initial, onDone }: { slug: string; initial?: Sched
   const [cron, setCron] = useState(initial?.cron ?? CRON_PRESETS[1].cron);
   const [custom, setCustom] = useState(() => !!initial && !CRON_PRESETS.some((p) => p.cron === initial.cron));
   const [skipIfRunning, setSkipIfRunning] = useState(initial?.skipIfRunning ?? true);
+  const [tags, setTags] = useState<string[]>(initial?.tags ?? []);
   const [preview, setPreview] = useState<CronPreview | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -256,7 +262,7 @@ function ScheduleForm({ slug, initial, onDone }: { slug: string; initial?: Sched
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const input: ScheduleInput = { name: name.trim(), title: title.trim(), body, mode, cron: cron.trim(), skipIfRunning };
+    const input: ScheduleInput = { name: name.trim(), title: title.trim(), body, mode, cron: cron.trim(), skipIfRunning, tags };
     setBusy(true);
     setErr(null);
     try {
@@ -312,6 +318,11 @@ function ScheduleForm({ slug, initial, onDone }: { slug: string; initial?: Sched
             ? "Claude works on its own and reports back when done."
             : "Claude asks clarifying questions first; the ticket waits for your answers in the Inbox."}
         </span>
+      </div>
+      <div className="field">
+        <div className="field-label">Tags</div>
+        <TagEditor tags={tags} known={knownTags} onChange={setTags} disabled={busy} />
+        <span className="muted small">Every ticket this schedule creates gets these tags, so you can filter them on the board.</span>
       </div>
       <label className="check-row">
         <input type="checkbox" checked={skipIfRunning} onChange={(e) => setSkipIfRunning(e.target.checked)} />

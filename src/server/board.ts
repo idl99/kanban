@@ -26,6 +26,7 @@ import { BOARD_COMMANDS, commandText, listCommands, MODEL_HELP, parseSlash, REFU
 import { mcpConfig } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
+import { normalizeTags } from "./tags";
 import { autoHuddlesOn, runCapFor, workspaceOf, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
 import { CLEANUP_TIMEOUT_MS, prepareWorktree, runShell, withSetup, type SetupResult } from "./worktree-setup";
 import { nowIso, slugify } from "./util";
@@ -1286,11 +1287,11 @@ export class Board {
     slug: string,
     input: {
       title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[];
-      needs?: string[]; important?: boolean;
+      needs?: string[]; tags?: string[]; important?: boolean;
     },
   ): Promise<Ticket> {
     const status = input.status === "in_progress" ? "ready" : input.status;
-    const t = this.store.createTicket(slug, { ...input, status, needs: normalizeNeeds(input.needs) });
+    const t = this.store.createTicket(slug, { ...input, status, needs: normalizeNeeds(input.needs), tags: normalizeTags(input.tags) });
     this.emitTicket(slug, t);
     // The planner's "Review proposal" badge depends on which of its proposed tickets exist.
     const parent = input.parentId ? this.store.getTicket(slug, input.parentId) : null;
@@ -1304,7 +1305,7 @@ export class Board {
   async updateTicket(
     slug: string,
     id: string,
-    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "needs" | "important" | "runCapUsd">> & {
+    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "needs" | "tags" | "suggestedTags" | "important" | "runCapUsd">> & {
       expectedBody?: string;
       /** null: take the ticket out of its plan (only clearing is allowed here; adoptTickets sets it). */
       parentId?: null;
@@ -1323,6 +1324,12 @@ export class Board {
     if (patch.notice !== undefined) clean.notice = patch.notice;
     if (patch.runCapUsd !== undefined) clean.runCapUsd = patch.runCapUsd;
     if (patch.needs !== undefined) clean.needs = normalizeNeeds(patch.needs);
+    if (patch.tags !== undefined) clean.tags = normalizeTags(patch.tags);
+    if (patch.suggestedTags !== undefined || patch.tags !== undefined) {
+      // A suggestion that is now a tag is no longer a suggestion.
+      const tags = clean.tags ?? current.tags ?? [];
+      clean.suggestedTags = normalizeTags(patch.suggestedTags ?? current.suggestedTags).filter((s) => !tags.includes(s));
+    }
     if (patch.important !== undefined) clean.important = !!patch.important;
     if (patch.parentId === null && current.parentId) {
       const plannerId = current.parentId;

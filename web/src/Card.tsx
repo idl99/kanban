@@ -11,6 +11,7 @@ import { limitLabel, limitWait } from "./limitText";
 import { ResourceChip, resourceWait } from "./Needs";
 import { currentPr, prChips } from "./prText";
 import { ResolveConflicts } from "./ResolveConflicts";
+import { TagChip } from "./Tags";
 import { ImportantStar } from "./StarToggle";
 import { elapsed, fullTime, plainPreview, timeAgo } from "./time";
 import { costText } from "./usage";
@@ -94,10 +95,12 @@ function HuddleBadge({ badge, onOpen }: { badge: CardHuddleBadge; onOpen?: (tick
  * limit: the board's slug and error toast, for the usage-limit buttons ("Continue now", auto-continue) and a stalled
  * run's Stop / Keep waiting / Restart.
  */
-export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHuddle, limit }: {
+export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHuddle, limit, onTag }: {
   ticket: Ticket; onClick?: () => void; dragging?: boolean; queued?: number; held?: boolean;
   huddle?: CardHuddleBadge | null; onOpenHuddle?: (ticketId: string) => void;
   limit?: { slug: string; onError: (msg: string) => void };
+  /** A tag chip was clicked: filter the board by it. */
+  onTag?: (tag: string) => void;
 }) {
   const working = (ticket.status === "in_progress" && !waitsForSlot(ticket) && !autoHuddleIdle(ticket)) || !!ticket.running;
   const att = ticket.attention ?? null;
@@ -137,7 +140,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           {plainPreview(last.from === "huddle" ? digestPreview(last.text) : last.text)}
         </div>
       )}
-      {(badge || ticket.autoHuddle || ticket.costUsd || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || huddle || artifactHref) && (
+      {(badge || ticket.autoHuddle || ticket.costUsd || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || ticket.tags?.length || huddle || artifactHref) && (
         <div className="card-meta">
           {ticket.plan && ticket.plan.state !== "done" && (
             <span className={`badge plan ${ticket.plan.state}`} title="This ticket runs a plan of child tickets">
@@ -178,6 +181,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           {ticket.workdir && (ticket.terminalOpen
             ? <span className="badge running" title="This ticket's Claude session is open in a terminal"><span className="live-dot" /> In terminal</span>
             : <span className="badge stopped" title="Linked to an existing Claude session">session</span>)}
+          {ticket.tags?.map((g) => <TagChip key={g} name={g} onClick={onTag && !dragging ? () => onTag(g) : undefined} />)}
           {lastAt && !working && (
             <time className="card-time" dateTime={lastAt} title={fullTime(lastAt)}>{timeAgo(lastAt)}</time>
           )}

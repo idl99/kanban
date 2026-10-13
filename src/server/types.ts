@@ -137,6 +137,10 @@ export interface Ticket {
    * run at the same time, on any board of this machine; it adds no order (that is dependsOn).
    */
   needs?: string[];
+  /** The user's short labels for finding related tickets (e.g. "post"), normalized by normalizeTags. */
+  tags?: string[];
+  /** Tags Claude suggested for this ticket (suggest_tags); the user keeps (moves to tags) or drops each one. */
+  suggestedTags?: string[];
   /** Ticket this one was branched from (a copy of its conversation and committed code). Not a plan parent. */
   branchedFrom?: string | null;
   /** When the branch was made: conversation entries before this are the copied history. */
@@ -256,6 +260,8 @@ export interface Schedule {
   enabled: boolean;
   /** Skip a fire while the previous ticket from this schedule is still queued or running. */
   skipIfRunning: boolean;
+  /** Tags every ticket it creates gets. Missing on older schedules. */
+  tags?: string[];
   createdAt: string;
   updatedAt: string;
   lastFiredAt: string | null;

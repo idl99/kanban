@@ -8,6 +8,7 @@ import { mockupName, stripMockups } from "./mockups";
 import { parseResult } from "./result";
 import { parseTeammateProposal, type TeammateProposal } from "./teammate-proposal";
 import type { Store } from "./store";
+import { normalizeTags } from "./tags";
 import { AGENT_TOOL, notifiedStatus, parseTaskNotification, SubagentCache, subagentFiles, toolLabel, withTranscript, type AgentInfo } from "./subagents";
 import { findToolDetailIn, type ToolDetail } from "./tooldetail";
 import { parseSetupBlock, type SetupResult } from "./worktree-setup";
@@ -38,6 +39,8 @@ export interface NewTicketDraft extends TicketProposal {
   dependsOn?: string[];
   /** Exclusive resources (e.g. emulator), see Ticket.needs. */
   needs?: string[];
+  /** Tags the ticket gets when created (see Ticket.tags). */
+  tags?: string[];
 }
 
 export interface SessionEntry {
@@ -176,6 +179,8 @@ export function parseNewTickets(v: any): NewTicketDraft[] | null {
     if (deps.length) d.dependsOn = deps;
     const needs = Array.isArray(x?.needs) ? x.needs.filter((k: unknown) => typeof k === "string" && k.trim()).map((k: string) => k.trim().toLowerCase()) : [];
     if (needs.length) d.needs = needs;
+    const tags = normalizeTags(x?.tags);
+    if (tags.length) d.tags = tags;
     return d;
   }).filter((x) => x.title);
   return ts.length ? ts : null;

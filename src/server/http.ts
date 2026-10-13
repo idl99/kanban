@@ -866,6 +866,7 @@ export function createServer(deps: ServerDeps) {
         const planKey = typeof b.planKey === "string" && b.planKey.trim() ? b.planKey.trim() : undefined;
         const dependsOn = strings(b.dependsOn);
         const needs = strings(b.needs);
+        const tags = strings(b.tags);
         if (planner) {
           // A planner adds children to its own plan; the board starts them when their dependencies are done.
           const kids = store.listTickets(slug).filter((c) => c.parentId === planner.id);
@@ -881,7 +882,7 @@ export function createServer(deps: ServerDeps) {
         }
         if (parentId && !store.getTicket(slug, parentId)) throw new HttpError(400, `parent ticket ${parentId} not found`);
         let t = await board.createTicket(slug, {
-          title, body: String(b.body ?? ""), status: b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn, needs,
+          title, body: String(b.body ?? ""), status: b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn, needs, tags,
           important: b.important === true,
         });
         if (planner) store.addComment(slug, t.id, "ai", `Created by the planner of plan ${planner.id}.`);
@@ -908,15 +909,20 @@ export function createServer(deps: ServerDeps) {
         const b = await body(req);
         if (b.status !== undefined && !STATUSES.includes(b.status)) throw new HttpError(400, `invalid status ${b.status}`);
         const target = store.getTicket(slug, id)!;
-        // ⭐ Important on its own ticket: any of the ticket's runs may set it (the user said the task matters).
+        // ⭐ Important and suggested tags on its own ticket: any of the ticket's runs may set them (the user said the task
+        // matters; a suggestion changes nothing until the user keeps it).
         const own = req.headers.get(RUN_HEADER) === `${slug}/${id}` && !req.headers.get(HUDDLE_HEADER);
-        const onlyImportant = Object.keys(b).length > 0 && Object.keys(b).every((k) => k === "important");
-        const { planner, requester } = own && onlyImportant ? {} : runRights(req, slug, target);
+        const onlyOwn = Object.keys(b).length > 0 && Object.keys(b).every((k) => k === "important" || k === "suggestedTags");
+        const { planner, requester } = own && onlyOwn ? {} : runRights(req, slug, target);
         const patch: Parameters<Board["updateTicket"]>[2] = {};
         const deps = strings(b.dependsOn);
         if (deps) patch.dependsOn = deps;
         const needs = strings(b.needs);
         if (needs) patch.needs = needs;
+        const tags = strings(b.tags);
+        if (tags) patch.tags = tags;
+        const suggested = strings(b.suggestedTags);
+        if (suggested) patch.suggestedTags = suggested;
         if (b.parentId === null) patch.parentId = null;
         else if (b.parentId !== undefined) throw new HttpError(400, "parentId can only be cleared (null); use adopt to add a ticket to a plan");
         if (b.mode === "auto" || b.mode === "interview") patch.mode = b.mode;
@@ -961,7 +967,7 @@ export function createServer(deps: ServerDeps) {
           throw new HttpError(400, (e as Error).message);
         }
         const changer = planner ?? requester;
-        if (own && onlyImportant && target.important !== t.important) store.addComment(slug, id, "ai", t.important ? "Claude marked this ticket ⭐ Important." : "Claude cleared ⭐ Important.");
+        if (own && onlyOwn && target.important !== t.important) store.addComment(slug, id, "ai", t.important ? "Claude marked this ticket ⭐ Important." : "Claude cleared ⭐ Important.");
         if (changer) {
           const what = Object.entries(patch)
             .map(([k, v]) => (k === "status" ? `moved it to ${v}` : k === "parentId" ? `released it from plan ${target.parentId}` : k === "important" ? (v ? "marked it ⭐ Important" : "cleared ⭐ Important") : `changed ${k}`)).join(", ");

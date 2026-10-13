@@ -39,10 +39,12 @@ interface Props {
   onOpenHuddle?: (id: string) => void;
   /** The board's slug: cards waiting on the usage limit get "Continue now" and the auto-continue toggle. */
   slug?: string;
+  /** A card's tag chip was clicked: filter the board by that tag. */
+  onTag?: (tag: string) => void;
 }
 
 /** Card props shared down the columns. */
-interface CardCtx { huddles: Huddle[]; onOpenHuddle?: (id: string) => void; limit?: { slug: string; onError: (msg: string) => void } }
+interface CardCtx { huddles: Huddle[]; onOpenHuddle?: (id: string) => void; limit?: { slug: string; onError: (msg: string) => void }; onTag?: (tag: string) => void }
 
 /** Drag with the mouse, or focus a card: Enter opens it, Space picks it up (arrows move, Space drops, Esc cancels). */
 function SortableCard({ ticket, onOpen, queued, held, ctx }: { ticket: Ticket; onOpen: (id: string) => void; queued?: number; held?: boolean; ctx: CardCtx }) {
@@ -71,7 +73,7 @@ function SortableCard({ ticket, onOpen, queued, held, ctx }: { ticket: Ticket; o
       }}
     >
       <Card ticket={ticket} onClick={() => onOpen(ticket.id)} queued={queued} held={held}
-        huddle={cardHuddleBadge(ctx.huddles, ticket.id, now)} onOpenHuddle={ctx.onOpenHuddle} limit={ctx.limit} />
+        huddle={cardHuddleBadge(ctx.huddles, ticket.id, now)} onOpenHuddle={ctx.onOpenHuddle} limit={ctx.limit} onTag={ctx.onTag} />
     </div>
   );
 }
@@ -190,10 +192,10 @@ const collision: CollisionDetection = (args) => {
 
 const NO_HUDDLES: Huddle[] = [];
 
-export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restartPending = false, huddles = NO_HUDDLES, onOpenHuddle, slug }: Props) {
+export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restartPending = false, huddles = NO_HUDDLES, onOpenHuddle, slug, onTag }: Props) {
   const ctx = useMemo(() => ({
-    huddles, onOpenHuddle, limit: slug ? { slug, onError: (msg: string) => toast(msg, { tone: "error" }) } : undefined,
-  }), [huddles, onOpenHuddle, slug]);
+    huddles, onOpenHuddle, limit: slug ? { slug, onError: (msg: string) => toast(msg, { tone: "error" }) } : undefined, onTag,
+  }), [huddles, onOpenHuddle, slug, onTag]);
   const phone = usePhone();
   const sensors = useSensors(
     // Phones: long-press picks a card up, so a swipe still scrolls the board.
