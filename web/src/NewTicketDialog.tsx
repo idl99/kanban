@@ -88,7 +88,7 @@ export function NewTicketDialog({ slug, folder, onClose, onCreate }: {
           </span>
         </div>
         {err && <div className="form-error">{err}</div>}
-        <div className="form-actions">
+        <div className="form-actions new-ticket-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel<KeyHint keys="Esc" /></button>
           <button type="button" className="btn" disabled={busy || !title.trim() || images.uploading} onClick={() => submit("backlog")} title={`Park it in Backlog; nothing runs (${MOD}S)`}>Create<KeyHint keys="⌘S" /></button>
           <button type="button" className="btn primary icon-label" onClick={() => submit(startStatus)} disabled={busy || !title.trim() || images.uploading}>

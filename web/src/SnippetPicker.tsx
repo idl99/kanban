@@ -76,7 +76,7 @@ export function useSnippetPicker({ slug, ref, setValue }: {
   const el = ref.current;
   if (open && el) {
     const rect = el.getBoundingClientRect();
-    const width = Math.min(420, Math.max(260, rect.width - 24));
+    const width = Math.min(420, window.innerWidth - 16, Math.max(260, rect.width - 24));
     const style: CSSProperties = { left: Math.min(rect.left + 12, window.innerWidth - width - 8), width };
     // Above the textarea when there's room (chat composer sits at the bottom), else below.
     if (rect.top > 260) style.bottom = window.innerHeight - rect.top + GAP;

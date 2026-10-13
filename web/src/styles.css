@@ -2144,6 +2144,28 @@ button.hd-mode:disabled { cursor: default; }
   .btn.image-pick, .btn.small.desc-editor-pick { min-height: 36px; padding-left: 12px; padding-right: 12px; font-size: 13px; }
 }
 
+/* Phone (≤720px): the description box footer is a row of tap buttons (Image, @ Snippet, / Skill; DescriptionEditor),
+   and New ticket puts Start planning on its own full-width row with Cancel and Create below. */
+@media (max-width: 720px) {
+  .desc-editor-foot.phone { flex-wrap: wrap; gap: 2px 4px; padding: 4px 6px; overflow: visible; font-size: 14px; color: var(--text); }
+  .desc-editor-foot .desc-editor-tool, .desc-editor-foot .btn.desc-editor-tool {
+    min-height: 40px; padding: 0 10px; border: 0; border-radius: 8px; background: none; box-shadow: none;
+    font: inherit; font-size: 14px; color: var(--text); display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  }
+  .desc-editor-foot .btn.image-pick.desc-editor-tool { background: var(--surface-2); }
+  .desc-editor-foot .desc-editor-tool:active { background: var(--surface-2); }
+  .desc-editor-tool kbd { border: 0; background: none; padding: 0; font: 600 16px system-ui, sans-serif; color: var(--muted); }
+  .desc-editor-status { font-size: 12.5px; color: var(--muted); padding: 0 6px; }
+  /* ticket panel: the details pane is capped and scrolls, so the editor keeps its full height instead of squeezing under Save */
+  .desc-edit .desc-editor.fill { flex: 1 0 auto; }
+
+  .form-actions.new-ticket-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .new-ticket-actions .btn { justify-content: center; min-height: 44px; }
+  .new-ticket-actions .btn.primary { grid-column: 1 / -1; order: -1; }
+  .new-ticket-actions kbd.kbd-on-primary { display: none; }
+  .form-where { text-align: left; margin-top: 0; }
+}
+
 /* huddle on a phone (HuddlePanel, ≤720px): a one-line bar with a ⋯ sheet, Chat / People / Findings panes, the session full screen */
 .hd-seg { display: none; }
 @media (max-width: 720px) {

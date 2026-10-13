@@ -120,7 +120,7 @@ export function useSlashPicker({ commands, ref, setValue, inline = false }: {
   if (open && el) {
     const rect = el.getBoundingClientRect();
     // Descriptions can sit in a narrow panel: wide enough to read what a skill does anyway.
-    const width = Math.min(560, Math.max(inline ? 380 : 300, rect.width - 24));
+    const width = Math.min(560, window.innerWidth - 16, Math.max(inline ? 380 : 300, rect.width - 24));
     const style: CSSProperties = { left: Math.min(rect.left + 12, window.innerWidth - width - 8), width };
     if (rect.top > 300) style.bottom = window.innerHeight - rect.top + GAP;
     else style.top = rect.bottom + GAP;
