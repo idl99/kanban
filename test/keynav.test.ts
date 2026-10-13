@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { boardDigit, canStartFromProposal, cardDir, hintStep, isTyping, nextStep, panelStep, stepBoard, stepCard } from "../web/src/keynav";
+import { boardDigit, canStartFromProposal, cardDir, hintStep, isStopKey, isTyping, newTicketKey, nextStep, panelStep, stepBoard, stepCard, stepTab } from "../web/src/keynav";
 
 test("cardDir maps J/K/H/L and arrows, ignores other keys", () => {
   expect(cardDir("j")).toBe("down");
@@ -117,4 +117,38 @@ test("canStartFromProposal only from Backlog or Planning while Claude is idle", 
   expect(canStartFromProposal({ status: "backlog", working: false })).toBe(true);
   expect(canStartFromProposal({ status: "planning", working: true })).toBe(false);
   for (const status of ["ready", "in_progress", "review", "done"]) expect(canStartFromProposal({ status, working: false })).toBe(false);
+});
+
+test("newTicketKey: ⌘/Ctrl + Enter, S, I, D; nothing without the modifier or with Shift/Alt", () => {
+  const k = (key: string, mods: Partial<{ metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; isComposing: boolean }> = { metaKey: true }) =>
+    newTicketKey({ key, metaKey: false, ctrlKey: false, altKey: false, shiftKey: false, ...mods });
+  expect(k("Enter")).toBe("start");
+  expect(k("s")).toBe("create");
+  expect(k("S", { ctrlKey: true })).toBe("create");
+  expect(k("i")).toBe("mode");
+  expect(k("d")).toBe("star");
+  expect(k("x")).toBeNull();
+  expect(k("s", {})).toBeNull();
+  expect(k("s", { metaKey: true, shiftKey: true })).toBeNull();
+  expect(k("s", { metaKey: true, altKey: true })).toBeNull();
+  expect(k("Enter", { metaKey: true, isComposing: true })).toBeNull();
+});
+
+test("isStopKey: ⌘. or Ctrl+. only", () => {
+  const base = { key: ".", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false };
+  expect(isStopKey({ ...base, metaKey: true })).toBe(true);
+  expect(isStopKey({ ...base, ctrlKey: true })).toBe(true);
+  expect(isStopKey(base)).toBe(false);
+  expect(isStopKey({ ...base, metaKey: true, shiftKey: true })).toBe(false);
+  expect(isStopKey({ ...base, key: ",", metaKey: true })).toBe(false);
+});
+
+test("stepTab cycles through the visible tabs and wraps", () => {
+  const tabs = ["chat", "huddle", "outputs", "usage"];
+  expect(stepTab(tabs, "chat", 1)).toBe("huddle");
+  expect(stepTab(tabs, "usage", 1)).toBe("chat");
+  expect(stepTab(tabs, "chat", -1)).toBe("usage");
+  // A tab that isn't shown (e.g. Plan after its children went away) starts from the first.
+  expect(stepTab(tabs, "plan", 1)).toBe("chat");
+  expect(stepTab([], "chat", 1)).toBeNull();
 });

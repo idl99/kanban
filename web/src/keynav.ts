@@ -90,3 +90,29 @@ export function hintStep(e: { type: "keydown" | "keyup"; key: string; repeat?: b
   if (!hold) return "hide";
   return e.repeat ? "none" : "arm";
 }
+
+type Keys = { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; shiftKey: boolean; isComposing?: boolean };
+
+/** ⌘ (Ctrl off Mac) + one key in the New ticket dialog: ↵ start, S create in Backlog, I switch how Claude works, D star. */
+export type NewTicketKey = "start" | "create" | "mode" | "star";
+export function newTicketKey(e: Keys): NewTicketKey | null {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.isComposing) return null;
+  switch (e.key) {
+    case "Enter": return "start";
+    case "s": case "S": return "create";
+    case "i": case "I": return "mode";
+    case "d": case "D": return "star";
+    default: return null;
+  }
+}
+
+/** ⌘. / Ctrl+. in the ticket panel: stop Claude (after a confirm). */
+export function isStopKey(e: Keys): boolean {
+  return (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.isComposing && e.key === ".";
+}
+
+/** [ / ] in the ticket panel: the visible tab `delta` steps away from the current one, wrapping around. */
+export function stepTab<T>(tabs: T[], current: T, delta: number): T | null {
+  const at = stepBoard(tabs.length, tabs.indexOf(current), delta);
+  return at < 0 ? null : tabs[at];
+}

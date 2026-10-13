@@ -15,7 +15,7 @@ import { DescriptionEditor, useDescriptionCommands } from "./DescriptionEditor";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon, CloseIcon, ExternalIcon, FileTextIcon, LinkIcon, SparkIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
 import { useFocusTrap, useLayer } from "./layers";
-import { isTyping, nextStep, panelStep } from "./keynav";
+import { isStopKey, isTyping, nextStep, panelStep, stepTab } from "./keynav";
 import { KeyHint } from "./KeyHint";
 import { MOD } from "./Shortcuts";
 import { complete, PlanFinished, planFinished, PlanPanel, PlanSummary } from "./PlanPanel";
@@ -251,6 +251,15 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const diffState = useTicketDiff(slug, ticket);
   const [outputCount, setOutputCount] = useState(0);
   const ticketUsage = useTicketUsage(slug, ticket.id);
+  // The tabs shown, in order ([ and ] step through them); opening one refreshes what it shows, like a click.
+  const tabs = (["chat", children.length > 0 && "plan", "huddle", (ticket.worktree || inFolder) && "changes", "outputs", "usage"] as const)
+    .filter((t): t is Exclude<typeof t, false | "" | undefined | null> => !!t);
+  const openTab = (t: typeof tabPick) => {
+    if (t === "changes") diffState.reload();
+    else if (t === "outputs") setOutputFocus(null);
+    else if (t === "usage") ticketUsage.reload();
+    setTab(t);
+  };
   const usage = ticketUsage.usage;
   const hasUsage = !!usage?.runs.length;
   useShareNotices(ticket);
@@ -264,6 +273,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const [reportingBug, setReportingBug] = useState(false);
   const [confirmStart, setConfirmStart] = useState(false);
   const [confirmBranch, setConfirmBranch] = useState(false);
+  const [confirmStop, setConfirmStop] = useState(false);
   const [picking, setPicking] = useState(false);
   const [linked, setLinked] = useState<ClaudeSession | null>(null);
   const [detailsOpen, setDetailsOpenState] = useState(() => {
@@ -301,7 +311,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const titleRef = useRef<HTMLInputElement>(null);
   // Leaving for the neighbouring ticket: keep a title edit, and don't drop an unsaved description edit.
   const step = (id: string | null | undefined) => {
-    if (!id || !nav || editing || confirmDelete || confirmStart || confirmBranch || picking || reportingBug) return;
+    if (!id || !nav || editing || confirmDelete || confirmStart || confirmBranch || confirmStop || picking || reportingBug) return;
     if (title !== ticket.title) saveTitle();
     nav.go(id);
   };
@@ -443,13 +453,33 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  // E: edit the description; R: Refine with Claude (Backlog). Only when the panel has the keyboard.
+  // E: edit the description; R: Refine with Claude (Backlog); S: star; M: move to a column; [ ]: previous / next tab.
+  // Only when the panel has the keyboard.
   const letterRef = useRef<(k: string) => boolean>(() => false);
   letterRef.current = (k) => {
     if (k === "e" && !editing) return startEdit(), true;
     if (k === "r" && !working && !editing && ticket.status === "backlog") return setStatus("planning"), true;
+    if (k === "s") return toggleStar(), true;
+    if (k === "m") return openStatusPicker(), true;
+    if (k === "[" || k === "]") {
+      const to = stepTab<typeof tabPick>(tabs, tab, k === "]" ? 1 : -1);
+      if (to) openTab(to);
+      return !!to;
+    }
     return false;
   };
+  // ⌘. / Ctrl+.: Stop Claude, after a confirm; also while typing.
+  const stopKeyRef = useRef(() => {});
+  stopKeyRef.current = () => { if (working && !stopping) setConfirmStop(true); };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!isStopKey(e) || document.querySelector(".overlay")) return;
+      e.preventDefault();
+      stopKeyRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || !panelKeysRef.current(e)) return;
@@ -458,6 +488,22 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+  const toggleStar = () => {
+    api.updateTicket(slug, ticket.id, { important: !ticket.important }).catch((e) => onError(`Important not saved: ${e.message}`));
+  };
+  // M: open the Status picker (the header's Move picker on a phone with the details hidden), showing the details first if needed.
+  const openStatusPicker = () => {
+    const sel = phone && !detailsShown ? ".phone-move" : ".status-select";
+    const open = () => {
+      const trigger = panelRef.current?.querySelector<HTMLButtonElement>(`${sel} .select-trigger`);
+      trigger?.focus();
+      trigger?.click();
+    };
+    if (!detailsShown && !phone) {
+      setDetailsOpen(() => true);
+      requestAnimationFrame(open);
+    } else open();
+  };
   const cancelEdit = () => { setBody(baseBody); setEditing(false); images.clearError(); };
 
   return (
@@ -478,9 +524,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               {detailsShown && <rect x="2.75" y="3.75" width="3.5" height="10.5" rx="1.5" fill="currentColor" opacity="0.35" />}
             </svg>
           </button>
-          <StarToggle on={!!ticket.important} onChange={(important) => {
-            api.updateTicket(slug, ticket.id, { important }).catch((e) => onError(`Important not saved: ${e.message}`));
-          }} />
+          <StarToggle on={!!ticket.important} onChange={toggleStar} keyHint="S" />
           <input ref={titleRef} className="title-input" value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -534,7 +578,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               {col && <p className="field-help">{col.claude && <SparkIcon className="icon spark" />}{col.hint}</p>}
 
               <div className="action-stack">
-                {working && <button className="btn danger" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop Claude"}</button>}
+                {working && <button className="btn danger" disabled={stopping} onClick={stop} title={`Stop Claude (${MOD}.)`}>{stopping ? "Stopping…" : "Stop Claude"}<KeyHint keys="⌘." /></button>}
                 {finished && <PlanFinished ticket={ticket} total={children.length} onMoveToDone={() => setStatus("done")} onAddMore={addMoreTickets} />}
                 {!working && !finished && (ticket.status === "backlog" || ticket.status === "planning") && (
                   <button className={`btn ${att?.kind === "questions" || att?.kind === "proposal" ? "" : "primary"}`}
@@ -714,14 +758,14 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 {huddle?.status === "live" && huddle.participants.some((p) => p.status === "working") && <span className="dot" />}
               </button>
               {(ticket.worktree || inFolder) && (
-                <button role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => { diffState.reload(); setTab("changes"); }}>
+                <button role="tab" aria-selected={tab === "changes"} className={tab === "changes" ? "active" : ""} onClick={() => openTab("changes")}>
                   Changes{!!diffState.diff?.files.length && <span className="tab-count">{diffState.diff.files.length}</span>}
                 </button>
               )}
-              <button role="tab" aria-selected={tab === "outputs"} className={tab === "outputs" ? "active" : ""} onClick={() => { setOutputFocus(null); setTab("outputs"); }}>
+              <button role="tab" aria-selected={tab === "outputs"} className={tab === "outputs" ? "active" : ""} onClick={() => openTab("outputs")}>
                 Outputs{outputCount + links.length > 0 && <span className="tab-count">{outputCount + links.length}</span>}
               </button>
-              <button role="tab" aria-selected={tab === "usage"} className={tab === "usage" ? "active" : ""} onClick={() => { ticketUsage.reload(); setTab("usage"); }}>
+              <button role="tab" aria-selected={tab === "usage"} className={tab === "usage" ? "active" : ""} onClick={() => openTab("usage")}>
                 Usage{usage && hasUsage && usage.totals.pctCurrentWindow !== null && <span className="tab-count">{approxPct(usage.totals.pctCurrentWindow).replace(" ", "")}</span>}
               </button>
             </nav>
@@ -758,6 +802,13 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             onCancel={() => setConfirmStart(false)}
             onConfirm={async () => { await api.updateTicket(slug, ticket.id, { status: "ready" }); setConfirmStart(false); }}>
             <p>Claude will work on this on its own. When working: <b>{ticket.mode === "interview" ? "Interview me first" : "Just do it"}</b>.</p>
+          </ConfirmDialog>
+        )}
+        {confirmStop && (
+          <ConfirmDialog title="Stop Claude?" confirmLabel="Stop Claude" busyLabel="Stopping…"
+            onCancel={() => setConfirmStop(false)}
+            onConfirm={() => { if (working) stop(); setConfirmStop(false); }}>
+            <p>Claude stops working on this ticket now. You can start it again later.</p>
           </ConfirmDialog>
         )}
         {confirmBranch && (

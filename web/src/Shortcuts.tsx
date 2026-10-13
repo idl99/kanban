@@ -23,7 +23,6 @@ const GROUPS: { title: string; keys: [string[], string][] }[] = [
     title: "Board",
     keys: [
       [["N"], "New ticket"],
-      [[MOD, "Enter"], "New ticket dialog: Start planning"],
       [["/"], "Search tickets"],
       [["Esc"], "Clear the search"],
       [["Ctrl", "`"], "Terminal & files panel"],
@@ -31,6 +30,15 @@ const GROUPS: { title: string; keys: [string[], string][] }[] = [
       [["T"], "Team: teammates, templates, notes"],
       [["?"], "This list"],
       [["Hold", MOD], "Show key hints on buttons"],
+    ],
+  },
+  {
+    title: "New ticket dialog",
+    keys: [
+      [[MOD, "Enter"], "Start (planning or work, by how Claude works)"],
+      [[MOD, "S"], "Create in Backlog (nothing runs)"],
+      [[MOD, "I"], "Switch Interview me first / Just do it"],
+      [[MOD, "D"], "Star as important"],
     ],
   },
   {
@@ -63,6 +71,10 @@ const GROUPS: { title: string; keys: [string[], string][] }[] = [
       [["Shift", "Enter"], "New line"],
       [["E"], "Edit the description"],
       [["R"], "Refine with Claude (Backlog)"],
+      [["S"], "Star / unstar as important"],
+      [["M"], "Move to a column (Status)"],
+      [["[", "]"], "Previous / next tab"],
+      [[MOD, "."], "Stop Claude (asks first)"],
       [[MOD, "Enter"], "Save the description"],
       [["Esc"], "Cancel the description edit"],
       [[MOD, "\\"], "Show / hide details"],
