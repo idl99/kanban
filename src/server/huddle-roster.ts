@@ -108,6 +108,16 @@ export function rosterError(roster: unknown, max = DEFAULT_MAX_PARTICIPANTS, pre
   return null;
 }
 
+/** Most a budget Claude proposes for a huddle (propose_huddle) may be; same cap as start_huddle. */
+export const PROPOSED_MAX_COST_USD = 100;
+
+/** propose_huddle's maxCostUsd, capped: undefined when not given, null when it isn't a positive amount. */
+export function proposedBudget(v: unknown): number | undefined | null {
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return null;
+  return Math.min(v, PROPOSED_MAX_COST_USD);
+}
+
 /** Text where a @handle is quoted rather than addressed: code spans and blocks, block quotes and "quoted" text. */
 const QUOTED_RE = /```[\s\S]*?(?:```|(?![\s\S]))|`[^`\n]*`|^[ \t]*>.*$|"[^"\n]*"|\u201c[^\u201d\n]*\u201d/gm;
 

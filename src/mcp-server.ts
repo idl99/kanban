@@ -5,7 +5,7 @@ import {
   ticketLine, ticketText, type HuddlePage, type ScheduleHistoryInfo, type ScheduleInfo, type ScheduleInput, type TicketPatch,
 } from "./client";
 import { BUILTIN_PRESETS, MAIN_PRESET, presetLine, presetName } from "./server/huddle-presets";
-import { HUDDLE_AGENT_ENV, huddleLine, rosterEntryError, rosterError } from "./server/huddle-roster";
+import { HUDDLE_AGENT_ENV, huddleLine, PROPOSED_MAX_COST_USD, proposedBudget, rosterEntryError, rosterError } from "./server/huddle-roster";
 import { BUILTIN_TEMPLATES, templateLine } from "./server/huddle-templates";
 import { teammateProposal } from "./server/teammate-proposal";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -897,6 +897,7 @@ const HUDDLE_TOOLS: Tool[] = [
       "A lead (e.g. qa-lead) gathers findings so you are woken with one consolidated list. Keep it small (limit 8 including you). Nothing starts by the call. " +
       `Or give a template (a whole roster with its rules: rounds, budget, report format; built-in: ${BUILTIN_TEMPLATES.map((t) => t.name).join(", ")}; list_huddle_presets lists the board's) ` +
       "and leave out roster to use the template's. " +
+      "When the user names a budget (e.g. \"budget 80 usd\"), pass it as maxCostUsd so the card starts with it. " +
       "Refused while the ticket is in Backlog or Planning: there, write the huddle into the proposed ticket as a \"## Review huddle\" section instead, so the ticket's run does the work first and starts the huddle after it.",
     inputSchema: {
       type: "object",
@@ -904,6 +905,7 @@ const HUDDLE_TOOLS: Tool[] = [
         roster: { type: "array", minItems: 1, items: ROSTER_ENTRY, description: "The participants. Optional with a template (its roster is used)." },
         template: { type: "string", description: "Template name, e.g. design-review: its roster (unless you give one), budget and rules." },
         reason: { type: "string", description: "One line: what the huddle is for." },
+        maxCostUsd: { type: "number", description: `Optional budget in USD when the user names one (capped at $${PROPOSED_MAX_COST_USD}). Default: the template's budget, else the board's. The user can change it on the card.` },
       },
     },
     annotations: { readOnlyHint: true },
@@ -915,6 +917,7 @@ const HUDDLE_TOOLS: Tool[] = [
       const own = runTicketId(ctx);
       const host = slug && own ? await ctx.client.getTicket(slug, own).catch(() => null) : null;
       if (host?.status === "planning" || host?.status === "backlog") throw new ClientError(PLANNING_HUDDLE);
+      if (proposedBudget(args?.maxCostUsd) === null) throw new ClientError("maxCostUsd must be a positive amount in USD. Fix it and call propose_huddle again.");
       const names = slug ? await ctx.client.listHuddlePresets(slug).then((ps) => ps.map((p) => p.name), () => undefined) : undefined;
       const template = typeof args?.template === "string" && args.template.trim() ? args.template.trim() : null;
       if (args?.template !== undefined && args?.template !== null && !template) throw new ClientError("template must be a template name");
@@ -952,7 +955,7 @@ const HUDDLE_TOOLS: Tool[] = [
     changes: true,
     allowInRun: true,
     async run(args, ctx) {
-      if (!ctx.env[RUN_ENV]) throw new ClientError("start_huddle only works inside an unattended board run; propose a huddle with propose_huddle instead");
+      if (!ctx.env[RUN_ENV]) throw new ClientError("start_huddle only works inside an unattended board run; propose a huddle with propose_huddle instead (with the same maxCostUsd)");
       const reason = str(args, "reason")!;
       const template = typeof args?.template === "string" && args.template.trim() ? args.template.trim() : undefined;
       if (args?.roster !== undefined) {

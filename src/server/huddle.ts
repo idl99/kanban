@@ -998,7 +998,7 @@ export class Huddles {
     if (!profile || !host) throw new HuddleError(404, `ticket ${hostId} not found`);
     const reason = input.reason.trim().replace(/\s+/g, " ").slice(0, 200);
     if (!reason) throw new HuddleError(400, "reason is required: one line on why this work needs a review huddle");
-    const propose = "; use propose_huddle to propose one to the user instead";
+    const propose = "; use propose_huddle to propose one to the user instead (with the same maxCostUsd)";
     if (input.maxCostUsd !== undefined && !(Number.isFinite(input.maxCostUsd) && input.maxCostUsd > 0)) throw new HuddleError(400, "maxCostUsd must be a positive amount");
     // A ticket with a "## Review huddle" section asked for one in Planning: that counts as opt-in, and gives the defaults.
     const requested = reviewHuddleRequest(host.body);

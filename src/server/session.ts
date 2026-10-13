@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { commandText, localCommandOutput, TERMINAL_COMMANDS } from "./commands";
 import type { Bus } from "./events";
-import { rosterError, type RosterEntry } from "./huddle-roster";
+import { proposedBudget, rosterError, type RosterEntry } from "./huddle-roster";
 import { mockupName, stripMockups } from "./mockups";
 import { parseResult } from "./result";
 import { parseTeammateProposal, type TeammateProposal } from "./teammate-proposal";
@@ -62,7 +62,7 @@ export interface SessionEntry {
   /** Claude offered to branch this ticket (rendered with a Branch button). */
   branch?: { reason: string };
   /** Claude proposed a huddle roster (propose_huddle; rendered with a Start button). */
-  huddle?: { roster: RosterEntry[]; reason: string; template?: string };
+  huddle?: { roster: RosterEntry[]; reason: string; template?: string; maxCostUsd?: number };
   /** Claude asked to delete tickets (propose_delete; rendered with Cancel / Delete buttons). */
   deletion?: { ids: string[]; reason: string };
   /** Claude proposed a teammate (propose_teammate; rendered with Save teammate / Edit first / Dismiss). */
@@ -385,7 +385,9 @@ function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "n
     const roster = template && block.input?.roster === undefined ? [] : block.input?.roster;
     if (!(template && Array.isArray(roster) && !roster.length) && rosterError(roster)) return null;
     const reason = typeof block.input?.reason === "string" ? block.input.reason.trim() : "";
-    return { huddle: { roster, reason, ...(template ? { template } : {}) } };
+    // A budget Claude was asked for (capped); one that isn't a positive amount is left out, the card's default applies.
+    const maxCostUsd = proposedBudget(block.input?.maxCostUsd);
+    return { huddle: { roster, reason, ...(template ? { template } : {}), ...(typeof maxCostUsd === "number" ? { maxCostUsd } : {}) } };
   }
   return null;
 }

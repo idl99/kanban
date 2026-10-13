@@ -10,7 +10,8 @@ import { fallbackSummary, findingTitle, HUDDLE_IDLE_MS, Huddles, LEGACY_SUMMARY_
 import { BUILTIN_PRESETS, deletePreset, mergePresets, presetSourceText, savePreset } from "../src/server/huddle-presets";
 import { huddleUsage } from "../src/server/huddle-usage";
 import { cleanLessons, LESSON_MAX, noteRole, parseNotes, serializeNotes } from "../src/server/huddle-notes";
-import { HUDDLE_HEADER, parseMentions, rosterError } from "../src/server/huddle-roster";
+import { HUDDLE_HEADER, parseMentions, proposedBudget, rosterError } from "../src/server/huddle-roster";
+import { parseSession } from "../src/server/session";
 import { BUILTIN_TEMPLATES, deleteTemplate, mergeTemplates, saveTemplate } from "../src/server/huddle-templates";
 import { DIGEST_CLIP, HUDDLE_DESCRIPTION_MAX, hostDescription, huddleAgentPrompt, huddleDigest, huddleMainPrompt } from "../src/server/prompts";
 import { controlResponse } from "../src/server/runner";
@@ -611,6 +612,24 @@ test("propose_huddle validates the roster and starts nothing", async () => {
   const bad = await callTool("propose_huddle", { roster: [{ preset: "qa", count: 9 }] }, mainCtx({ hostTicket: "x" } as Huddle));
   expect(bad.isError).toBe(true);
   expect(store.listHuddles("p")).toEqual([]);
+});
+
+test("propose_huddle takes a budget: checked, capped at $100 and kept for the card", async () => {
+  const ctx = mainCtx({ hostTicket: "x" } as Huddle);
+  const roster = [{ preset: "reviewer" }];
+  expect((await callTool("propose_huddle", { roster, maxCostUsd: 80 }, ctx)).isError).toBeUndefined();
+  for (const maxCostUsd of [-5, 0, "80", Number.NaN]) {
+    const r = await callTool("propose_huddle", { roster, maxCostUsd }, ctx);
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("maxCostUsd");
+  }
+  expect([proposedBudget(undefined), proposedBudget(80), proposedBudget(150), proposedBudget(-5)]).toEqual([undefined, 80, 100, null]);
+  const card = (input: object) => parseSession(JSON.stringify({ type: "assistant", uuid: "u1", timestamp: "2026-10-13T00:00:00Z",
+    message: { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "mcp__ckanban__propose_huddle", input: { roster, reason: "debate", ...input } }] } })).entries[0].huddle;
+  expect(card({ maxCostUsd: 80 })).toEqual({ roster, reason: "debate", maxCostUsd: 80 });
+  expect(card({ maxCostUsd: 150 })?.maxCostUsd).toBe(100);
+  expect(card({})).toEqual({ roster, reason: "debate" });
+  expect(card({ maxCostUsd: -5 })).toEqual({ roster, reason: "debate" });
 });
 
 test("presets: board presets merge with built-ins; overriding and resetting a built-in", () => {

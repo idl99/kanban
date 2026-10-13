@@ -2,14 +2,14 @@ import { useEffect, useState, type KeyboardEvent } from "react";
 import { api, type Huddle, type HuddleMode, type HuddlePreset, type HuddleTemplate, type RosterEntry, type Ticket } from "./api";
 import { CloseIcon } from "./icons";
 import { Select } from "./Select";
-import { applyTemplate, DEFAULT_MAX, draftError, draftSize, dollars, handleBase, rosterDraft, rowHandle, rowKey as key, type Draft } from "./huddleText";
+import { applyProposedTemplate, applyTemplate, DEFAULT_MAX, draftError, draftSize, dollars, handleBase, rosterDraft, rowHandle, rowKey as key, type Draft } from "./huddleText";
 
 const MODELS = ["opus", "sonnet", "haiku"];
 const MAX_COUNT = 8;
 
 export type RosterRow = RosterEntry & { key: string };
 export type RosterDraft = Draft<RosterEntry, HuddleMode>;
-export { applyTemplate, DEFAULT_MAX, draftError, draftSize, rosterDraft, rowHandle };
+export { applyProposedTemplate, applyTemplate, DEFAULT_MAX, draftError, draftSize, rosterDraft, rowHandle };
 
 /** The board's teammates (null while loading); a new `reload` value fetches them again. */
 export function usePresets(slug: string, reload: unknown = 0): HuddlePreset[] | null {

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resetTitle, scopeChip, usageText } from "../web/src/teamText";
 import {
-  applyTemplate, brakeLabel, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity, contextText, BIG_CONTEXT_TOKENS, participantRole, clampSideWidth, SIDE_DEFAULT,
+  applyProposedTemplate, applyTemplate, brakeLabel, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity, contextText, BIG_CONTEXT_TOKENS, participantRole, clampSideWidth, SIDE_DEFAULT,
 } from "../web/src/huddleText";
 import { mergeSteps, modelLabel, sessionMeta, sessionState, shortSession, toolIcon } from "../web/src/sessionText";
 
@@ -204,6 +204,19 @@ test("applyTemplate fills the roster and budget and remembers the template; none
   const none = applyTemplate(a, null);
   expect(none.template).toBeNull();
   expect(none.rows).toBe(a.rows);
+});
+
+test("Claude's proposed budget seeds the card and wins over the template's", () => {
+  type E = { preset?: string; role?: string; handle?: string };
+  const t: { name: string; roster: E[]; maxCostUsd: number | null } = { name: "design-review", roster: [{ preset: "reviewer" }], maxCostUsd: 30 };
+  expect(rosterDraft<E>([{ preset: "qa" }], 80).maxCostUsd).toBe(80);
+  expect(rosterDraft<E>([{ preset: "qa" }]).maxCostUsd).toBe(20);
+  const proposed = applyProposedTemplate(rosterDraft<E>([], 80), t, [], 80);
+  expect(proposed).toMatchObject({ template: "design-review", maxCostUsd: 80 });
+  expect(proposed.rows.map((r) => r.preset)).toEqual(["reviewer"]);
+  // Without a budget from Claude the template's applies, as before.
+  expect(applyProposedTemplate(rosterDraft<E>([]), t, []).maxCostUsd).toBe(30);
+  expect(applyProposedTemplate(rosterDraft<E>([{ preset: "qa" }]), t, [{ preset: "qa" }]).rows.map((r) => r.preset)).toEqual(["qa"]);
 });
 
 test("sourceLabel and withActivity", () => {

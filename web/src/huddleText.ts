@@ -191,8 +191,15 @@ export function applyTemplate<E extends EntryLike, Mode extends string>(d: Draft
 let nextKey = 0;
 export const rowKey = () => `r${++nextKey}`;
 
-export function rosterDraft<E extends EntryLike, Mode extends string = string>(roster: E[]): Draft<E, Mode> {
-  return { rows: roster.map((e) => ({ ...e, key: rowKey() })), invites: [], mainMode: null, maxCostUsd: DEFAULT_BUDGET };
+/** `maxCostUsd`: a budget Claude proposed (propose_huddle); default: the board's. */
+export function rosterDraft<E extends EntryLike, Mode extends string = string>(roster: E[], maxCostUsd?: number): Draft<E, Mode> {
+  return { rows: roster.map((e) => ({ ...e, key: rowKey() })), invites: [], mainMode: null, maxCostUsd: maxCostUsd ?? DEFAULT_BUDGET };
+}
+
+/** Claude's proposed template applied to the card's draft: its roster unless Claude gave one, its budget unless Claude gave one. */
+export function applyProposedTemplate<E extends EntryLike, Mode extends string>(d: Draft<E, Mode>, t: TemplateLike<E>, roster: E[], maxCostUsd?: number): Draft<E, Mode> {
+  const next = applyTemplate(d, t, roster.length ? roster : undefined);
+  return maxCostUsd === undefined ? next : { ...next, maxCostUsd };
 }
 
 /** Everyone who would join, @main included (the user doesn't count). */

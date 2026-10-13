@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import type { Huddle, RosterEntry, Ticket } from "./api";
 import { formKey } from "./drafts";
-import { applyTemplate, draftError, RosterEditor, rosterDraft, startFromDraft, TemplatePicker, usePresets, useTemplates, type RosterDraft } from "./HuddleRoster";
+import { dollars } from "./huddleText";
+import { applyProposedTemplate, draftError, RosterEditor, rosterDraft, startFromDraft, TemplatePicker, usePresets, useTemplates, type RosterDraft } from "./HuddleRoster";
 import { usePersistentState } from "./usePersistentState";
 
 /**
  * Claude proposed a huddle (propose_huddle). The roster is editable until Start; nothing runs before that.
  * `huddle`: the ticket's current huddle, to tell whether this proposal was started.
  */
-export function HuddleCard({ slug, ticket, tickets, uuid, at, roster, reason, template, huddle, old, onOpen, onError }: {
+export function HuddleCard({ slug, ticket, tickets, uuid, at, roster, reason, template, maxCostUsd, huddle, old, onOpen, onError }: {
   slug: string;
   ticket: Ticket;
   tickets: Ticket[];
@@ -18,6 +19,8 @@ export function HuddleCard({ slug, ticket, tickets, uuid, at, roster, reason, te
   reason: string;
   /** Template Claude proposed (its roster when `roster` is empty, its budget and rules). */
   template?: string;
+  /** Budget Claude proposed (already capped); wins over the template's. */
+  maxCostUsd?: number;
   huddle: Huddle | null;
   /** Copied history of a branched ticket: read-only. */
   old?: boolean;
@@ -26,17 +29,19 @@ export function HuddleCard({ slug, ticket, tickets, uuid, at, roster, reason, te
 }) {
   const presets = usePresets(slug);
   const templates = useTemplates(slug);
-  const [draft, setDraft] = useState<RosterDraft>(() => rosterDraft(roster));
-  // The proposed template, once the board's templates are in: its roster (unless Claude gave one) and budget.
+  const [draft, setDraft] = useState<RosterDraft>(() => rosterDraft(roster, maxCostUsd));
+  // The proposed template, once the board's templates are in: its roster and budget, unless Claude gave them.
   useEffect(() => {
     const t = template && templates?.find((x) => x.name === template);
-    if (t) setDraft((d) => (d.template ? d : applyTemplate(d, t, roster.length ? roster : undefined)));
+    if (t) setDraft((d) => (d.template ? d : applyProposedTemplate(d, t, roster, maxCostUsd)));
   }, [templates, template]);
   const [busy, setBusy] = useState(false);
   const [dismissed, setDismissed] = usePersistentState(formKey(slug, ticket.id, `huddle-${uuid}`), () => false, (v) => !v, (v) => typeof v === "boolean");
   const started = !!huddle && huddle.createdAt >= at;
   const otherOpen = !!huddle && !started && huddle.status !== "closed";
   const err = draftError(draft);
+  // Started: what the huddle actually got; otherwise what Claude proposed.
+  const budget = started ? huddle!.maxCostUsd : maxCostUsd;
 
   const start = async () => {
     if (busy || err || started || otherOpen) return;
@@ -68,6 +73,7 @@ export function HuddleCard({ slug, ticket, tickets, uuid, at, roster, reason, te
       {started || old ? (
         <div className="huddle-card-summary muted small">
           {roster.length ? roster.map((r) => `${r.count && r.count > 1 ? `${r.count}× ` : ""}${r.handle ?? r.preset ?? r.role}`).join(" · ") : `template ${template}`}
+          {budget != null && ` · budget ${dollars(budget)}`}
         </div>
       ) : (
         <>

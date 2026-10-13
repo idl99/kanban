@@ -508,7 +508,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   onOpenTeam={onOpenTeam && ((name) => onOpenTeam({ action: "open", name }))} />
               )}
               {e.huddle && (
-                <HuddleCard slug={slug} ticket={ticket} tickets={tickets} uuid={e.uuid} at={e.at} roster={e.huddle.roster} reason={e.huddle.reason} template={e.huddle.template}
+                <HuddleCard slug={slug} ticket={ticket} tickets={tickets} uuid={e.uuid} at={e.at} roster={e.huddle.roster} reason={e.huddle.reason} template={e.huddle.template} maxCostUsd={e.huddle.maxCostUsd}
                   huddle={huddle} old={old} onOpen={() => onOpenHuddle?.()} onError={onError} />
               )}
               {e.mockups && (

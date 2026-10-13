@@ -349,7 +349,7 @@ export interface SessionEntry {
   /** Claude offered to branch this ticket (Branch button). */
   branch?: { reason: string };
   /** Claude proposed a huddle (propose_huddle): the roster card with Start. */
-  huddle?: { roster: RosterEntry[]; reason: string; template?: string };
+  huddle?: { roster: RosterEntry[]; reason: string; template?: string; maxCostUsd?: number };
   /** Claude asked to delete tickets (propose_delete): the card with Cancel / Delete. */
   deletion?: { ids: string[]; reason: string };
   /** Claude proposed a teammate (propose_teammate): the card with Save teammate / Edit first / Dismiss. */
