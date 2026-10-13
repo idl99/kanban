@@ -39,7 +39,7 @@ import { summarizeEvent } from "./activity";
 import { mcpConfig } from "./agents";
 import { claudeSessionExists, type Board } from "./board";
 import type { Bus } from "./events";
-import { addWorktree, branchExists, hasCommits, removeWorktree, run as git, worktreeDir } from "./git";
+import { addWorktree, branchExists, hasCommits, NO_HOOKS, removeWorktree, run as git, worktreeDir } from "./git";
 import {
   DEFAULT_MAX_PARTICIPANTS, handleBase, HUDDLE_AGENT_ENV, LEGACY_SUMMARY_FILE, MAIN_HANDLE, NO_EDIT_TOOLS, parseMentions, RESERVED_HANDLES,
   REVIEW_HUDDLE_HEADING, reviewHuddleRequest, rosterEntryError, rosterError, summaryFile, USER_HANDLE, type RosterEntry,
@@ -1708,14 +1708,14 @@ export class Huddles {
     const branch = (await git(["git", "branch", "--show-current"], hostDir)).stdout.trim() || null;
     const dir = p.worktree ?? agentDir(profile, h, p);
     if (existsSync(dir)) {
-      for (const cmd of [["git", "checkout", "--quiet", "--force", "--detach", sha], ["git", "clean", "-fdq"]]) {
+      for (const cmd of [[...NO_HOOKS, "checkout", "--quiet", "--force", "--detach", sha], ["git", "clean", "-fdq"]]) {
         const r = await git(cmd, dir);
         if (r.code !== 0) throw new Error(`couldn't reset the snapshot worktree ${dir}: ${r.stderr.trim()}`);
       }
     } else {
       await git(["git", "worktree", "prune"], profile.path);
       mkdirSync(dirname(dir), { recursive: true });
-      const r = await git(["git", "worktree", "add", "--detach", dir, sha], profile.path);
+      const r = await git([...NO_HOOKS, "worktree", "add", "--detach", dir, sha], profile.path);
       if (r.code !== 0) throw new Error(`couldn't make the snapshot worktree ${dir}: ${r.stderr.trim()}`);
     }
     this.updateP(slug, h.id, p.handle, { worktree: dir, branch: null, snapshot: { branch, sha } });

@@ -65,10 +65,16 @@ export function worktreeDir(profile: Pick<Profile, "path" | "slug">, id: string)
   return join(dirname(profile.path), ".ckanban-worktrees", profile.slug, id);
 }
 
+/**
+ * Prefix for ckanban's own git commands that check out files: the project's hooks (e.g. husky's post-checkout) are for
+ * the user's checkouts, and in a fresh worktree they often fail on git-ignored files, failing a checkout that worked.
+ */
+export const NO_HOOKS = ["git", "-c", "core.hooksPath=/dev/null"];
+
 export async function addWorktree(repo: string, dir: string, branch: string, base: string): Promise<void> {
   mkdirSync(dirname(dir), { recursive: true });
   const exists = await branchExists(repo, branch);
-  const args = exists ? ["git", "worktree", "add", dir, branch] : ["git", "worktree", "add", "-b", branch, dir, base];
+  const args = exists ? [...NO_HOOKS, "worktree", "add", dir, branch] : [...NO_HOOKS, "worktree", "add", "-b", branch, dir, base];
   const r = await run(args, repo);
   if (r.code !== 0) {
     throw new Error(`Could not create an isolated git worktree for this ticket from "${base}". Check the board's base branch in its settings, then send a message to retry.\n\ngit worktree add failed: ${r.stderr.trim()}`);

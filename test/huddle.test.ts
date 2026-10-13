@@ -432,6 +432,25 @@ test("read-only agents work in a detached snapshot of the host's HEAD, refreshed
   expect((await git(store.getProfile("p")!.path, "worktree", "list")).includes(p.worktree!)).toBe(false);
 }, 30000);
 
+test("a failing post-checkout hook in the project doesn't fail the snapshot or its reset", async () => {
+  writeFileSync(join(store.getProfile("p")!.path, ".git", "hooks", "post-checkout"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const t = await host();
+  const h = huddles.create("p", t.id, [{ preset: "reviewer" }]);
+  await idle();
+  const hostDir = store.getTicket("p", t.id)!.worktree!;
+  const p = participant(h, "reviewer");
+  expect(p).toMatchObject({ status: "idle", error: null });
+  writeFileSync(join(hostDir, "login.ts"), "export {}\n");
+  await git(hostDir, "add", ".");
+  await git(hostDir, "commit", "-qm", "login");
+  const next = (await git(hostDir, "rev-parse", "HEAD")).trim();
+  huddles.post("p", h.id, you(h), "@reviewer please look again");
+  await idle();
+  expect(participant(h, "reviewer")).toMatchObject({ status: "idle", error: null });
+  expect((await git(p.worktree!, "rev-parse", "HEAD")).trim()).toBe(next);
+  expect(heardBy("reviewer").at(-1)).toContain("please look again");
+}, 30000);
+
 test("in a repo with no commits yet, agents work in the host's folder instead of failing", async () => {
   const empty = tempDir("ck-empty-");
   await git(empty, "init", "-q", "-b", "main");

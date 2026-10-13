@@ -45,6 +45,14 @@ test("dirty worktree not removed", async () => {
   expect(existsSync(dir)).toBe(true);
 });
 
+test("addWorktree skips the project's checkout hooks (husky's fail on its git-ignored files in a fresh worktree)", async () => {
+  const r = await makeRepo();
+  writeFileSync(join(r, ".git", "hooks", "post-checkout"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const dir = join(r + "-wt", "hooked");
+  await addWorktree(r, dir, "ck/hooked", "main");
+  expect((await run(["git", "branch", "--show-current"], dir)).stdout.trim()).toBe("ck/hooked");
+});
+
 test("addWorktree failure throws with stderr", async () => {
   await expect(addWorktree(repo, join(repo + "-wt", "t3"), "ck/t3", "nope-branch")).rejects.toThrow();
 });
