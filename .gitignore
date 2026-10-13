@@ -3,3 +3,5 @@
 *.bun-build
 dist/
 node_modules/
+.env
+.env.*
