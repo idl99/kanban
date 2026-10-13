@@ -834,6 +834,13 @@ export interface RemoteState {
   local: boolean;
 }
 
+/** A device that turned phone notifications on (src/server/push.ts). */
+export interface PushDevice {
+  id: string;
+  label: string;
+  createdAt: string;
+}
+
 /** "Needs you" notifications (src/server/notify.ts): webhook (ntfy or JSON), macOS banner, per-kind toggles. */
 export type NotifyKind = "stalled" | "questions" | "proposal" | "review" | "failed" | "limit" | "blocked" | "huddle" | "reply";
 export interface NotifyState {
@@ -941,7 +948,12 @@ export const api = {
   notify: () => req<NotifyState>("GET", "/api/notify"),
   setNotify: (patch: Partial<Pick<NotifyState, "webhookUrl" | "format" | "mac">> & { kinds?: Partial<Record<NotifyKind, boolean>> }) => req<NotifyState>("POST", "/api/notify", patch),
   testNotify: (profile: string | null) =>
-    req<{ ok: boolean; error: string | null; webhook: boolean; state: NotifyState }>("POST", "/api/notify/test", profile ? { profile } : {}),
+    req<{ ok: boolean; error: string | null; webhook: boolean; devices: number; state: NotifyState }>("POST", "/api/notify/test", profile ? { profile } : {}),
+  push: () => req<{ publicKey: string; devices: PushDevice[] }>("GET", "/api/push"),
+  pushSubscribe: (subscription: PushSubscriptionJSON, label: string) => req<PushDevice>("POST", "/api/push/subscribe", { subscription, label }),
+  pushRemove: (key: { id: string } | { endpoint: string }) => req<{ removed: boolean; devices: PushDevice[] }>("POST", "/api/push/remove", key),
+  pushTest: (id: string, profile: string | null) => req<{ ok: boolean; error: string | null }>("POST", "/api/push/test", profile ? { id, profile } : { id }),
+  pushVisible: (endpoint: string, visible: boolean) => req<{ ok: boolean }>("POST", "/api/push/visible", { endpoint, visible }),
   restartState: () => req<{ pending: boolean; waiting: number }>("GET", "/api/restart"),
   bugDraft: (ref: { profile: string; ticketId: string } | null) =>
     req<{ blocks: BugBlock[]; screenshots: string[] }>("POST", "/api/bug-report/draft", ref ?? {}),

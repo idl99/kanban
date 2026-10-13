@@ -9,6 +9,7 @@ import { withUtf8Locale } from "./locale";
 import { McpManager } from "./mcp";
 import { startPoller } from "./prpoller";
 import { Notifier } from "./notify";
+import { PushService } from "./push";
 import { RemoteAccess, remoteListenPort, remoteUrl } from "./remote";
 import { Scheduler } from "./scheduler";
 import { LimitWatcher } from "./limit";
@@ -39,8 +40,9 @@ export async function startDaemon(): Promise<void> {
   });
   // Links in notifications open the ticket on the phone when phone access is on (remote.json), else on this Mac.
   const remoteConfig = new RemoteAccess(store.root, () => 0);
+  const push = new PushService(store.root);
   const notifier: Notifier = new Notifier(store, bus, {
-    root: store.root, sessionSummary: (id) => sessions.summary(id), isRunning: (slug, id) => board.isRunning(slug, id),
+    root: store.root, push, sessionSummary: (id) => sessions.summary(id), isRunning: (slug, id) => board.isRunning(slug, id),
     hostHuddles: (slug) => board.hostHuddles(slug),
     baseUrl: () => {
       const r = remoteConfig.active();
@@ -57,7 +59,7 @@ export async function startDaemon(): Promise<void> {
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
   const remotePort = remoteListenPort(port, config.remotePort);
-  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, huddles, assets: WEB_ASSETS, restart, notifier });
+  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, huddles, assets: WEB_ASSETS, restart, notifier, push });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   board.recover();
   huddles.recover();

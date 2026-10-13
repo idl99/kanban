@@ -699,6 +699,25 @@ test("notification settings: read, update, validate; board runs are refused", as
   expect(((await r.json()) as any).webhookUrl).toBe("");
 });
 
+test("phone push: public key, turn a device on, heartbeat, remove; board runs are refused", async () => {
+  let r = await fetch(`${base}/api/push`);
+  const first = (await r.json()) as any;
+  expect(first.publicKey).toMatch(/^[\w-]{80,}$/);
+  expect(first.devices).toEqual([]);
+  const sub = { endpoint: "https://fcm.googleapis.com/fcm/send/abc", keys: { p256dh: first.publicKey, auth: "BTBZMqHH6r4Tts7J_aSIgg" } };
+  r = await fetch(`${base}/api/push/subscribe`, json("POST", { subscription: sub, label: "Android · Chrome" }));
+  const d = (await r.json()) as any;
+  expect(d.label).toBe("Android · Chrome");
+  r = await fetch(`${base}/api/push/subscribe`, json("POST", { subscription: { endpoint: "nope" } }));
+  expect(r.status).toBe(400);
+  r = await fetch(`${base}/api/push/visible`, json("POST", { endpoint: sub.endpoint, visible: true }));
+  expect(r.status).toBe(200);
+  r = await fetch(`${base}/api/push`, { headers: { "x-ckanban-run": "p/t_1" } });
+  expect(r.status).toBe(403);
+  r = await fetch(`${base}/api/push/remove`, json("POST", { id: d.id }));
+  expect(((await r.json()) as any).devices).toEqual([]);
+});
+
 test("version history: offered for a plain folder, turned on with one local commit, a .gitignore and nothing pushed", async () => {
   const path = tempDir("ck-plain-");
   writeFileSync(join(path, "index.html"), "<h1>shop</h1>\n");

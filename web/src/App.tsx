@@ -9,6 +9,8 @@ import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, C
 import { Inbox } from "./Inbox";
 import { NowView } from "./NowView";
 import { NotificationsDialog } from "./NotificationsDialog";
+import { PushHint } from "./PushHint";
+import { startPushClient } from "./push";
 import { PhoneAccessDialog } from "./PhoneAccessDialog";
 import { MoreSheet, PhoneNav, type PhoneTab } from "./PhoneNav";
 import { usePhone } from "./usePhone";
@@ -196,6 +198,8 @@ export function App() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [phoneAccess, setPhoneAccess] = useState(false);
   const [notifications, setNotifications] = useState(false);
+  // Phone notifications: tell the daemon while the board is on screen here, open tapped notifications' tickets.
+  useEffect(() => startPushClient(), []);
   const [version, setVersion] = useState<{ version: string; latest: string | null; updateAvailable: boolean } | null>(null);
 
   const loadProfiles = useCallback(async () => {
@@ -605,7 +609,7 @@ export function App() {
           },
           ...(profile ? [{ label: "Board settings", icon: <GearIcon />, onSelect: () => setProfileDialog("edit") }] : []),
           { label: "Phone access", icon: <DeviceIcon />, onSelect: () => setPhoneAccess(true), title: "Open this board from your phone over Tailscale" },
-          { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotifications(true), title: "Get told on your phone (ntfy / webhook) when a ticket needs you" },
+          { label: "Notifications", icon: <BellIcon />, onSelect: () => setNotifications(true), title: "Get told on your phone when a ticket needs you" },
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
   ];
@@ -669,7 +673,7 @@ export function App() {
     { id: "usage", label: "Usage", run: () => setUsageRequest(Date.now()) },
     ...(profile ? [{ id: "settings", label: "Board settings", icon: <GearIcon size={14} />, run: () => setProfileDialog("edit") }] : []),
     { id: "new-board", label: "New board", run: () => setProfileDialog("new") },
-    { id: "notifications", label: "Notifications", icon: <BellIcon size={14} />, hint: "ntfy / webhook when a ticket needs you", run: () => setNotifications(true) },
+    { id: "notifications", label: "Notifications", icon: <BellIcon size={14} />, hint: "on your phone when a ticket needs you", run: () => setNotifications(true) },
     { id: "phone", label: "Phone access", icon: <DeviceIcon size={14} />, hint: "open the board from your phone", run: () => setPhoneAccess(true) },
     { id: "shortcuts", label: "Keyboard shortcuts", keys: ["?"], icon: <KeyboardIcon size={14} />, run: () => setShortcuts(true) },
     { id: "bug", label: "Report a bug", icon: <BugIcon size={14} />, run: () => setBugReport(true) },
@@ -796,6 +800,8 @@ export function App() {
           <button className="icon-btn" aria-label="Dismiss" title="Hide until next time" onClick={() => dismiss(folderKey)}><CloseIcon size={12} /></button>
         </div>
       )}
+
+      {phone && profile && <PushHint onSetup={() => setNotifications(true)} />}
 
       {profiles === null ? (
         <div className="empty"><span className="spinner" /> Loading boards…</div>

@@ -23,6 +23,7 @@ import { AttachmentError, attachmentFile, attachmentType, IMAGE_TYPES, saveAttac
 import { FileError, listDir, openWithSystem, readFileForView } from "./files";
 import { McpError, McpManager } from "./mcp";
 import { Notifier } from "./notify";
+import { PushService } from "./push";
 import { LISTENER_HEADER, LOGIN_HEADER, qrSvg, RemoteAccess, RemoteError, remoteUrl, type RemoteConfig } from "./remote";
 import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
 import { collectLinks } from "./links";
@@ -74,6 +75,8 @@ export interface ServerDeps {
   remotePort?: number;
   /** "Needs you" notifications (notify.ts); the daemon passes its started one. */
   notifier?: Notifier;
+  /** Phone push devices (push.ts), shared with the notifier. */
+  push?: PushService;
 }
 
 /** A Share menu publish in progress, or the error of the last one, per output file. Not persisted. */
@@ -195,8 +198,9 @@ export function createServer(deps: ServerDeps) {
   // The listener each request came in on, for the routes that care (WebSocket upgrades, /api/remote).
   const via = new WeakMap<Request, { listener: Listener; srv: import("bun").Server<ShellSocket> }>();
   const listenerOf = (req: Request): Listener => via.get(req)?.listener ?? "local";
+  const push = deps.push ?? new PushService(store.root);
   const notifier = deps.notifier ?? new Notifier(store, bus, {
-    root: store.root, sessionSummary: (id) => sessions.summary(id), isRunning: (s, id) => board.isRunning(s, id),
+    root: store.root, push, sessionSummary: (id) => sessions.summary(id), isRunning: (s, id) => board.isRunning(s, id),
     hostHuddles: (s) => board.hostHuddles(s), baseUrl: () => (remote.active() ? remoteUrl(remote.active()!.host) : `http://localhost:${server.port ?? deps.port}`),
   });
   // "<profile>/<ticket>" -> jobs by output file.
@@ -443,6 +447,36 @@ export function createServer(deps: ServerDeps) {
       if (parts[1] === "test" && m === "POST") {
         const b = await body(req);
         return json({ ...(await notifier.test(typeof b?.profile === "string" ? b.profile : undefined)), state: notifier.state() });
+      }
+    }
+
+    // Phone push (push.ts): this device turns notifications on/off; the page's heartbeat says when its board is on screen.
+    if (parts[0] === "push") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "board runs can't use notification settings");
+      if (parts.length === 1 && m === "GET") return json({ publicKey: push.publicKey(), devices: push.devices() });
+      const b = m === "POST" ? await body(req) : null;
+      const endpoint = typeof b?.endpoint === "string" ? b.endpoint : "";
+      if (parts[1] === "subscribe" && m === "POST") {
+        try {
+          const d = push.subscribe(b?.subscription, b?.label);
+          return json({ id: d.id, label: d.label, createdAt: d.createdAt });
+        } catch (e) {
+          throw new HttpError(400, (e as Error).message);
+        }
+      }
+      if (parts[1] === "remove" && m === "POST") {
+        const key = typeof b?.id === "string" ? b.id : endpoint;
+        if (!key) throw new HttpError(400, "id or endpoint is required");
+        return json({ removed: push.remove(key), devices: push.devices() });
+      }
+      if (parts[1] === "visible" && m === "POST") {
+        if (!endpoint) throw new HttpError(400, "endpoint is required");
+        push.setVisible(endpoint, b?.visible === true);
+        return json({ ok: true });
+      }
+      if (parts[1] === "test" && m === "POST") {
+        if (typeof b?.id !== "string") throw new HttpError(400, "id is required");
+        return json(await notifier.testDevice(b.id, typeof b?.profile === "string" ? b.profile : undefined));
       }
     }
 

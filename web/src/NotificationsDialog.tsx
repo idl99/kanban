@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type NotifyKind, type NotifyState } from "./api";
 import { Modal } from "./Modal";
+import { PushSection } from "./PushSection";
 import { Select } from "./Select";
 import { timeAgo } from "./time";
 import { toast } from "./toast";
@@ -17,7 +18,7 @@ const KINDS: { kind: NotifyKind; label: string }[] = [
   { kind: "reply", label: "Claude replied in Planning" },
 ];
 
-/** Header menu → Notifications: where "needs you" goes (ntfy / webhook, macOS banner) and for which kinds. */
+/** Header menu → Notifications: where "needs you" goes (this phone, ntfy / webhook, macOS banner) and for which kinds. */
 export function NotificationsDialog({ profile, onClose }: { profile: string | null; onClose: () => void }) {
   const [state, setState] = useState<NotifyState | null>(null);
   const [url, setUrl] = useState("");
@@ -55,7 +56,7 @@ export function NotificationsDialog({ profile, onClose }: { profile: string | nu
       const r = await api.testNotify(profile);
       setState(r.state);
       if (r.error) setError(r.error);
-      else toast(r.webhook ? "Test notification sent" : "Test banner shown (no webhook set)", { tone: "ok" });
+      else toast(r.webhook || r.devices ? "Test notification sent" : "Test banner shown (no webhook or device set)", { tone: "ok" });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -71,13 +72,15 @@ export function NotificationsDialog({ profile, onClose }: { profile: string | nu
           When a ticket starts needing you (questions, a proposal, review, a failed run, the usage limit), the board tells you once.
         </p>
         {!state && !error && <div className="muted small"><span className="spinner" /> Loading…</div>}
+        <PushSection profile={profile} />
         {state && (
           <>
             <label>
-              Webhook URL
+              Webhook URL (optional)
               <input className="mono" value={url} onChange={(e) => setUrl(e.target.value)} onBlur={() => void saveUrl()}
                 placeholder="https://ntfy.sh/your-secret-topic" spellCheck={false} autoComplete="off" />
               <span className="muted small setup-hint">
+                For phones without the board app, e.g. via ntfy.{" "}
                 {ntfy
                   ? "ntfy: install the ntfy app on your phone and subscribe to the same topic. Pick a long, hard-to-guess topic name."
                   : "Any URL that takes a POST. ntfy topic URLs work as-is; others get JSON {board, ticketId, title, kind, url}."}

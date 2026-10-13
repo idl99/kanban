@@ -1,11 +1,13 @@
 // "Needs you" notifications: when a ticket starts waiting on the user (attention.ts), tell them once, off the Mac too.
-// Sends to a webhook (ntfy topic URL or any JSON endpoint) and/or shows a macOS banner, per kind (notify.json).
+// Sends to a webhook (ntfy topic URL or any JSON endpoint), to devices that turned phone push on (push.ts) and/or
+// shows a macOS banner, per kind (notify.json).
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { type AttentionKind, type HostHuddle, ticketAttention } from "./attention";
 import type { Bus } from "./events";
 import { run as runCmd } from "./git";
+import type { PushPayload, PushService } from "./push";
 import type { SessionSummary } from "./session";
 import type { Store } from "./store";
 import { nowIso } from "./util";
@@ -102,6 +104,11 @@ export interface NotifyMessage {
   url: string;
 }
 
+/** A phone notification: the ticket as title, what it needs (and the board) below; one per ticket on screen. */
+export function pushPayload(m: NotifyMessage): PushPayload {
+  return { title: m.title, body: `${m.label} · ${m.boardName}`, url: m.url, tag: m.ticketId ? `${m.board}/${m.ticketId}` : "ckanban" };
+}
+
 /** HTTP headers allow Latin-1 only; ntfy reads RFC 2047 encoded words for anything else. */
 export function headerValue(s: string): string {
   const flat = s.replace(/\s+/g, " ").trim();
@@ -195,6 +202,8 @@ export interface NotifierOptions {
   fetch?: (url: string, init: RequestInit) => Promise<Response>;
   banner?: (title: string, body: string) => void;
   now?: () => number;
+  /** Phone push to the devices that turned it on; omitted: none. */
+  push?: PushService;
 }
 
 export class Notifier {
@@ -286,32 +295,59 @@ export class Notifier {
     if (this.settings().mac) this.banner(title, body);
   }
 
-  /** Banner and webhook as configured. Resolves with the webhook error, or null. */
-  async send(settings: NotifySettings, m: NotifyMessage): Promise<string | null> {
+  /**
+   * Banner, webhook and phone push as configured. Resolves with the first error, or null. Push skips devices with
+   * the board on screen unless `everyDevice` (the test button).
+   */
+  async send(settings: NotifySettings, m: NotifyMessage, everyDevice = false): Promise<string | null> {
     if (settings.mac) this.banner(`${m.label}: ${m.title}`, m.boardName);
-    if (!settings.webhookUrl) return null;
-    const { url, init } = webhookRequest(settings, m);
-    let error: string | null = null;
-    try {
-      const r = await this.fetch(url, init);
-      if (!r.ok) error = `webhook answered ${r.status} ${r.statusText}`.trim();
-    } catch (e) {
-      error = `webhook failed: ${(e as Error).message}`;
-    }
+    const [hook, push] = await Promise.all([this.sendWebhook(settings, m), this.sendPush(m, everyDevice)]);
+    const error = hook.error ?? push.error;
     if (error) console.warn(`notify: ${error}`);
-    this.lastError = error;
-    if (!error) this.lastSentAt = nowIso();
+    if (hook.sent || push.sent || error) this.lastError = error;
+    if (hook.sent || push.sent) this.lastSentAt = nowIso();
     return error;
   }
 
-  /** The "Send test notification" button: a sample message through banner and webhook, whatever the kind toggles say. */
-  async test(slug?: string): Promise<{ ok: boolean; error: string | null; webhook: boolean }> {
-    const settings = this.settings();
+  private async sendWebhook(settings: NotifySettings, m: NotifyMessage): Promise<{ sent: boolean; error: string | null }> {
+    if (!settings.webhookUrl) return { sent: false, error: null };
+    const { url, init } = webhookRequest(settings, m);
+    try {
+      const r = await this.fetch(url, init);
+      return r.ok ? { sent: true, error: null } : { sent: false, error: `webhook answered ${r.status} ${r.statusText}`.trim() };
+    } catch (e) {
+      return { sent: false, error: `webhook failed: ${(e as Error).message}` };
+    }
+  }
+
+  private async sendPush(m: NotifyMessage, everyDevice: boolean): Promise<{ sent: number; error: string | null }> {
+    if (!this.o.push) return { sent: 0, error: null };
+    return this.o.push.send(pushPayload(m), { skipVisible: !everyDevice });
+  }
+
+  private testMessage(slug?: string): NotifyMessage {
     const p = slug ? this.store.getProfile(slug) : this.store.listProfiles()[0];
-    const error = await this.send(settings, {
+    return {
       board: p?.slug ?? "", boardName: p?.name ?? "ckanban", ticketId: "", title: "Test notification", kind: "review",
       label: "ckanban", url: p ? this.link(p.slug) : `${this.o.baseUrl()}/`,
-    });
-    return { ok: !error, error, webhook: !!settings.webhookUrl };
+    };
+  }
+
+  /**
+   * The "Send test notification" button: a sample message through banner, webhook and every phone (the board is on
+   * screen there, so the visible skip doesn't apply), whatever the kind toggles say.
+   */
+  async test(slug?: string): Promise<{ ok: boolean; error: string | null; webhook: boolean; devices: number }> {
+    const settings = this.settings();
+    const error = await this.send(settings, this.testMessage(slug), true);
+    return { ok: !error, error, webhook: !!settings.webhookUrl, devices: this.o.push?.devices().length ?? 0 };
+  }
+
+  /** A device's own "Send test": that device only. */
+  async testDevice(id: string, slug?: string): Promise<{ ok: boolean; error: string | null }> {
+    if (!this.o.push) return { ok: false, error: "phone push is not available" };
+    const r = await this.o.push.send(pushPayload(this.testMessage(slug)), { only: id, skipVisible: false });
+    const error = r.error ?? (r.removed ? "this device no longer accepts notifications: turn them on again" : r.sent ? null : "device not found");
+    return { ok: !error, error };
   }
 }

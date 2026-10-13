@@ -2338,3 +2338,19 @@ button.tag-chip:hover { border-color: currentColor; }
   .tag-x { padding: 2px 3px; }
   .tag-option { padding: 9px 10px; }
 }
+
+/* Notifications dialog → "This phone" (PushSection.tsx) and the one-time hint on the phone board (PushHint.tsx). */
+.push-device { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.push-device.ok { border-color: var(--ok); background: var(--ok-soft); }
+.push-device.warn { border-color: color-mix(in srgb, var(--warn) 30%, var(--border)); background: var(--warn-soft); }
+.push-device-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.push-device-title { font-weight: 600; }
+.push-device .pill.ok { background: var(--ok); color: #fff; }
+.push-steps { margin: 0; padding-left: 18px; }
+.push-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.push-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.push-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.push-hint { margin: 10px 12px 0; background: var(--accent-soft); border-radius: var(--radius); padding: 10px 12px; display: flex; gap: 10px; align-items: flex-start; }
+.push-hint-text { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.push-hint-text .push-actions { margin-top: 8px; }
+.push-hint .icon-btn { color: var(--muted); }

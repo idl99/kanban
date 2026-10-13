@@ -220,7 +220,7 @@ function describeNotifier() {
       fetch: async () => new Response("nope", { status: 403, statusText: "Forbidden" }), banner: () => {},
     });
     const r = await notifier.test("kb");
-    expect(r).toEqual({ ok: false, error: "webhook answered 403 Forbidden", webhook: true });
+    expect(r).toEqual({ ok: false, error: "webhook answered 403 Forbidden", webhook: true, devices: 0 });
     expect(notifier.state().lastError).toBe("webhook answered 403 Forbidden");
   });
 }
