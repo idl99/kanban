@@ -758,7 +758,9 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       )}
       <div className="composer">
         <textarea ref={composer} rows={phone ? 1 : 2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers}
-          placeholder={running ? "Steer Claude: it reads this at its next step, no restart…" : refine ? "Describe your idea or answer Claude…" : "Ask Claude to change or continue something…"}
+          placeholder={phone
+            ? running ? "Steer Claude…" : refine ? "Describe your idea…" : "Ask Claude…"
+            : running ? "Steer Claude: it reads this at its next step, no restart…" : refine ? "Describe your idea or answer Claude…" : "Ask Claude to change or continue something…"}
           onChange={(e) => setDraft(e.target.value)}
           onSelect={() => { snippets.handlers.onSelect(); slash.handlers.onSelect(); }}
           onBlur={() => { snippets.handlers.onBlur(); slash.handlers.onBlur(); }}
