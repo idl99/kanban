@@ -2182,6 +2182,43 @@ button.hd-mode:disabled { cursor: default; }
   .hd-learnings-list { padding-bottom: env(safe-area-inset-bottom); }
 }
 
+/* Phone (≤720px): output file cards show their whole name above the buttons; one-line composers with Send beside the text
+   (the hint line hides, warnings still show below); the huddle's status, spend and Chat / People / Findings share one row. */
+.chat-file-dir { display: none; }
+@media (max-width: 720px) {
+  .chat-file { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 9px 10px; }
+  .chat-file > svg { margin-top: 2px; }
+  .chat-file b { white-space: normal; overflow: visible; overflow-wrap: anywhere; font-size: 13px; }
+  .chat-file-dir { display: block; font-weight: 400; font-size: 11.5px; color: var(--muted); }
+  .chat-file-actions { grid-column: 2 / -1; margin-left: 0; }
+  .chat-file-actions .btn { flex: 1; min-height: 36px; justify-content: center; }
+  .chat-file-actions .btn.view { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .chat-file + .chat-file { margin-top: 8px; }
+
+  .composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px 8px; padding: 6px 6px 6px 12px; }
+  .composer > * { grid-column: 1 / -1; }
+  .composer > textarea { grid-column: 1; grid-row: 1; align-self: center; min-height: 0; padding: 7px 0; }
+  .composer-foot { display: contents; }
+  .composer-hint { grid-column: 1 / -1; }
+  .composer-hint.muted { display: none; }
+  .composer-actions { grid-column: 2; grid-row: 1; flex: none; }
+  .composer-actions .image-pick { margin-right: 0; padding-left: 10px; padding-right: 10px; }
+  .composer .image-pick-label { display: none; }
+
+  .huddle-bar { gap: 6px; padding: 6px 6px 6px 12px; }
+  .huddle-bar .hd-state-dot { font-size: 12px; }
+  .huddle-bar .hd-budget { font-size: 12.5px; }
+  .huddle-bar > .hd-seg { flex: 1 1 auto; min-width: 0; margin: 0; padding: 2px; border-radius: 9px; }
+  .huddle-bar .hd-seg button { min-height: 32px; font-size: 13px; padding: 0 2px; gap: 3px; white-space: nowrap; }
+  .huddle-bar .hd-seg .for-you-pill { margin-left: 0; }
+
+  .huddle-close-ask.compact { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 12px; }
+  .hd-ask-text { flex: 1; min-width: 0; padding: 4px 0; border: 0; background: none; font: inherit; color: inherit; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  .huddle-close-ask.compact.open { flex-wrap: wrap; justify-content: flex-end; }
+  .huddle-close-ask.open .hd-ask-text { flex-basis: 100%; white-space: normal; }
+  .huddle-close-ask.compact .btn.small { min-height: 32px; }
+}
+
 /* Notifications dialog (NotificationsDialog.tsx) */
 .notify-form p { margin: 0; }
 .notify-kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }

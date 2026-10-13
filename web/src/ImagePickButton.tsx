@@ -17,7 +17,7 @@ export function ImagePickButton({ images, target, disabled, className = "" }: {
     <>
       <button type="button" className={`btn small image-pick ${className}`} disabled={disabled}
         title="Add images (or paste / drop them into the text)" onClick={() => input.current?.click()}>
-        <ImageIcon /> Image
+        <ImageIcon /> <span className="image-pick-label">Image</span>
       </button>
       {/* No `capture`: the phone then offers library, camera and files. */}
       <input ref={input} type="file" accept="image/*" multiple hidden tabIndex={-1}

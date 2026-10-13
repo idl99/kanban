@@ -11,6 +11,8 @@ export const MARKDOWN = /\.(md|markdown)$/i;
 export const HTML = /\.html?$/i;
 
 export const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+/** The folder part of an outputs path, with its trailing "/" ("" at the top). */
+export const dirName = (path: string) => path.slice(0, path.lastIndexOf("/") + 1);
 
 /** Text files can be pasted as text; only Markdown and HTML can be published as a page. */
 export const isText = (name: string) => !IMAGE.test(name) && !BINARY.test(name);

@@ -27,7 +27,7 @@ import { useSlashCommands, useSlashPicker } from "./SlashPicker";
 import { commandNote, messageCommand, type SlashCommand } from "./slashText";
 import { filesByReply } from "./fileCards";
 import { handoff as handoffOf, liveView, saved, type Handoff } from "./liveReply";
-import { baseName, copyFile, downloadFile } from "./share";
+import { baseName, copyFile, dirName, downloadFile } from "./share";
 import { draftKey, formKey } from "./drafts";
 import { fullTime, timeAgo } from "./time";
 import { useNow } from "./useNow";
@@ -35,6 +35,7 @@ import { canStartFromProposal } from "./keynav";
 import { toast } from "./toast";
 import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
+import { usePhone } from "./usePhone";
 
 /** m:ss (h:mm:ss past an hour) since `iso`. */
 function clock(iso: string, now: number): string {
@@ -168,6 +169,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const [jump, setJump] = useState<{ fresh: boolean } | null>(null);
   const [showWarnDetails, setShowWarnDetails] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const phone = usePhone();
   useNow();
   // Sent messages not yet in the session file (the server's queue covers ones Claude hasn't read).
   // steer: sent while Claude was working, so it waits for the server queue instead of joining the timeline.
@@ -221,7 +223,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     setHandoff([]);
     reload();
   }, [reload]);
-  useLayoutEffect(() => autoGrow(composer.current), [draft]);
+  useLayoutEffect(() => autoGrow(composer.current), [draft, phone]);
 
   // Live updates: session file changes (terminal) and run activity (board) both refresh the tail.
   useEffect(() => subscribe((e) => {
@@ -521,10 +523,10 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               {e.role === "assistant" && cards.get(e.uuid)?.map((f) => (
                 <div key={f.name} className="chat-file">
                   <FileTextIcon size={14} />
-                  <b title={f.name}>{baseName(f.name)}</b>
+                  <b title={f.name}>{dirName(f.name) && <span className="chat-file-dir">{dirName(f.name)}</span>}{baseName(f.name)}</b>
                   <span className="muted small">{kb(f.size)}</span>
                   <span className="chat-file-actions">
-                    <button className="btn small" onClick={() => onOpenOutput?.(f.name)}>View</button>
+                    <button className="btn small view" onClick={() => onOpenOutput?.(f.name)}>View</button>
                     {ticket.canCopyFile && <button className="btn small" onClick={() => copyFile(slug, ticket.id, f.name)}>Copy file</button>}
                     <button className="btn small" onClick={() => downloadFile(slug, ticket.id, f.name)}>Download</button>
                   </span>
@@ -755,7 +757,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         </div>
       )}
       <div className="composer">
-        <textarea ref={composer} rows={2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers}
+        <textarea ref={composer} rows={phone ? 1 : 2} value={draft} disabled={stopping} className={images.dragOver ? "drop-target" : undefined} {...images.handlers}
           placeholder={running ? "Steer Claude: it reads this at its next step, no restart…" : refine ? "Describe your idea or answer Claude…" : "Ask Claude to change or continue something…"}
           onChange={(e) => setDraft(e.target.value)}
           onSelect={() => { snippets.handlers.onSelect(); slash.handlers.onSelect(); }}

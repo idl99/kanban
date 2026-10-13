@@ -9,6 +9,7 @@ import {
   type HuddleState,
 } from "./huddle";
 import { DEFAULT_MAX, draftError, RosterEditor, rosterDraft, startFromDraft, TemplatePicker, usePresets, useTemplates, type RosterDraft } from "./HuddleRoster";
+import { autoGrow } from "./autoGrow";
 import { applyTemplate, BRIEF_MAX, clampSideWidth, DEFAULT_BUDGET, participantRole, POST_MAX, SIDE_DEFAULT } from "./huddleText";
 import { CloseIcon, MoreIcon } from "./icons";
 import { KeyHint } from "./KeyHint";
@@ -251,6 +252,7 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
   // Phone (≤720px): one pane at a time under a one-line bar; the bar's actions sit in a ⋯ sheet (or its invite/rounds lists).
   const phone = usePhone();
   const [pane, setPane] = useState<"chat" | "people" | "findings">("chat");
+  const [askOpen, setAskOpen] = useState(false);
   const [sheet, setSheet] = useState<"actions" | "invite" | "rounds" | null>(null);
   useEffect(() => setViewing(null), [h.id]);
   const viewable = members(h);
@@ -361,12 +363,21 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
   return (
     <div className="huddle">
       {phone ? (
+        // One row: a status dot with the spend, the Chat / People / Findings switch, the ⋯ sheet (message count in its footer).
         <div className="huddle-bar">
-          {stateLabel}
-          <span>· {h.seq} msg{h.seq === 1 ? "" : "s"}</span>
-          {budget}
-          <span className="spacer" />
-          {forYou > 0 && pane === "chat" && <button className="link-btn hd-jump" onClick={jump}>↓ for you</button>}
+          <span className={`huddle-state hd-state-dot ${brake ? "brake" : quiet ? "quiet" : h.status}`} title={brake ? "Paused" : quiet ? "All quiet" : STATE_LABEL[h.status]}
+            aria-label={brake ? "Paused" : quiet ? "All quiet" : STATE_LABEL[h.status]}>{brake || h.status === "stopped" ? "■" : "●"}</span>
+          <span className={`hd-budget${overBudget ? " hd-over" : ""}`} title="What the huddle spent so far, and its budget">{money(spent)}/{dollars(max)}</span>
+          <div className="hd-seg" role="tablist" aria-label="Huddle view">
+            {([["chat", "Chat", forYou], ["people", "People", count], ["findings", "Findings", openFindings]] as const).map(([k, label, n]) => (
+              // Chat again while it shows: jump to the next message that tags you.
+              <button key={k} role="tab" aria-selected={pane === k} className={pane === k ? "on" : undefined}
+                onClick={() => (k === "chat" && pane === "chat" && forYou > 0 ? jump() : setPane(k))}
+                title={k === "chat" && forYou > 0 ? `${forYou} for you: tap again to jump` : undefined}>
+                {label}{k === "chat" ? n > 0 && <span className="for-you-pill">{n}</span> : <span className="hd-seg-n">{n}</span>}
+              </button>
+            ))}
+          </div>
           <button className="btn ghost hd-more" onClick={() => setSheet("actions")} aria-label="Huddle actions" aria-haspopup="menu">
             <MoreIcon size={18} />{pending.length > 0 && <span className="pn-dot" />}
           </button>
@@ -420,7 +431,7 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
       </div>
       )}
       {sheet === "actions" && <MoreSheet label="Huddle actions" items={actions} onClose={() => setSheet(null)}
-        footer={closed && h.closedAt ? `Closed ${clock(h.closedAt)} · read-only` : `Started ${clock(h.createdAt)}`} />}
+        footer={`${closed && h.closedAt ? `Closed ${clock(h.closedAt)} · read-only` : `Started ${clock(h.createdAt)}`} · ${h.seq} message${h.seq === 1 ? "" : "s"}`} />}
       {sheet === "invite" && <MoreSheet label="Invite a ticket" onClose={() => setSheet(null)}
         items={invitable.map((t) => ({ label: t.title, badge: <span className="muted small">{t.id}</span>, onSelect: () => run(api.inviteToHuddle(slug, h.id, t.id)) }))} />}
       {sheet === "rounds" && <MoreSheet label="Huddles of this ticket" items={roundItems} onClose={() => setSheet(null)}
@@ -450,22 +461,22 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
           <button className="btn small primary" onClick={() => setConfirm("close")}>Close huddle</button>
         </div>
       )}
-      {h.closeRequest && !closed && (
+      {h.closeRequest && !closed && (phone ? (
+        // Phone: one line (tap to read it all) with the two things to do about it.
+        <div className={`huddle-close-ask compact${askOpen ? " open" : ""}`}>
+          <button className="hd-ask-text" aria-expanded={askOpen} onClick={() => setAskOpen((o) => !o)}>
+            <b>@{h.closeRequest.by}</b> asks to close: {h.closeRequest.reason}
+          </button>
+          {h.summary && <button className="btn small" onClick={() => onOpenOutput(h.summary!)}>Summary</button>}
+          <button className="btn small primary" onClick={() => setConfirm("close")}>Close</button>
+        </div>
+      ) : (
         <div className="huddle-close-ask">
           <b>@{h.closeRequest.by}</b> asks to close the huddle: {h.closeRequest.reason}.{" "}
           {h.summary ? <>Read the <button className="link-btn" onClick={() => onOpenOutput(h.summary!)}>summary</button> in the ticket's outputs.</> : "The summary is in the ticket's outputs."}
         </div>
-      )}
+      ))}
       {adding && !closed && <AddAgent key={seed?.n} slug={slug} huddle={h} preset={addSeed ?? undefined} onDone={() => setAdding(false)} onError={onError} />}
-      {phone && (
-        <div className="hd-seg" role="tablist" aria-label="Huddle view">
-          {([["chat", "Chat", forYou], ["people", "People", count], ["findings", "Findings", openFindings]] as const).map(([k, label, n]) => (
-            <button key={k} role="tab" aria-selected={pane === k} className={pane === k ? "on" : undefined} onClick={() => setPane(k)}>
-              {label}{k === "chat" ? n > 0 && <span className="for-you-pill">{n}</span> : <span className="hd-seg-n">{n}</span>}
-            </button>
-          ))}
-        </div>
-      )}
       <div className={`huddle-body${side.dragging ? " resizing" : ""}`} ref={body} style={{ "--hd-side-w": `${side.width}px` } as React.CSSProperties}>
         {(!phone || pane === "chat") && <div className="huddle-feed">
           <Feed huddle={h} state={state} handles={handles} scroller={log} onSeen={(seq) => run(api.huddleSeen(slug, h.id, seq))} />
@@ -814,6 +825,7 @@ function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOp
   const [active, setActive] = useState(0);
   const [closedPopup, setClosedPopup] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const phone = usePhone();
   const closed = h.status === "closed";
   const q = mentionQuery(draft, caret);
   const options = q ? mentionCandidates(h).filter((c) => c.handle.startsWith(q.query)) : [];
@@ -821,6 +833,7 @@ function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOp
   const tooLong = draft.trim().length > POST_MAX;
   const hint = tooLong ? `${draft.trim().length} / ${POST_MAX} characters: too long to post. Shorten it or split it.` : h.status === "live" ? untaggedHint(draft, h) : null;
   useEffect(() => setActive(0), [q?.query, q?.start]);
+  useLayoutEffect(() => autoGrow(ref.current), [draft, phone]);
   // Message @handle (session viewer): the draft starts with the tag, and the box gets the focus.
   useEffect(() => {
     if (!prefill) return;
@@ -905,8 +918,8 @@ function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOp
           ))}
         </div>
       )}
-      <textarea ref={ref} rows={2} value={draft} disabled={sending}
-        placeholder={h.status === "stopped" ? "The huddle is stopped: nobody wakes until you resume it…" : "Message the huddle: @main, @all or @handle to wake someone…"}
+      <textarea ref={ref} rows={phone ? 1 : 2} value={draft} disabled={sending}
+        placeholder={h.status === "stopped" ? "The huddle is stopped: nobody wakes until you resume it…" : phone ? "Message @main, @all or @handle…" : "Message the huddle: @main, @all or @handle to wake someone…"}
         onChange={(e) => { setDraft(e.target.value); setCaret(e.target.selectionStart); setClosedPopup(false); }}
         onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
         onBlur={() => setClosedPopup(true)} onFocus={() => setClosedPopup(false)}
