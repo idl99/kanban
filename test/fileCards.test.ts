@@ -30,3 +30,12 @@ test("a turn without a reply yet gets no card", () => {
   const cards = filesByReply([e("a0", "2026-10-06T09:00:00Z", "assistant"), e("u1", "2026-10-06T10:00:00Z", "user")], [f("r.md", "2026-10-06T10:00:10Z")]);
   expect(cards.size).toBe(0);
 });
+
+test("many files under one reply stay fast", () => {
+  const files = Array.from({ length: 50_000 }, (_, i) => f(`dir/${50_000 - i}.js`, "2026-10-06T10:00:10Z"));
+  const start = performance.now();
+  const cards = filesByReply([e("u1", "2026-10-06T10:00:00Z", "user"), e("a1", "2026-10-06T10:00:05Z", "assistant")], files);
+  expect(cards.get("a1")?.length).toBe(50_000);
+  expect(cards.get("a1")?.[0].name).toBe("dir/1.js");
+  expect(performance.now() - start).toBeLessThan(2000);
+});

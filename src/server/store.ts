@@ -1,5 +1,5 @@
 import {
-  appendFileSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync,
+  appendFileSync, closeSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
@@ -12,6 +12,10 @@ import { cleanTemplates, type HuddleTemplate } from "./huddle-templates";
 import { type HuddleNote, type NoteScope, parseNotes, serializeNotes } from "./huddle-notes";
 import { newId, newTicketId, nowIso } from "./util";
 
+/** Dependency, build and version-history folders: never deliverables, and they can hold tens of thousands of files. */
+const SKIPPED_OUTPUT_DIRS = new Set(["node_modules", ".git", ".next", ".nuxt", ".turbo", ".cache", ".venv", "venv", "__pycache__"]);
+/** Most output files listed (newest first); the UI renders every one. */
+export const MAX_OUTPUT_FILES = 2000;
 const DEFAULT_CONFIG: Config = { port: 7777, prPollMinutes: 5 };
 
 export function defaultRoot(): string {
@@ -215,6 +219,11 @@ export class Store {
     if (existsSync(src)) cpSync(src, join(this.ticketDir(slug, to), "outputs"), { recursive: true });
   }
 
+  /**
+   * The ticket's output files, newest first. Skips dependency and build folders (a run that copied a project into its
+   * outputs once left 70k files there, and listing them all froze the browser), doesn't follow symlinks, and keeps
+   * at most MAX_OUTPUT_FILES.
+   */
   listOutputs(slug: string, id: string): OutputFile[] {
     const dir = join(this.ticketDir(slug, id), "outputs");
     if (!existsSync(dir)) return [];
@@ -222,13 +231,14 @@ export class Store {
     const walk = (sub: string) => {
       for (const name of readdirSync(join(dir, sub))) {
         const rel = sub ? `${sub}/${name}` : name;
-        const st = statSync(join(dir, rel));
-        if (st.isDirectory()) walk(rel);
-        else out.push({ name: rel, size: st.size, updatedAt: st.mtime.toISOString() });
+        const st = lstatSync(join(dir, rel));
+        if (st.isDirectory()) {
+          if (!SKIPPED_OUTPUT_DIRS.has(name)) walk(rel);
+        } else if (st.isFile()) out.push({ name: rel, size: st.size, updatedAt: st.mtime.toISOString() });
       }
     };
     walk("");
-    return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, MAX_OUTPUT_FILES);
   }
 
   /** Resolve an output file path, refusing anything outside the ticket's outputs folder. */

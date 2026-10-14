@@ -26,6 +26,7 @@ import { useSnippetPicker } from "./SnippetPicker";
 import { useSlashCommands, useSlashPicker } from "./SlashPicker";
 import { commandNote, messageCommand, type SlashCommand } from "./slashText";
 import { filesByReply } from "./fileCards";
+
 import { handoff as handoffOf, liveView, saved, type Handoff } from "./liveReply";
 import { baseName, copyFile, dirName, downloadFile } from "./share";
 import { draftKey, formKey } from "./drafts";
@@ -37,6 +38,9 @@ import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
 import { usePhone } from "./usePhone";
 import { enterSends } from "./enterSends";
+
+/** File cards shown under one reply; the rest are in the Outputs tab. */
+const MAX_FILE_CARDS = 8;
 
 /** m:ss (h:mm:ss past an hour) since `iso`. */
 function clock(iso: string, now: number): string {
@@ -521,7 +525,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   ))}
                 </div>
               )}
-              {e.role === "assistant" && cards.get(e.uuid)?.map((f) => (
+              {e.role === "assistant" && cards.get(e.uuid)?.slice(0, MAX_FILE_CARDS).map((f) => (
                 <div key={f.name} className="chat-file">
                   <FileTextIcon size={14} />
                   <b title={f.name}>{dirName(f.name) && <span className="chat-file-dir">{dirName(f.name)}</span>}{baseName(f.name)}</b>
@@ -533,6 +537,11 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   </span>
                 </div>
               ))}
+              {e.role === "assistant" && (cards.get(e.uuid)?.length ?? 0) > MAX_FILE_CARDS && (
+                <button className="link-btn small" onClick={() => onOpenOutput?.(cards.get(e.uuid)![MAX_FILE_CARDS].name)}>
+                  +{cards.get(e.uuid)!.length - MAX_FILE_CARDS} more files in the Outputs tab
+                </button>
+              )}
               {e.unreadable && (
                 <div className="chat-unreadable" role="status">
                   <span>Couldn't read Claude's {UNREADABLE[e.unreadable]}.</span>

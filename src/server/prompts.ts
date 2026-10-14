@@ -171,7 +171,7 @@ function deliverableRule(outputDir: string): string {
 - Quantify when you can reach real data (code, logs, analytics, cost dashboards, docs). Say where each number comes from and label estimates as estimates.
 - Judge options against explicit criteria (e.g. value, cost, effort, risk) and end with concrete next steps.
 - If you also publish the deliverable somewhere (e.g. as an artifact or doc), include the link in your summary.
-- Code changes still belong in the repository, not in the outputs folder.`;
+- Code changes still belong in the repository, not in the outputs folder. Never put copies of the project, installed dependencies or build output there; use a temporary folder for those.`;
 }
 
 /** Board runs are headless, where Claude Code turns the Artifact tool off; the helper stands in (board setting "claude.ai artifacts"). */
@@ -584,7 +584,7 @@ export function huddleAgentSystemPrompt(
     ? `You work in the host ticket's folder (${workdir}), shared with @main, because it has no version history to branch from yet. Tell @main before you change a file, and don't commit, push or switch branches.`
     : p.canEdit
     ? `You work in your own git worktree (${workdir}) on branch ${p.branch ?? "(your branch)"}: edit and commit there. Never push to or edit the host ticket's worktree.`
-    : `You must NOT edit tracked files in this project (Edit, Write and NotebookEdit are disabled; don't change files through the shell either). You may run the app, tests and read-only commands. Put reports, notes and test scripts in your outputs folder: ${outputDir}${snap ? `
+    : `You must NOT edit tracked files in this project (Edit, Write and NotebookEdit are disabled; don't change files through the shell either). You may run the app, tests and read-only commands. Put reports, notes and test scripts in your outputs folder: ${outputDir}. If you need a writable copy of the project (to install dependencies, build or run it), make it in a temporary folder (\`mktemp -d\`), never in the outputs folder, and delete it when done: the user reads every file in outputs from the board.${snap ? `
 - Your working folder is a read-only snapshot: a detached git worktree at the host branch ${snap.branch ?? "(detached)"}, commit ${snap.sha}. The board resets it to the host's latest commit at every wake, dropping any change made in it; never commit, push or switch branches there.
 - Review target: ${snap.branch ? `the commits of ${snap.branch}` : "the host's commits"}${baseBranch ? ` on top of ${baseBranch} (\`git diff ${baseBranch}...${snap.sha}\`)` : ""}, at ${snap.sha}${p.focus ? `, focused on: ${p.focus}` : ""}.
 - You see committed code only; ask @main to commit WIP.` : ""}`;

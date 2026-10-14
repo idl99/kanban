@@ -21,7 +21,11 @@ export function filesByReply<F extends OutFile>(entries: Entry[], files: F[]): M
     let i = turns.length - 1;
     while (i >= 0 && f.updatedAt < turns[i].from) i--;
     const reply = i >= 0 ? turns[i].reply : null;
-    if (reply) out.set(reply, [...(out.get(reply) ?? []), f].sort((a, b) => a.name.localeCompare(b.name)));
+    if (!reply) continue;
+    const list = out.get(reply);
+    if (list) list.push(f);
+    else out.set(reply, [f]);
   }
+  for (const list of out.values()) list.sort((a, b) => a.name.localeCompare(b.name));
   return out;
 }

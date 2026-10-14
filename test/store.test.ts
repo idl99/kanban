@@ -1,8 +1,8 @@
 import { beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Store } from "../src/server/store";
+import { MAX_OUTPUT_FILES, Store } from "../src/server/store";
 import type { Profile } from "../src/server/types";
 
 let store: Store;
@@ -111,4 +111,19 @@ test("lastAiComment returns Claude's last comment and sees new ones", () => {
   expect(store.lastAiComment("demo", t.id)).toBe("first result");
   store.addComment("demo", t.id, "ai", "second result");
   expect(store.lastAiComment("demo", t.id)).toBe("second result");
+});
+
+test("listOutputs skips dependency and build folders, ignores symlinks and caps the list", () => {
+  const t = store.createTicket("demo", { title: "o", body: "", status: "backlog" });
+  const dir = store.outputsDir("demo", t.id);
+  mkdirSync(join(dir, "qa/app/node_modules/x"), { recursive: true });
+  mkdirSync(join(dir, "qa/app/.next"), { recursive: true });
+  writeFileSync(join(dir, "qa/report.md"), "r");
+  writeFileSync(join(dir, "qa/app/page.tsx"), "p");
+  writeFileSync(join(dir, "qa/app/node_modules/x/index.js"), "x");
+  writeFileSync(join(dir, "qa/app/.next/build.js"), "b");
+  symlinkSync(dir, join(dir, "qa/loop"));
+  expect(store.listOutputs("demo", t.id).map((f) => f.name).sort()).toEqual(["qa/app/page.tsx", "qa/report.md"]);
+  for (let i = 0; i < MAX_OUTPUT_FILES + 5; i++) writeFileSync(join(dir, `f${i}.txt`), "");
+  expect(store.listOutputs("demo", t.id).length).toBe(MAX_OUTPUT_FILES);
 });
