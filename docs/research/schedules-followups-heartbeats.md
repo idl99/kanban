@@ -12,8 +12,8 @@ Research and design note, 2026-10-14. No code yet: this is for the user to appro
   - **Script schedule** = a schedule with a check. It creates a ticket only when the check says so; otherwise the output goes to the schedule's history.
   - **Follow-up timer** = a one-shot follow-up without a check.
   - **Heartbeat** = a repeating follow-up with a check. The check runs every N minutes for free; Claude wakes only when something changed.
-- **Guardrails are on by default:** at most 3 Claude wakes per ticket per day and 8 in a row with nobody replying, delays that double, checks at least 5 minutes apart, and a per-wake spending cap. When a limit is hit, follow-ups stop and the card shows **Needs you**.
-- **Build order:** (1) one-shot follow-ups with guardrails and the card badge, (2) checks on schedules, (3) checks on follow-ups (heartbeats), (4) routing wakes to an open ticket by key, (5) plain-words UI for checks plus spend display.
+- **Claude decides when to follow up and when to stop. Nothing is hard-coded.** Each time it wakes, the board shows it what happened since it last looked: its earlier follow-ups, any replies, whether you've opened the card, and what the follow-ups have cost so far. Claude picks the next time, or decides not to follow up again, the way a good assistant would. The only money limit is one you set yourself (the run cap that already exists, plus an optional follow-up budget), and it's off unless you turn it on.
+- **Build order:** (1) follow-ups that Claude manages itself, with the card badge, (2) checks on schedules, (3) checks on follow-ups (heartbeats), (4) routing wakes to an open ticket by key, (5) plain-words UI for checks plus spend display.
 
 ## What exists today (and what we reuse)
 
@@ -142,16 +142,18 @@ interface FollowUp {
   check?: ScriptCheck | null; // set = gated by a check (§3)
   until?: string | null;      // heartbeat end time
 }
-interface FollowUpStats {     // separate field so a new follow-up doesn't reset the counts
-  day: string; wakesToday: number; // like Ticket.autoContinued {day, count}
-  chain: number;                   // wakes in a row with no user activity
-  lastDelayMin: number;            // for backoff
+interface FollowUpLogEntry {   // what Claude did and why; shown to it on every later wake
+  at: string;
+  kind: "set" | "woke" | "cancelled" | "replied";
+  message?: string;             // the note / why it chose this time
+  costUsd?: number;             // cost of the wake run (from ticket-usage.ts)
 }
 interface Ticket {
   // ...existing fields
   followUp?: FollowUp | null;
-  followUpStats?: FollowUpStats | null;
-  followUpStopped?: { at: string; reason: string } | null;  // set when a guardrail stops follow-ups
+  followUpLog?: FollowUpLogEntry[];   // last 50 kept
+  userSeenAt?: string | null;         // last time the user opened this card (new: the board doesn't track this today)
+  followUpBudgetUsd?: number | null;  // optional, set by the user; unset = no limit
 }
 ```
 
@@ -161,47 +163,60 @@ Setting a new follow-up replaces the pending one. One is enough and is easy to s
 
 ```
 follow_up({ after?: "10m" | "4h" | "2d", at?: ISO-or-"2026-10-20 09:00",
-            message: string, cancelOnReply?: boolean = true,
+            message: string,             // why, and what to do then: "No reply to the quote yet; nudge once if still silent"
+            cancelOnReply?: boolean = true,
             every?: "30m", check?: { command, timeoutSec }, until?: ... })
-  → "Follow-up set: wakes at 14:40 (in 4 h). Cancels if the user replies. 2 of 3 wakes left today."
+  → "Follow-up set: wakes at 14:40 (in 4 h). Cancels if the user replies."
 cancel_follow_up() → "Follow-up cancelled."
 ```
 
-The tool result always states the limits that apply. If a guardrail changed the requested delay, it says so ("asked for 10 min; set to 20 min because the last follow-up got no reply"), so Claude knows what will really happen.
+The board does not change the time Claude picks. The `message` is Claude's reasoning for its future self, shown on the card so the user can see why it will come back.
 
 **Daemon loop.** A new `FollowUpWatcher` in `src/server/followup.ts`, copied from `LimitWatcher` (30 s interval, `busy` flag), started in `src/server/main.ts` next to `LimitWatcher`. It calls a new `Board.dueFollowUps(slug)` (like `Board.dueContinues`), and for each due ticket:
 1. Skip it for now if the ticket is running or queued. The next tick tries again; it doesn't stack a message onto a live run.
-2. Check guardrails (below). If one is hit: clear the follow-up, set `followUpStopped`, add a comment, and the card goes to **Needs you**.
+2. Only if the user set a follow-up budget and it's used up: don't wake. Clear the follow-up, add a comment, and the card goes to **Needs you · Follow-up budget used**.
 3. Wake through `Board.chat(slug, id, text, { followUp: true })`, a new `ChatOptions` flag next to `hostWake` (`src/server/board.ts:135`). Like a planner wake, the card goes back to its column afterwards (`returnTo`), and `limit` is not cleared. The wake text, built in `src/server/prompts.ts`:
-   > ⏰ Follow-up you set on 14 Oct 10:40: "If no reply in 4 h, re-ask in one line, then stop." Nothing new from the user since. Do what the note says. If you need to check again later, call `follow_up` again (wakes left today: 2). Otherwise end normally.
-4. Bump `followUpStats` and clear `followUp` (one-shot), or move `dueAt` on (heartbeat, §3).
+   > ⏰ You set this follow-up on 14 Oct 10:40: "No reply to the quote yet; nudge once if still silent."
+   > Since then: no reply from the user; they haven't opened this card since 13 Oct 18:02; 2 messages you sent are still unanswered.
+   > Your follow-ups on this ticket so far: 3 (10:40 Mon, 09:00 Tue, 09:00 Wed), $0.21 in total.
+   > Decide what makes sense now. If following up again is useful, call `follow_up` with the time you judge right and say why. If it isn't (nobody is reading, or you've already nudged enough), don't: end with a one-line note on the card saying you stopped and why.
+4. Log the wake in `followUpLog` with its cost, and clear `followUp` (one-shot), or move `dueAt` on (heartbeat, §3).
 
-**Cancel on reply.** In `Board.chat`, a message from the user clears a pending follow-up with `cancelOnReply: true` and resets `chain` to 0. That means a message that is not `peer`, `hostWake`, `fromPlanner` or `followUp`. A routed check wake (§4) counts as a reply too: the third party answered. Moving the card to **Done** or **Backlog**, or deleting it, always cancels (handled in `Board.updateTicket`).
+**How Claude decides (prompt, not code).** The rules live in the wake prompt and in a short paragraph in the run prompt (`src/server/prompts.ts`), next to `PLAIN_WORDS`, not in the daemon:
+- Pick the delay like a person would: minutes for a deploy, hours for a colleague, a day or more for a customer. Space follow-ups further apart when nobody answers.
+- Look at the signals before following up again: several unanswered messages, or a user who hasn't opened the card for days, usually means stop and leave a note rather than keep nudging.
+- Never follow up just to check whether there's anything to do. Use a check (§3) for that, because checks are free.
+- When it stops, say so on the card in one line ("Stopped following up: 3 nudges, no reply since Monday").
 
-**History.** Each set, wake, cancel and stop is logged in the ticket's activity and as a short `ai` comment ("Follow-up set for 14:40", "Woke for follow-up", "Follow-up cancelled: you replied"). No new history store is needed.
+These are judgment instructions, so they can be improved without code changes.
 
-**UI** (described here; no mockup asked for): a small badge on the card, **"⏰ in 8 min"**, next to where `LimitActions` sits in `web/src/Card.tsx`, with the `message` as the tooltip. Clicking it opens a menu with **Wake now** and **Cancel**. When follow-ups were stopped by a guardrail, the card shows **Needs you · Follow-ups stopped** with the reason and a **Resume** button that resets `chain`.
+**Cancel on reply.** In `Board.chat`, a message from the user clears a pending follow-up with `cancelOnReply: true` and logs `replied`. That means a message that is not `peer`, `hostWake`, `fromPlanner` or `followUp`. A routed check wake (§4) counts as a reply too: the third party answered. Moving the card to **Done** or **Backlog**, or deleting it, always cancels (handled in `Board.updateTicket`).
 
-### Guardrails (defaults; the user asked that someone unreachable must not burn credit)
+**History.** Each set, wake, cancel and stop goes into `followUpLog` (which Claude sees on its next wake) and as a short `ai` comment ("Follow-up set for 14:40", "Woke for follow-up", "Follow-up cancelled: you replied"). No new history store is needed.
 
-| Guardrail | Default | Copied from |
+**UI** (described here; no mockup asked for): a small badge on the card, **"⏰ in 8 min"**, next to where `LimitActions` sits in `web/src/Card.tsx`, with the `message` as the tooltip. Clicking it opens a menu with **Wake now**, **Cancel**, the follow-up history ("3 follow-ups · $0.21") and an optional **Follow-up budget** field. Opening the card sets `userSeenAt` (a new `POST …/seen` call from the card's detail view), which is how Claude can tell "the user isn't looking at this".
+
+### Limits: Claude's judgment first, your budget as the only hard stop
+
+The first draft had fixed counts (3 a day, 8 in a row, delays that double). The user asked for a proactive agent instead, so those are gone. What keeps an unreachable contact from burning credit:
+
+| What | How | Who decides |
 |---|---|---|
-| Shortest delay | **5 min** | planner debounce idea |
-| Longest delay | **14 days** | — |
-| Claude wakes per ticket per day | **3** | `AUTO_CONTINUE_PER_DAY = 3` (`src/server/limit.ts`) |
-| Wakes in a row with no user reply (`chain`) | **8**, then follow-ups stop and the card shows **Needs you** | `wakeupCap` / `stuck` |
-| Backoff while nobody replies | each new delay ≥ **2×** the previous one (10 → 20 → 40 min …); resets when someone replies | — |
-| Cost per follow-up wake | the ticket's/board's run cap (`runCapFor`); if none is set, **$1** | `capReached` |
-| Heartbeat check frequency | every **5 min** at the most often | §1 |
-| Card Done/Backlog/deleted | follow-up cancelled | — |
+| When to come back, and whether to come back at all | Claude, from the facts in the wake prompt (earlier follow-ups, replies, `userSeenAt`, cost so far) | Claude |
+| Cost of one wake | the run cap you may already have (`runCapFor`, `src/server/types.ts`); no new default | You (existing setting) |
+| Total follow-up spend on a ticket | optional `followUpBudgetUsd`; unset means no limit | You (optional) |
+| Done / Backlog / deleted card | any pending follow-up is cancelled | Board (that's just what those columns mean) |
+| A follow-up less than 1 minute away | refused as a probable mistake (the board ticks every 30 s anyway) | Board (technical floor only) |
 
-With these defaults, the worst case for an unreachable person is 3 wakes on day 1, then at most 3 more a day for two more days (chain 8, about 3 days in total), with $1 at most per wake. That's **≤ $8 in total**, and in practice much less, because a nudge run is a few cents. These are estimates; real per-run costs are in the ticket usage view (`src/server/ticket-usage.ts`).
+**Why this is enough in practice:** a nudge run costs a few cents (estimate; real numbers per run are in `src/server/ticket-usage.ts`). Claude sees the running total on every wake, so a runaway loop would have to ignore numbers in front of it. And because every follow-up and its cost show on the card, any odd pattern is easy to spot.
+
+**Something to watch after release:** if logs show Claude following up too eagerly, fix the wake prompt first. A board-wide budget setting can be added later if prompts alone don't hold.
 
 ### Failure cases
 - **Daemon restart:** the follow-up is saved on the ticket, so it survives (open question answered: **yes, persist**).
 - **Daemon down / laptop asleep past `dueAt`:** fire once when it comes back if it is ≤ **12 h** late. The wake text says "this follow-up is 7 h late". If it is more than 12 h late, don't wake Claude: post a comment and show **Needs you · Missed follow-up**, because the situation may have moved on.
 - **Restart pending** (`restartPending` in `Board.chat`): the message is queued like any other, and `recover()` delivers it.
-- **Usage limit hit during the wake:** the existing limit path takes over. The wake still counts.
+- **Usage limit hit during the wake:** the existing limit path takes over.
 - **Ticket running when due:** wait for it to end (step 1 above). If the run itself calls `follow_up`, the new one replaces the old one.
 
 ### Without git or technical knowledge
@@ -217,7 +232,7 @@ Nothing here touches git. Plain words on the card: "Claude will check back at 14
 ### Is a heartbeat just a script schedule bound to a ticket, or a one-shot follow-up repeated?
 **It is a follow-up with `every` and a `check`.** That's the smallest model:
 - Schedules *create* tickets; heartbeats *wake an existing* ticket. Making a schedule point at a ticket would mix two lifecycles (a schedule outlives its tickets, a heartbeat lives and dies with its ticket).
-- A follow-up already has everything a heartbeat needs: it belongs to the ticket, is saved on it, has guardrails, a badge and cancel-on-reply. Adding `every` + `check` makes it repeat cheaply.
+- A follow-up already has everything a heartbeat needs: it belongs to the ticket, is saved on it, has a log Claude reads, a badge and cancel-on-reply. Adding `every` + `check` makes it repeat cheaply.
 - Both share the same `runCheck` (`src/server/script.ts`) and the same `CKANBAN_WAKE` contract.
 
 So the full set is: **check** (runner + contract) × **where it lives** (schedule creates tickets / follow-up wakes one).
@@ -240,7 +255,7 @@ Same `FollowUp` record with `every` (minutes) and `check`. In `FollowUpWatcher`,
 2. A wake line: wake Claude exactly as in §2 with the check's `message` included. The heartbeat **stays** (with `dueAt += every`) unless Claude calls `cancel_follow_up`, or `until` has passed.
 3. Past `until`: clear it, with a comment "Stopped watching: time limit reached".
 
-Guardrails: §2's table applies to the Claude wakes. Checks: at most every 5 min, and after **3 failed checks in a row** the heartbeat stops and the card shows **Needs you · Check keeps failing**. A heartbeat with no `until` gets one of **7 days**, so nothing watches forever by accident.
+Claude picks `every` and `until` itself, and can change or cancel them on any wake. Checks don't wake Claude, so they cost nothing however often they run. The board keeps two technical rules: checks never overlap (a check still running when the next one is due is skipped), and after **3 failed checks in a row** the heartbeat pauses and Claude is woken once to fix or drop it. Neither is a spending rule.
 
 ### Failure cases
 Same as §2. A heartbeat that was asleep runs its check once on wake-up, with no flood of missed runs.
@@ -252,7 +267,7 @@ Same as §2. A heartbeat that was asleep runs its check once on wake-up, with no
 Needed for the inbox case. Without it, every hourly check with new messages from the same person would create a new ticket.
 
 - A `CKANBAN_WAKE` with a `key` from a **schedule check**: the board looks for a ticket with `scheduleId === schedule.id && scheduleKey === key && status !== "done"`.
-  - **Found:** `Board.chat` sends the message into it (the conversation continues). That counts as a reply for `cancelOnReply` and resets the follow-up `chain`. History records it as `routed`.
+  - **Found:** `Board.chat` sends the message into it (the conversation continues). That counts as a reply for `cancelOnReply` and is logged as `replied`. History records it as `routed`.
   - **Not found:** a new ticket is created with `scheduleKey: key`.
 - Routing is **not** limited by `skipIfRunning`: a running ticket gets the message queued (the existing `queued` path).
 
@@ -279,7 +294,7 @@ Needed for the inbox case. Without it, every hourly check with new messages from
 2. **New conversation:** a ticket "Reply to Aisha" is created with the messages. Claude drafts a reply. For the first weeks it ends `questions` with the draft so the user approves it. Once trusted, it sends via Claude-in-Chrome (WhatsApp Web), which is realistic because that run is Claude anyway.
 3. Claude then calls `follow_up({ after: "24h", cancelOnReply: true, message: "If Aisha hasn't answered, send one short nudge, then stop following up." })`. The card shows **⏰ in 24 h**.
 4. **Aisha answers at 15:20:** the 16:00 check routes her messages into the *same* ticket (key match, §4). That counts as a reply, so the follow-up is cancelled and Claude continues the conversation in context.
-5. **Aisha never answers:** day 2 has one nudge wake. Claude follows its own note and doesn't set another follow-up. If it kept trying, backoff and the chain cap of 8 would stop it and show **Needs you**.
+5. **Aisha never answers:** on day 2 Claude wakes, sees one unanswered message and nudges once, setting a follow-up for 3 days later "in case she replies late". On day 5 it sees two unanswered messages, decides a third nudge would be pushy, doesn't set another follow-up, and notes "Stopped: 2 nudges, no reply" on the card. That was its call, not a fixed rule.
 6. **Done:** the user (or Claude after the conversation ends) moves the card to Done. The next message from Aisha opens a fresh ticket.
 
 **Cost:** 24 free checks a day, plus one Claude run per conversation turn. Today's equivalent would be 24 Claude runs a day.
@@ -314,13 +329,13 @@ Folders rather than ticket attachments: they survive tickets being deleted, need
 
 1. **Where do checks run, and with what timeout?** In the **board folder** (`profile.path`), not a worktree. Checks read the user's things (inbox DB, queue folder), and worktrees are per ticket. Persistent state goes in `CKANBAN_STATE_DIR` under `~/.claude-kanban`, so nothing clutters the user's folder. Timeout **60 s** default, **600 s** max. Output is kept up to 4 KB.
 2. **Should follow-ups survive a daemon restart?** **Yes.** They are saved on the ticket JSON like `limit`, and late ones are handled as in §2's failure cases (≤ 12 h late fires once; later than that needs the user).
-3. **Show per-ticket wake spend next to the badge?** **Not on the badge itself** (keep it "⏰ in 8 min"), but **yes in its menu**: "3 wakes · $0.42 so far · 1 of 3 left today". The numbers come from `src/server/ticket-usage.ts` filtered to follow-up runs. That is where the user decides whether to cancel, so the cost belongs there.
+3. **Show per-ticket wake spend next to the badge?** **Not on the badge itself** (keep it "⏰ in 8 min"), but **yes in its menu**: "3 follow-ups · $0.42 so far". The numbers come from `src/server/ticket-usage.ts` filtered to follow-up runs. That is where the user decides whether to cancel, so the cost belongs there.
 
 ## 7. Options judged
 
 | Option | Value | Cost to build | Run cost | Risk |
 |---|---|---|---|---|
-| **Follow-ups (one-shot)** | High: every waiting ticket can come back by itself | Low (copy `LimitWatcher`) | Bounded by guardrails | Low |
+| **Follow-ups (one-shot)** | High: every waiting ticket can come back by itself | Low (copy `LimitWatcher`) | Claude's judgment, shown on the card; optional budget | Low |
 | **Checks on schedules** | High for inbox/queue/uptime; none for today's 2 schedules | Medium (runner, contract, history) | Lowers it | Medium: arbitrary shell commands, so only the user or their Claude can set them, and they run as the user (same trust as the board's setup command) |
 | **Heartbeats** | Medium (CI, reply watch) | Low once the two above exist | Low (free checks) | Low |
 | **Wake keys** | Needed for the inbox; useful for outages | Low | — | Low |
@@ -328,7 +343,7 @@ Folders rather than ticket attachments: they survive tickets being deleted, need
 
 ## 8. Build order (follow-up tickets)
 
-1. **Follow-up timers with guardrails and card badge.** Add `Ticket.followUp`/`followUpStats`/`followUpStopped`, `FollowUpWatcher` (`src/server/followup.ts`, modeled on `LimitWatcher`), `Board.dueFollowUps`, the `followUp` chat flag, `follow_up`/`cancel_follow_up` MCP tools and HTTP route. Include cancel-on-reply, all §2 guardrails with tests, the card badge (**⏰ in 8 min**, Wake now / Cancel, "Follow-ups stopped" in Needs you), and a run-prompt line telling runs to use `follow_up` (not Claude Code's own timers).
+1. **Follow-ups that Claude manages itself, with card badge.** Add `Ticket.followUp`/`followUpLog`/`userSeenAt`/`followUpBudgetUsd`, `FollowUpWatcher` (`src/server/followup.ts`, modeled on `LimitWatcher`), `Board.dueFollowUps`, the `followUp` chat flag, `follow_up`/`cancel_follow_up` MCP tools and HTTP route. Include cancel-on-reply, the wake prompt with the facts Claude needs (earlier follow-ups, replies, last seen, cost so far) and the judgment rules in `prompts.ts`, the optional budget with tests, the card badge (**⏰ in 8 min**, Wake now / Cancel / history), and a run-prompt line telling runs to use `follow_up` (not Claude Code's own timers).
 2. **Checks on schedules (script schedules).** Add `src/server/script.ts` (`runCheck`, `CKANBAN_WAKE` parsing), `Schedule.check`, the `checked` history entry, `CKANBAN_STATE_DIR`, the §1 guardrails (5 wakes/fire, 20 tickets/day, pause after 3 failures, `*/5` minimum), and `check` on the schedule MCP tools and the history view in `SchedulesDialog.tsx`.
 3. **Heartbeats: checks and repeats on follow-ups.** Add `every`/`check`/`until` to `FollowUp`, the check-then-wake loop in `FollowUpWatcher`, the "last checked" tooltip, the 7-day default end and the failure stop.
 4. **Wake keys: route check wakes to the open ticket.** Add `Ticket.scheduleKey`, routing in `Scheduler.fire`, routed messages counting as replies for follow-ups, and `routed` in history. Then write the WhatsApp check (desktop DB, read-only) as an example after verifying the DB path and schema on the user's Mac.
