@@ -2252,8 +2252,8 @@ button.hd-mode:disabled { cursor: default; }
   .hd-learnings-list { padding-bottom: env(safe-area-inset-bottom); }
 }
 
-/* Phone (≤720px): output file cards show their whole name above the buttons; one-line composers with Send beside the text
-   (the hint line hides, warnings still show below); the huddle's status, spend and Chat / People / Findings share one row. */
+/* Phone (≤720px): output file cards show their whole name above the buttons; composers give the text the full width with
+   Image / Stop / Send on a row below (the hint line hides, warnings still show); the huddle's status, spend and Chat / People / Findings share one row. */
 .chat-file-dir { display: none; }
 @media (max-width: 720px) {
   .chat-file { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 9px 10px; }
@@ -2265,15 +2265,9 @@ button.hd-mode:disabled { cursor: default; }
   .chat-file-actions .btn.view { background: var(--accent); border-color: var(--accent); color: #fff; }
   .chat-file + .chat-file { margin-top: 8px; }
 
-  .composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px 8px; padding: 6px 6px 6px 12px; }
-  .composer > * { grid-column: 1 / -1; }
-  .composer > textarea { grid-column: 1; grid-row: 1; align-self: center; min-height: 0; padding: 7px 0; }
-  .composer-foot { display: contents; }
-  .composer-hint { grid-column: 1 / -1; }
+  .composer { gap: 4px; padding: 10px 8px 8px 12px; }
+  .composer > textarea { min-height: 0; padding: 2px 0; }
   .composer-hint.muted { display: none; }
-  .composer-actions { grid-column: 2; grid-row: 1; flex: none; }
-  .composer-actions .image-pick { margin-right: 0; padding-left: 10px; padding-right: 10px; }
-  .composer .image-pick-label { display: none; }
 
   .huddle-bar { gap: 6px; padding: 6px 6px 6px 12px; }
   .huddle-bar .hd-state-dot { font-size: 12px; }
