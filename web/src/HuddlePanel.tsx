@@ -27,6 +27,7 @@ import { usePersistentState } from "./usePersistentState";
 import type { HuddleSeed, TeamRequest } from "./Team";
 import { TeammateProposalView } from "./TeammateCard";
 import { savedText } from "./teammateText";
+import { enterSends } from "./enterSends";
 
 const clock = (iso: string) => {
   const d = new Date(iso);
@@ -664,7 +665,7 @@ function Learning({ slug, huddle: h, l, presets, onError }: { slug: string; hudd
             onChange={(e) => setEdit(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") { e.stopPropagation(); setEdit(null); }
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              if (enterSends(e)) {
                 e.preventDefault();
                 const text = edit.trim();
                 if (text && text !== l.text) act(api.editLearning(slug, h.id, l.id, { text })).then((ok) => ok && setEdit(null));
@@ -893,7 +894,7 @@ function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOp
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (enterSends(e)) {
       e.preventDefault();
       send();
     }

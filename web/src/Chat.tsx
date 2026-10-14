@@ -36,6 +36,7 @@ import { toast } from "./toast";
 import { Markdown } from "./Transcript";
 import { usePersistentState } from "./usePersistentState";
 import { usePhone } from "./usePhone";
+import { enterSends } from "./enterSends";
 
 /** m:ss (h:mm:ss past an hour) since `iso`. */
 function clock(iso: string, now: number): string {
@@ -697,7 +698,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                     if (e.key === "Escape") {
                       e.preventDefault();
                       cancelEdit();
-                    } else if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                    } else if (enterSends(e)) {
                       e.preventDefault();
                       saveEdit();
                     }
@@ -774,7 +775,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               setEditing({ id: last.id, text: last.text });
               return;
             }
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            if (enterSends(e)) {
               e.preventDefault();
               send(draft);
             }

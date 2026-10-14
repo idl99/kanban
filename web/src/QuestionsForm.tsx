@@ -4,6 +4,7 @@ import { autoGrow } from "./autoGrow";
 import { browserStore, forget } from "./drafts";
 import { CheckIcon } from "./icons";
 import { usePersistentState } from "./usePersistentState";
+import { enterSends } from "./enterSends";
 
 interface Answer {
   picked: string[];
@@ -48,7 +49,7 @@ function AnswerBox({ value, onChange, onEnter, autoFocus, disabled, placeholder 
     <textarea ref={ref} rows={1} autoFocus={autoFocus} disabled={disabled} className="qother" value={value} placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={(e) => {
-        if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+        if (enterSends(e)) {
           e.preventDefault();
           onEnter();
         }
