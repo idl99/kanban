@@ -22,7 +22,13 @@ export interface RemoteStatus {
   lastVisit: string | null;
   /** `off` disabled access but couldn't remove the serve mapping. */
   warning?: string;
+  /** Live Tailscale state on this Mac, checked only while enabled (see liveStatus): the phone can reach the board only when running. */
+  tailscale?: TailscaleState;
+  /** Tailscale's own BackendState (e.g. Stopped, NeedsLogin), when it answered. */
+  backendState?: string;
 }
+
+export type TailscaleState = "running" | "stopped" | "unavailable";
 
 /** Header on every answer of the daemon's phone access listener, so `on` never points serve at some other program. */
 export const LISTENER_HEADER = "x-ckanban-listener";
@@ -58,6 +64,8 @@ export function tailscaleBin(): string | null {
 /** `tailscale serve` prints this and then waits for the user when Serve or HTTPS isn't enabled on the tailnet yet. */
 const ENABLE_LINK = /To enable, visit:\s*(https:\/\/\S+)/;
 const RUN_TIMEOUT_MS = 30_000;
+/** Status checks give up sooner: they only decide what the Phone access dialog shows. */
+const CHECK_TIMEOUT_MS = 3_000;
 
 export const defaultRunner: TailscaleRunner = async (args) => {
   const bin = tailscaleBin();
@@ -182,6 +190,24 @@ export class RemoteAccess {
     };
   }
 
+  /** status() plus the live Tailscale state when enabled, so a saved "on" doesn't hide a stopped Tailscale. Never throws. */
+  async liveStatus(): Promise<RemoteStatus> {
+    const st = this.status();
+    if (!st.enabled) return st;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const timeout = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error("timeout")), CHECK_TIMEOUT_MS)));
+      const r = await Promise.race([this.run(["status", "--json"]), timeout]);
+      const backendState = r.code === 0 ? JSON.parse(r.stdout)?.BackendState : undefined;
+      if (typeof backendState !== "string") return { ...st, tailscale: "unavailable" };
+      return { ...st, tailscale: backendState === "Running" ? "running" : "stopped", backendState };
+    } catch {
+      return { ...st, tailscale: "unavailable" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   private write(config: RemoteConfig) {
     const tmp = `${this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n");
@@ -229,7 +255,8 @@ export class RemoteAccess {
     }
     await this.tailscale(["serve", "--bg", "--https=443", `http://127.0.0.1:${port}`]);
     this.write({ enabled: true, host, allowedLogin: login, updatedAt: new Date().toISOString() });
-    return this.status();
+    // identity() just saw Tailscale running.
+    return { ...this.status(), tailscale: "running", backendState: "Running" };
   }
 
   /** Remove the serve mapping and refuse the tailnet host again. Settings are kept (disabled) for the next `on`. */

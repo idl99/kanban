@@ -232,13 +232,18 @@ async function remoteCommand(action: string | undefined) {
     }
     console.log(`Phone access is on: ${st.url}`);
     console.log(`Only ${st.allowedLogin} can open it, from devices on your tailnet (never public).`);
+    if (st.tailscale === "stopped" || st.tailscale === "unavailable") {
+      const what = st.tailscale === "stopped" ? `Tailscale is off on this Mac (state: ${st.backendState})` : "Can't check Tailscale on this Mac";
+      console.log("");
+      console.log(`${what}: phone can't connect. Open the Tailscale app; turn on "Launch Tailscale at login" in its Settings.`);
+    }
     console.log("");
     console.log(qrTerminal(st.url!));
   };
   try {
     if (action === "on") show(await access.on());
     else if (action === "off") show(await access.off());
-    else if (action === "status" || action === undefined) show(access.status());
+    else if (action === "status" || action === undefined) show(await access.liveStatus());
     else {
       console.error("usage: ckanban remote on|off|status");
       process.exit(1);

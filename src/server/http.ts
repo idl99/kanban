@@ -420,7 +420,7 @@ export function createServer(deps: ServerDeps) {
     // Phone access (remote.ts): anyone allowed in may see it; only this Mac may turn it on or off.
     if (parts[0] === "remote" && parts.length === 1) {
       if (m === "GET") {
-        const st = remote.status();
+        const st = await remote.liveStatus();
         return json({ ...st, qrSvg: st.url ? qrSvg(st.url) : null, local: listenerOf(req) === "local" });
       }
       if (m === "POST") {

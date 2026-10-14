@@ -22,13 +22,14 @@ const STATUS = JSON.stringify({
 /** Fake `tailscale`: records calls, answers status from `status`, fails commands listed in `fail`. */
 function fakeTailscale(status = STATUS, fail: string[] = []) {
   const calls: string[][] = [];
-  const run: TailscaleRunner = async (args) => {
+  const fake = { calls, run: null as unknown as TailscaleRunner, status };
+  fake.run = async (args) => {
     calls.push(args);
     if (fail.includes(args[0])) return { code: 1, stdout: "", stderr: `${args[0]} broke` };
-    if (args[0] === "status") return { code: 0, stdout: status, stderr: "" };
+    if (args[0] === "status") return { code: 0, stdout: fake.status, stderr: "" };
     return { code: 0, stdout: "", stderr: "" };
   };
-  return { calls, run };
+  return fake;
 }
 
 const yes = async () => true;
@@ -144,6 +145,22 @@ test("off: disables first, then removes the serve mapping; warns if tailscale fa
   expect(access.active()).toBeNull();
 });
 
+test("liveStatus: asks Tailscale only while on; running, stopped or unavailable, never throws", async () => {
+  const root = tempDir("ck-remote-");
+  const off = fakeTailscale();
+  expect((await new RemoteAccess(root, () => 7788, off.run, yes).liveStatus()).tailscale).toBeUndefined();
+  expect(off.calls).toEqual([]);
+
+  writeFileSync(join(root, "remote.json"), JSON.stringify(REMOTE));
+  const live = (run: TailscaleRunner) => new RemoteAccess(root, () => 7788, run, yes).liveStatus();
+  expect(await live(fakeTailscale().run)).toMatchObject({ enabled: true, tailscale: "running", backendState: "Running" });
+  const stopped = JSON.stringify({ BackendState: "Stopped" });
+  expect(await live(fakeTailscale(stopped).run)).toMatchObject({ enabled: true, tailscale: "stopped", backendState: "Stopped" });
+  expect((await live(fakeTailscale(STATUS, ["status"]).run)).tailscale).toBe("unavailable");
+  expect((await live(fakeTailscale("{broken").run)).tailscale).toBe("unavailable");
+  expect((await live(async () => { throw new RemoteError(424, "tailscale CLI not found"); })).tailscale).toBe("unavailable");
+});
+
 test("config is re-read when remote.json changes (CLI writes, daemon reads)", async () => {
   const root = tempDir("ck-remote-");
   const access = new RemoteAccess(root, () => 1, fakeTailscale().run, yes);
@@ -220,6 +237,12 @@ describe("/api/remote and the phone access listener", () => {
     r = await post(base, { enabled: false }, { [RUN_HEADER]: "x/t_1" });
     expect(r.status).toBe(403);
     expect(((await (await fetch(`${base}/api/remote`)).json()) as any).lastVisit).toBeTruthy();
+
+    // A stopped Tailscale shows on GET even though phone access stays on.
+    ts.status = JSON.stringify({ BackendState: "Stopped" });
+    expect(await (await fetch(`${base}/api/remote`)).json()).toMatchObject({ enabled: true, tailscale: "stopped", backendState: "Stopped" });
+    ts.status = STATUS;
+    expect(((await (await fetch(`${base}/api/remote`)).json()) as any).tailscale).toBe("running");
 
     r = await post(base, { enabled: false });
     expect(((await r.json()) as any).enabled).toBe(false);

@@ -830,6 +830,9 @@ export interface RemoteState {
   allowedLogin: string | null;
   lastVisit: string | null;
   warning?: string;
+  /** Live Tailscale state on the Mac while phone access is on; missing means not checked. */
+  tailscale?: "running" | "stopped" | "unavailable";
+  backendState?: string;
   qrSvg: string | null;
   local: boolean;
 }

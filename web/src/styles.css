@@ -2034,6 +2034,9 @@ button.hd-mode:disabled { cursor: default; }
 .phone-access p { margin: 0; }
 .pa-state { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 9px; background: var(--surface-2); color: var(--muted); font-weight: 600; font-size: 13px; }
 .pa-state.on { background: var(--ok-soft); color: var(--ok); }
+.pa-state.down { background: var(--err-soft); color: var(--err); }
+.pa-fix { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; font-size: 13px; }
+.pa-fix ol { margin: 6px 0 0; padding-left: 18px; line-height: 1.6; }
 .pa-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 .pa-grid { display: flex; gap: 16px; align-items: center; }
 .pa-qr { width: 148px; height: 148px; flex: none; background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 4px; }

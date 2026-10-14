@@ -10,11 +10,20 @@ export function PhoneAccessDialog({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<RemoteState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
   useNow();
 
+  const load = () => api.remote().then(setState).catch((e) => setError(e.message));
   useEffect(() => {
-    api.remote().then(setState).catch((e) => setError(e.message));
+    load();
   }, []);
+
+  const recheck = async () => {
+    setChecking(true);
+    setError(null);
+    await load();
+    setChecking(false);
+  };
 
   const toggle = async (enabled: boolean) => {
     setBusy(true);
@@ -31,17 +40,32 @@ export function PhoneAccessDialog({ onClose }: { onClose: () => void }) {
   };
 
   const on = !!state?.enabled && !!state.url;
+  // Phone access is on, but Tailscale on this Mac isn't running (or can't be asked), so the phone can't connect.
+  const down = on && (state!.tailscale === "stopped" || state!.tailscale === "unavailable");
   return (
     <Modal title="Phone access" onClose={onClose} focusDialog>
       <div className="phone-access">
         <p className="muted small">Open the board from your phone over Tailscale. Same as <code>ckanban remote on</code>.</p>
         {!state && !error && <div className="muted small"><span className="spinner" /> Checking…</div>}
         {state && (
-          <div className={`pa-state ${on ? "on" : ""}`} role="status">
-            <span className="pa-dot" aria-hidden />{on ? "On · tailscale serve active" : "Off"}
+          <div className={`pa-state ${down ? "down" : on ? "on" : ""}`} role="status">
+            <span className="pa-dot" aria-hidden />
+            {down
+              ? state!.tailscale === "stopped" ? "Tailscale is off on this Mac · phone can't connect" : "Can't check Tailscale on this Mac"
+              : on ? "On · Tailscale connected" : "Off"}
           </div>
         )}
-        {on && (
+        {down && (
+          <div className="pa-fix">
+            <b>To fix it</b>
+            <ol>
+              <li>Open the <b>Tailscale</b> app on this Mac.</li>
+              <li>Then press <b>Check again</b>.</li>
+              <li>So it doesn't happen after a restart: Tailscale menu → Settings → <b>Launch Tailscale at login</b>.</li>
+            </ol>
+          </div>
+        )}
+        {on && !down && (
           <div className="pa-grid">
             {/* Generated on this Mac (qrcode-generator), no network. */}
             <div className="pa-qr" aria-label={`QR code for ${state!.url}`} role="img" dangerouslySetInnerHTML={{ __html: state!.qrSvg ?? "" }} />
@@ -66,7 +90,13 @@ export function PhoneAccessDialog({ onClose }: { onClose: () => void }) {
           ) : on ? (
             <>
               <button className="btn" disabled={busy} onClick={() => toggle(false)}>{busy ? "Turning off…" : "Turn off"}</button>
-              <button className="btn primary" onClick={() => copy(state!.url!).then(() => toast("Link copied", { tone: "ok" }))}>Copy link</button>
+              {down ? (
+                <button className="btn primary" disabled={checking} onClick={recheck}>
+                  {checking ? <><span className="spinner" /> Checking…</> : "Check again"}
+                </button>
+              ) : (
+                <button className="btn primary" onClick={() => copy(state!.url!).then(() => toast("Link copied", { tone: "ok" }))}>Copy link</button>
+              )}
             </>
           ) : (
             <button className="btn primary" disabled={busy || !state} onClick={() => toggle(true)}>{busy ? "Turning on…" : "Turn on"}</button>
