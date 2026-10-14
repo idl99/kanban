@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { newestArtifact, safeHref, waitsForSlot, type SessionMessage, type Ticket } from "./api";
+import { newestArtifact, safeHref, waitsForSlot, type Job, type SessionMessage, type Ticket } from "./api";
 import { type CardHuddleBadge, digestPreview } from "./huddleText";
 import { ClockIcon, ExternalIcon } from "./icons";
+import { JobChip } from "./Jobs";
+import { jobChip } from "./jobText";
 import { KeyHint } from "./KeyHint";
 import { CapActions } from "./CapActions";
 import { capWait } from "./capText";
@@ -95,12 +97,15 @@ function HuddleBadge({ badge, onOpen }: { badge: CardHuddleBadge; onOpen?: (tick
  * limit: the board's slug and error toast, for the usage-limit buttons ("Continue now", auto-continue) and a stalled
  * run's Stop / Keep waiting / Restart.
  */
-export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHuddle, limit, onTag }: {
+export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHuddle, limit, onTag, jobs, onOpenJobs }: {
   ticket: Ticket; onClick?: () => void; dragging?: boolean; queued?: number; held?: boolean;
   huddle?: CardHuddleBadge | null; onOpenHuddle?: (ticketId: string) => void;
   limit?: { slug: string; onError: (msg: string) => void };
   /** A tag chip was clicked: filter the board by it. */
   onTag?: (tag: string) => void;
+  /** The board's one-time jobs: "⏰ N scheduled" when this ticket scheduled some; onOpenJobs opens them. */
+  jobs?: Job[];
+  onOpenJobs?: (ticketId: string) => void;
 }) {
   const working = (ticket.status === "in_progress" && !waitsForSlot(ticket) && !autoHuddleIdle(ticket)) || !!ticket.running;
   const att = ticket.attention ?? null;
@@ -119,6 +124,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
   const lastAt = ticket.session ? ticket.session.lastMessage?.at || ticket.session.updatedAt : null;
   const artifact = newestArtifact(ticket);
   const artifactHref = safeHref(artifact?.url);
+  const hasJobs = !!jobs && !!jobChip(jobs, ticket.id);
   return (
     <article
       className={`card ${dragging ? "dragging" : ""} ${queued && !working ? "is-queued" : ""} ${working ? "is-running" : ""} ${att ? `needs-you att-${att.kind}` : ""}`}
@@ -140,7 +146,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           {plainPreview(last.from === "huddle" ? digestPreview(last.text) : last.text)}
         </div>
       )}
-      {(badge || ticket.autoHuddle || ticket.costUsd || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || ticket.tags?.length || huddle || artifactHref) && (
+      {(badge || ticket.autoHuddle || ticket.costUsd || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || ticket.tags?.length || huddle || artifactHref || hasJobs) && (
         <div className="card-meta">
           {ticket.plan && ticket.plan.state !== "done" && (
             <span className={`badge plan ${ticket.plan.state}`} title="This ticket runs a plan of child tickets">
@@ -156,6 +162,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           {badge}
           {ticket.autoHuddle && working && autoHuddleChip(ticket.autoHuddle)}
           {huddle && <HuddleBadge badge={huddle} onOpen={onOpenHuddle} />}
+          {hasJobs && <JobChip jobs={jobs!} ticketId={ticket.id} onOpen={dragging ? undefined : onOpenJobs} />}
           {ticket.prUrl && (
             <a className="badge pr" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
               PR #{ticket.prUrl.split("/").pop()}

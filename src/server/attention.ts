@@ -64,7 +64,7 @@ export function attentionFor(
   // Checked before Done: the ticket that scheduled it is usually finished by then.
   const missed = t.missedJobs ?? [];
   if (missed.length && !running) {
-    return { kind: "job", label: missed.length === 1 ? `Missed job: ${missed[0].name}` : `${missed.length} missed jobs`, since: missed[0].missedAt };
+    return { kind: "job", label: missed.length === 1 ? `Scheduled job missed: ${missed[0].name}` : `${missed.length} scheduled jobs missed`, since: missed[0].missedAt };
   }
   // Done means accepted as-is; Backlog means parked. Neither waits on the user, whatever the session holds.
   if (t.status === "done") return null;

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  api, type CronPreview, type ScheduleTrigger, type Outcome, type Profile, type Schedule, type ScheduleHistoryItem, type ScheduleInput, type Status,
+  api, type CronPreview, type Job, type ScheduleTrigger, type Outcome, type Profile, type Schedule, type ScheduleHistoryItem, type ScheduleInput, type Status,
   type Ticket, type TicketMode,
 } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { UpcomingJobs } from "./Jobs";
 import { DescriptionEditor } from "./DescriptionEditor";
 import { Modal } from "./Modal";
 import { ModeToggle } from "./ModeToggle";
@@ -47,10 +48,16 @@ function ticketBadge(t: { status: Status; outcome: Outcome; running?: boolean })
   return <span className="badge stopped">{t.status}</span>;
 }
 
-/** Recurring ticket templates for this board: each cron tick creates a ticket that runs right away. */
-export function SchedulesDialog({ profile, schedules, tickets, onOpenTicket, onClose }: {
+/**
+ * Upcoming one-time jobs (jobFilter: only those one ticket scheduled), then the board's recurring ticket templates:
+ * each cron tick creates a ticket that runs right away.
+ */
+export function SchedulesDialog({ profile, schedules, jobs, jobFilter, onJobFilter, tickets, onOpenTicket, onClose }: {
   profile: Profile;
   schedules: Schedule[] | null;
+  jobs: Job[] | null;
+  jobFilter: string | null;
+  onJobFilter: (ticketId: string | null) => void;
   tickets: Ticket[];
   onOpenTicket: (id: string) => void;
   onClose: () => void;
@@ -127,6 +134,13 @@ export function SchedulesDialog({ profile, schedules, tickets, onOpenTicket, onC
   return (
     <Modal title={`Schedules · ${profile.name}`} onClose={onClose} wide>
       <div className="form mcp">
+        <section className="sched-group">
+          <h3 className="sched-heading">Upcoming</h3>
+          <span className="muted small">One-time: at the set time the board starts a ticket or runs a command, once.</span>
+          <UpcomingJobs slug={profile.slug} jobs={jobs} tickets={tickets} filter={jobFilter} onFilter={onJobFilter} onOpenTicket={onOpenTicket} />
+        </section>
+        {!jobFilter && <h3 className="sched-heading">Recurring</h3>}
+        {!jobFilter && <>
         <div className="mcp-toolbar">
           <span className="muted small">
             Recurring tickets. At each time a schedule fires, a new ticket is created on this board and Claude starts it right away.
@@ -145,6 +159,7 @@ export function SchedulesDialog({ profile, schedules, tickets, onOpenTicket, onC
           <div className="muted">No schedules yet. Examples: a nightly dependency audit, a weekly changelog draft, a daily "fix failing CI".</div>
         )}
         {schedules && schedules.length > 0 && <div className="mcp-section">{schedules.map(row)}</div>}
+        </>}
       </div>
       {confirm && (
         <ConfirmDialog

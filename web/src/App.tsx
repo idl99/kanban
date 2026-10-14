@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, copy, COLUMNS, onReconnect, subscribe, waitsForSlot, type Health, type InboxItem, type McpState, type Profile, type Schedule, type Status, type Ticket } from "./api";
+import { api, copy, COLUMNS, onReconnect, subscribe, waitsForSlot, type Health, type InboxItem, type Job, type McpState, type Profile, type Schedule, type Status, type Ticket } from "./api";
 import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
@@ -190,6 +190,13 @@ export function App() {
   const [connections, setConnections] = useState(false);
   const [schedules, setSchedules] = useState<Schedule[] | null>(null);
   const [schedulesOpen, setSchedulesOpen] = useState(false);
+  // One-time scheduled jobs (Schedules → Upcoming, the chip on the ticket that scheduled them); jobFilter: one ticket's only.
+  const [jobs, setJobs] = useState<Job[] | null>(null);
+  const [jobFilter, setJobFilter] = useState<string | null>(null);
+  const openSchedules = useCallback((ticketId: string | null = null) => {
+    setJobFilter(ticketId);
+    setSchedulesOpen(true);
+  }, []);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
   const schedulesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const phone = usePhone();
@@ -213,6 +220,9 @@ export function App() {
   const loadSchedules = useCallback((board: string) => api.schedules(board).then((list) => {
     // Ignore a late answer for a board we already left.
     if (slugRef.current === board) setSchedules(list);
+  }).catch(() => {}), []);
+  const loadJobs = useCallback((board: string) => api.jobs(board).then((list) => {
+    if (slugRef.current === board) setJobs(list);
   }).catch(() => {}), []);
   // Fires and ticket changes move "next run", "running" and errors: refetch for the computed fields.
   const refreshSchedulesSoon = useCallback((board: string) => {
@@ -315,8 +325,9 @@ export function App() {
     if (slug) {
       api.tickets(slug).then(setTickets).catch(() => {});
       loadSchedules(slug);
+      loadJobs(slug);
     }
-  }), [slug, loadProfiles, loadInbox, loadSchedules]);
+  }), [slug, loadProfiles, loadInbox, loadSchedules, loadJobs]);
 
   const needYou = inbox.length;
   // A snooze ends by itself: reload when the first one runs out (the server only counts it again then).
@@ -451,9 +462,11 @@ export function App() {
     } catch {}
     setTickets([]);
     setSchedules(null);
+    setJobs(null);
     api.tickets(slug).then(setTickets).catch((e) => setError(e.message));
     loadSchedules(slug);
-  }, [slug, loadSchedules]);
+    loadJobs(slug);
+  }, [slug, loadSchedules, loadJobs]);
 
   useEffect(
     () =>
@@ -473,6 +486,10 @@ export function App() {
         }
         if (e.type === "ticket.updated" || e.type === "ticket.deleted" || e.type === "session.updated" || e.type === "huddle.updated") refreshInboxSoon();
         if (e.type === "schedule.updated" && e.profile === slug) refreshSchedulesSoon(slug);
+        if (e.type === "job.updated" && e.profile === slug) {
+          const job = e.job;
+          setJobs((js) => (js ? [...js.filter((j) => j.id !== e.id), ...(job ? [job] : [])] : js));
+        }
         if (e.type === "ticket.updated" && e.profile === slug && e.ticket.scheduleId) refreshSchedulesSoon(slug);
         if (e.type === "ticket.updated" && e.profile === slug) {
           setTickets((ts) => {
@@ -576,7 +593,10 @@ export function App() {
   live.current = { profiles, tickets, markDone };
 
   const mcpAttention = mcp?.servers.filter((s) => s.attention).length ?? 0;
-  const scheduleErrors = schedules?.filter((s) => s.lastError).length ?? 0;
+  // Missed jobs no ticket can show (the user scheduled them): Schedules asks to run or skip them.
+  const missedJobs = jobs?.filter((j) => j.state === "missed" && (!j.sourceTicketId || !tickets.some((t) => t.id === j.sourceTicketId))).length ?? 0;
+  const scheduleFails = schedules?.filter((s) => s.lastError).length ?? 0;
+  const scheduleErrors = scheduleFails + missedJobs;
   const missing = health ? (["claude", "git", "gh"] as const).filter((k) => !health[k]) : [];
   // Every active ticket run (chat replies and Planning too); slots: the ones holding a maxParallel slot, as the server counts them.
   const running = runCounts(tickets, huddles);
@@ -594,8 +614,11 @@ export function App() {
 
   const menuItems: MenuItem[] = [
           ...(profile ? [{
-            label: "Schedules", icon: <ClockIcon />, onSelect: () => setSchedulesOpen(true),
-            title: scheduleErrors ? `${scheduleErrors} schedule${scheduleErrors === 1 ? "" : "s"} could not start their last run` : "Recurring tickets on a cron schedule",
+            label: "Schedules", icon: <ClockIcon />, onSelect: () => openSchedules(),
+            title: [
+              scheduleFails ? `${scheduleFails} schedule${scheduleFails === 1 ? "" : "s"} could not start their last run` : "",
+              missedJobs ? `${missedJobs} scheduled job${missedJobs === 1 ? "" : "s"} missed` : "",
+            ].filter(Boolean).join(" · ") || "Upcoming one-time jobs and recurring tickets",
             badge: scheduleErrors > 0 ? <span className="need-chip">{scheduleErrors}</span>
               : schedules && schedules.length > 0 ? <span className="muted small">{schedules.filter((s) => s.enabled).length} active</span> : null,
           }, {
@@ -667,7 +690,7 @@ export function App() {
       { id: "new-teammate", label: "New teammate…", run: () => openDockOn("team", { action: "new" }) },
     ] : []),
     ...(inbox.length ? [{ id: "inbox", label: `Open inbox (${inbox.length} need you)`, run: () => setInboxRequest(Date.now()) }] : []),
-    ...(profile ? [{ id: "schedules", label: "Schedules", icon: <ClockIcon size={14} />, run: () => setSchedulesOpen(true) }] : []),
+    ...(profile ? [{ id: "schedules", label: "Schedules", icon: <ClockIcon size={14} />, run: () => openSchedules() }] : []),
     { id: "connections", label: "Connections", icon: <PlugIcon size={14} />, run: () => setConnections(true) },
     ...(profile ? [{ id: "snippets", label: "Snippets", icon: <AtIcon size={14} />, run: () => setSnippetsOpen(true) }] : []),
     { id: "usage", label: "Usage", run: () => setUsageRequest(Date.now()) },
@@ -866,11 +889,12 @@ export function App() {
               }} />
           )}
           <Board tickets={shownTickets} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending}
-            huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} onTag={addTagFilter} />
+            huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} onTag={addTagFilter}
+            jobs={jobs ?? undefined} onOpenJobs={openSchedules} />
         </>
       )}
       {phone && profile && (
-        <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={perBoard.get(profile.slug) ?? 0} scheduleAlert={scheduleErrors > 0} onSchedules={() => setSchedulesOpen(true)}
+        <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={perBoard.get(profile.slug) ?? 0} scheduleAlert={scheduleErrors > 0} onSchedules={() => openSchedules()}
           onMore={() => setMoreOpen(true)} moreAlert={mcpAttention > 0} />
       )}
       {moreOpen && <MoreSheet items={menuItems.filter((i) => i.label !== "Schedules" && i.label !== "Keyboard shortcuts")} footer={menuFooter} onClose={() => setMoreOpen(false)} />}
@@ -904,11 +928,12 @@ export function App() {
           }} />
       )}
       {schedulesOpen && profile && (
-        <SchedulesDialog profile={profile} schedules={schedules} tickets={tickets} onClose={() => setSchedulesOpen(false)}
+        <SchedulesDialog profile={profile} schedules={schedules} jobs={jobs} jobFilter={jobFilter} onJobFilter={setJobFilter} tickets={tickets} onClose={() => setSchedulesOpen(false)}
           onOpenTicket={(id) => { setSchedulesOpen(false); openTicket(id); }} />
       )}
       {snippetsOpen && profile && <SnippetsDialog profile={profile} onClose={() => setSnippetsOpen(false)} />}
       {open && profile && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
+        jobs={jobs ?? []} onOpenJobs={openSchedules}
         nav={{ prev: prevId, next: nextId, go: stepTicket }} slideIn={!stepped.current}
         tabRequest={huddleTab?.id === open.id ? { tab: "huddle", n: huddleTab.n, huddleId: huddleTab.huddleId } : null}
         huddleSeed={huddleSeed?.id === open.id ? { seed: huddleSeed.seed, n: huddleSeed.n } : null}

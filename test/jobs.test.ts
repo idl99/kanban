@@ -121,7 +121,8 @@ test("a failing command is failed with its exit code and output", async () => {
 test("a command that runs too long is stopped at its time limit", async () => {
   const r = await runCommand("echo start; sleep 5", folder, {}, 1);
   expect(r).toMatchObject({ exitCode: null, timedOut: true, message: "stopped after 1 s (time limit)" });
-  expect(r.output).toBe("start\n");
+  // The shell may also report the killed sleep ("Terminated: 15"), depending on which process the signal reaches first.
+  expect(r.output!.startsWith("start\n")).toBe(true);
   expect(r.durationMs!).toBeLessThan(4000);
 });
 
@@ -146,7 +147,7 @@ test("a job seen more than 10 minutes late goes missed and waits for the user", 
   expect(t.missedJobs).toEqual([expect.objectContaining({ id: j.id, name: "Post: new kitchen" })]);
   // Needs you, even though the source ticket is done.
   const done = { ...t, status: "done" as const };
-  expect(attentionFor(done, null, false)).toMatchObject({ kind: "job", label: "Missed job: Post: new kitchen" });
+  expect(attentionFor(done, null, false)).toMatchObject({ kind: "job", label: "Scheduled job missed: Post: new kitchen" });
   expect(notified).toEqual([]);
 
   // Run now: it fires and the ticket no longer needs the user.
@@ -311,4 +312,20 @@ test("deleting the source ticket cancels its jobs that haven't run", async () =>
   await board.deleteTicket("p", src.id);
   await jobs.whenIdle();
   expect(store.getJob("p", j.id)).toMatchObject({ state: "cancelled", result: { message: "its ticket was deleted" } });
+});
+
+test("the board's list keeps every job finished in the last days; list_jobs keeps the last 20", async () => {
+  const made = [];
+  for (let i = 0; i < 22; i++) made.push(ticketJob(`J${i}`, at(14, 10)));
+  for (const j of made) await jobs.cancel("p", j.id);
+  // One finished 8 days ago: past the board's 7 days.
+  const old = ticketJob("Old", at(14, 10));
+  await jobs.cancel("p", old.id);
+  store.saveJob("p", { ...store.getJob("p", old.id)!, updatedAt: new Date(at(6, 9).getTime()).toISOString() });
+  const open = ticketJob("Open", at(15, 10));
+  expect(jobs.list("p").length).toBe(21);
+  const week = jobs.list("p", null, 7);
+  expect(week.length).toBe(23);
+  expect(week.map((j) => j.id)).toContain(open.id);
+  expect(week.map((j) => j.id)).not.toContain(old.id);
 });

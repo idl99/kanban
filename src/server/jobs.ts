@@ -201,12 +201,17 @@ export class JobRunner {
     return { ...j, when: describeAt(j.at, this.now()) };
   }
 
-  /** Everything still to come, plus the most recent finished ones; only the ticket's own when ticketId is given. */
-  list(slug: string, ticketId?: string | null): Job[] {
+  /**
+   * Everything still to come, plus the most recent finished ones; only the ticket's own when ticketId is given.
+   * finishedDays: every job that finished in that many days (the board's Upcoming list) instead of the last RECENT_DONE.
+   */
+  list(slug: string, ticketId?: string | null, finishedDays?: number): Job[] {
     const all = this.store.listJobs(slug).filter((j) => !ticketId || j.sourceTicketId === ticketId);
     const open = all.filter((j) => OPEN.includes(j.state) || j.state === "running");
     const over = all.filter((j) => !open.includes(j)).sort((a, b) => (b.firedAt ?? b.updatedAt).localeCompare(a.firedAt ?? a.updatedAt));
-    return [...open, ...over.slice(0, RECENT_DONE)];
+    if (finishedDays === undefined) return [...open, ...over.slice(0, RECENT_DONE)];
+    const since = this.now().getTime() - finishedDays * 86400_000;
+    return [...open, ...over.filter((j) => new Date(j.updatedAt).getTime() >= since)];
   }
 
   private action(v: unknown, base?: JobAction): JobAction {

@@ -165,6 +165,10 @@ export interface Ticket {
   model?: string | null;
   /** Created by this schedule. */
   scheduleId?: string | null;
+  /** Created by this one-time scheduled job. */
+  jobId?: string | null;
+  /** Jobs this ticket's run scheduled that were due while the computer was off: the user runs or skips them. */
+  missedJobs?: { id: string; name: string; at: string; missedAt: string }[] | null;
   /** Planner ticket whose chat proposed this one. */
   parentId?: string | null;
   /** Ticket this one was branched from (copy of its conversation and committed code). */
@@ -785,6 +789,37 @@ export interface Snippet {
 
 export type SnippetInput = Pick<Snippet, "name" | "text" | "scope">;
 
+/** What a one-time scheduled job does when it runs (src/server/jobs.ts). */
+export type JobAction =
+  | { kind: "ticket"; title: string; body: string; mode: TicketMode }
+  | { kind: "command"; command: string; timeoutSec?: number };
+
+export type { JobState } from "./jobText";
+import type { JobState } from "./jobText";
+
+export interface JobResult {
+  ticketId?: string;
+  exitCode?: number | null;
+  durationMs?: number;
+  output?: string;
+  timedOut?: boolean;
+  message?: string;
+}
+
+/** Runs once at `at`: starts a ticket or runs a command. sourceTicketId: the ticket whose run scheduled it (null: the user). */
+export interface Job {
+  id: string;
+  name: string;
+  at: string;
+  action: JobAction;
+  state: JobState;
+  sourceTicketId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  firedAt: string | null;
+  result: JobResult | null;
+}
+
 export type ScheduleInput = Pick<Schedule, "name" | "title" | "body" | "mode" | "cron" | "skipIfRunning" | "tags">;
 
 export type ScheduleTrigger = "schedule" | "missed" | "manual";
@@ -816,6 +851,7 @@ export type BusEvent =
   | { type: "mcp.updated"; state: McpState }
   | { type: "snippets.updated" }
   | { type: "schedule.updated"; profile: string; id: string; schedule: Omit<Schedule, "summary" | "active"> | null }
+  | { type: "job.updated"; profile: string; id: string; job: Job | null }
   | { type: "restart.updated"; pending: boolean; waiting: number }
   | { type: "huddle.updated"; profile: string; huddle: Huddle }
   | { type: "huddle.message"; profile: string; huddleId: string; message: HuddleMessage }
@@ -929,6 +965,9 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 
 const sch = (slug: string, id?: string) =>
   `/api/profiles/${encodeURIComponent(slug)}/schedules${id ? `/${encodeURIComponent(id)}` : ""}`;
+
+const jb = (slug: string, id?: string) =>
+  `/api/profiles/${encodeURIComponent(slug)}/jobs${id ? `/${encodeURIComponent(id)}` : ""}`;
 
 const t = (slug: string, id?: string) =>
   `/api/profiles/${encodeURIComponent(slug)}/tickets${id ? `/${encodeURIComponent(id)}` : ""}`;
@@ -1105,6 +1144,13 @@ export const api = {
   deleteSchedule: (slug: string, id: string) => req<void>("DELETE", sch(slug, id)),
   runSchedule: (slug: string, id: string) => req<{ entry: ScheduleHistoryItem; schedule: Schedule }>("POST", `${sch(slug, id)}/run`),
   scheduleHistory: (slug: string, id: string) => req<ScheduleHistoryItem[]>("GET", `${sch(slug, id)}/history`),
+  /** Upcoming and missed jobs plus every one that finished in the last 7 days. */
+  jobs: (slug: string) => req<Job[]>("GET", `${jb(slug)}?finishedDays=7`),
+  /** at: local "YYYY-MM-DDTHH:MM" (this computer's time). */
+  updateJob: (slug: string, id: string, patch: { name?: string; at?: string }) => req<Job>("PATCH", jb(slug, id), patch),
+  cancelJob: (slug: string, id: string) => req<Job>("POST", `${jb(slug, id)}/cancel`),
+  skipJob: (slug: string, id: string) => req<Job>("POST", `${jb(slug, id)}/skip`),
+  runJobNow: (slug: string, id: string) => req<Job>("POST", `${jb(slug, id)}/run`),
   cronPreview: (expr: string) => req<CronPreview>("GET", `/api/cron/preview?expr=${encodeURIComponent(expr)}`),
   mcp: () => req<McpState>("GET", "/api/mcp"),
   mcpRefresh: () => req<McpState>("POST", "/api/mcp/refresh"),

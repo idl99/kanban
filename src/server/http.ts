@@ -836,7 +836,12 @@ export function createServer(deps: ServerDeps) {
     // /profiles/:p/jobs — one-time jobs (jobs.ts). Anyone lists; a board run (RUN_HEADER) schedules jobs as its
     // ticket and may change, run or skip only the jobs it scheduled.
     if (parts[2] === "jobs") {
-      if (parts.length === 3 && m === "GET") return json(jobs.list(slug, url.searchParams.get("ticketId")).map((j) => jobs.view(j)));
+      if (parts.length === 3 && m === "GET") {
+        // finishedDays (the board UI): every job finished in that many days, not just the last 20.
+        const days = Number(url.searchParams.get("finishedDays"));
+        const finishedDays = Number.isFinite(days) && days > 0 ? Math.min(days, 365) : undefined;
+        return json(jobs.list(slug, url.searchParams.get("ticketId"), finishedDays).map((j) => jobs.view(j)));
+      }
       if (parts.length === 4 && m === "GET") return json(jobs.view(jobs.get(slug, parts[3])));
       // Huddle teammates run as their host ticket but only review: jobs run in the board folder and missed ones are the user's call.
       if (req.headers.get(HUDDLE_HEADER)) throw new HttpError(403, "huddle participants can't schedule or change jobs; ask @main");
