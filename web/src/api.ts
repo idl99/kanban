@@ -95,7 +95,7 @@ export interface QuickChat {
   title: string | null;
 }
 
-export type AttentionKind = "stalled" | "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle" | "job";
+export type AttentionKind = "stalled" | "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
 /** Why a ticket needs you (one server rule for cards, counts and the Inbox); since: when it started waiting. */
 export interface Attention {
   kind: AttentionKind;
@@ -167,8 +167,6 @@ export interface Ticket {
   scheduleId?: string | null;
   /** Created by this one-time scheduled job. */
   jobId?: string | null;
-  /** Jobs this ticket's run scheduled that were due while the computer was off: the user runs or skips them. */
-  missedJobs?: { id: string; name: string; at: string; missedAt: string }[] | null;
   /** Planner ticket whose chat proposed this one. */
   parentId?: string | null;
   /** Ticket this one was branched from (copy of its conversation and committed code). */
@@ -792,7 +790,7 @@ export type SnippetInput = Pick<Snippet, "name" | "text" | "scope">;
 /** What a one-time scheduled job does when it runs (src/server/jobs.ts). */
 export type JobAction =
   | { kind: "ticket"; title: string; body: string; mode: TicketMode }
-  | { kind: "command"; command: string; timeoutSec?: number };
+  | { kind: "command"; command: string; timeoutSec?: number; ifLate?: "skip" | "run" };
 
 export type { JobState } from "./jobText";
 import type { JobState } from "./jobText";
@@ -881,7 +879,7 @@ export interface PushDevice {
 }
 
 /** "Needs you" notifications (src/server/notify.ts): webhook (ntfy or JSON), macOS banner, per-kind toggles. */
-export type NotifyKind = "stalled" | "questions" | "proposal" | "review" | "failed" | "limit" | "blocked" | "huddle" | "job" | "reply";
+export type NotifyKind = "stalled" | "questions" | "proposal" | "review" | "failed" | "limit" | "blocked" | "huddle" | "reply";
 export interface NotifyState {
   webhookUrl: string;
   format: "auto" | "ntfy" | "json";
@@ -1144,12 +1142,11 @@ export const api = {
   deleteSchedule: (slug: string, id: string) => req<void>("DELETE", sch(slug, id)),
   runSchedule: (slug: string, id: string) => req<{ entry: ScheduleHistoryItem; schedule: Schedule }>("POST", `${sch(slug, id)}/run`),
   scheduleHistory: (slug: string, id: string) => req<ScheduleHistoryItem[]>("GET", `${sch(slug, id)}/history`),
-  /** Upcoming and missed jobs plus every one that finished in the last 7 days. */
+  /** Upcoming jobs plus every one that finished in the last 7 days. */
   jobs: (slug: string) => req<Job[]>("GET", `${jb(slug)}?finishedDays=7`),
   /** at: local "YYYY-MM-DDTHH:MM" (this computer's time). */
   updateJob: (slug: string, id: string, patch: { name?: string; at?: string }) => req<Job>("PATCH", jb(slug, id), patch),
   cancelJob: (slug: string, id: string) => req<Job>("POST", `${jb(slug, id)}/cancel`),
-  skipJob: (slug: string, id: string) => req<Job>("POST", `${jb(slug, id)}/skip`),
   runJobNow: (slug: string, id: string) => req<Job>("POST", `${jb(slug, id)}/run`),
   cronPreview: (expr: string) => req<CronPreview>("GET", `/api/cron/preview?expr=${encodeURIComponent(expr)}`),
   mcp: () => req<McpState>("GET", "/api/mcp"),

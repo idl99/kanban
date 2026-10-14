@@ -593,10 +593,7 @@ export function App() {
   live.current = { profiles, tickets, markDone };
 
   const mcpAttention = mcp?.servers.filter((s) => s.attention).length ?? 0;
-  // Missed jobs no ticket can show (the user scheduled them): Schedules asks to run or skip them.
-  const missedJobs = jobs?.filter((j) => j.state === "missed" && (!j.sourceTicketId || !tickets.some((t) => t.id === j.sourceTicketId))).length ?? 0;
   const scheduleFails = schedules?.filter((s) => s.lastError).length ?? 0;
-  const scheduleErrors = scheduleFails + missedJobs;
   const missing = health ? (["claude", "git", "gh"] as const).filter((k) => !health[k]) : [];
   // Every active ticket run (chat replies and Planning too); slots: the ones holding a maxParallel slot, as the server counts them.
   const running = runCounts(tickets, huddles);
@@ -615,11 +612,9 @@ export function App() {
   const menuItems: MenuItem[] = [
           ...(profile ? [{
             label: "Schedules", icon: <ClockIcon />, onSelect: () => openSchedules(),
-            title: [
-              scheduleFails ? `${scheduleFails} schedule${scheduleFails === 1 ? "" : "s"} could not start their last run` : "",
-              missedJobs ? `${missedJobs} scheduled job${missedJobs === 1 ? "" : "s"} missed` : "",
-            ].filter(Boolean).join(" · ") || "Upcoming one-time jobs and recurring tickets",
-            badge: scheduleErrors > 0 ? <span className="need-chip">{scheduleErrors}</span>
+            title: scheduleFails ? `${scheduleFails} schedule${scheduleFails === 1 ? "" : "s"} could not start their last run`
+              : "Upcoming one-time jobs and recurring tickets",
+            badge: scheduleFails > 0 ? <span className="need-chip">{scheduleFails}</span>
               : schedules && schedules.length > 0 ? <span className="muted small">{schedules.filter((s) => s.enabled).length} active</span> : null,
           }, {
             label: "Snippets", icon: <AtIcon />, onSelect: () => setSnippetsOpen(true),
@@ -636,7 +631,7 @@ export function App() {
           { label: "Keyboard shortcuts", hint: "?", icon: <KeyboardIcon />, onSelect: () => setShortcuts(true) },
           { label: "Report a bug", icon: <BugIcon />, onSelect: () => setBugReport(true) },
   ];
-  const menuAlert = scheduleErrors > 0 || mcpAttention > 0;
+  const menuAlert = scheduleFails > 0 || mcpAttention > 0;
   const menuFooter = version && version.version !== "dev" ? `ckanban v${version.version} · by Leo` : "by Leo";
   // Inbox triage on any board: the entry leaves the list (and the counts) at once, the server confirms.
   const inboxDone = async (i: InboxItem) => {
@@ -894,7 +889,7 @@ export function App() {
         </>
       )}
       {phone && profile && (
-        <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={perBoard.get(profile.slug) ?? 0} scheduleAlert={scheduleErrors > 0} onSchedules={() => openSchedules()}
+        <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={perBoard.get(profile.slug) ?? 0} scheduleAlert={scheduleFails > 0} onSchedules={() => openSchedules()}
           onMore={() => setMoreOpen(true)} moreAlert={mcpAttention > 0} />
       )}
       {moreOpen && <MoreSheet items={menuItems.filter((i) => i.label !== "Schedules" && i.label !== "Keyboard shortcuts")} footer={menuFooter} onClose={() => setMoreOpen(false)} />}

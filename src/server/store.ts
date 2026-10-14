@@ -347,7 +347,10 @@ export class Store {
     const file = join(this.jobsDir(slug), `${id}.json`);
     if (!existsSync(file)) return null;
     try {
-      return JSON.parse(readFileSync(file, "utf8"));
+      const j = JSON.parse(readFileSync(file, "utf8"));
+      // Older versions kept a late job "missed" until the user ran or skipped it; that step is gone.
+      if (j.state === "missed") return { ...j, state: "skipped", result: { ...j.result, message: "was due while the computer was off" } };
+      return j;
     } catch {
       return null;
     }

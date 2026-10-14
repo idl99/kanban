@@ -817,7 +817,7 @@ test("one-time jobs: schedule, list, update, run now, and runs manage only their
   expect(r.status).toBe(404);
   // Huddle teammates run as the host ticket but may not touch its jobs.
   const agent = as(src.id, "POST");
-  r = await fetch(`${url}/${j.id}/skip`, { ...agent, headers: { ...agent.headers, "x-ckanban-huddle-agent": "h_x/qa-1" } });
+  r = await fetch(`${url}/${j.id}/cancel`, { ...agent, headers: { ...agent.headers, "x-ckanban-huddle-agent": "h_x/qa-1" } });
   expect(r.status).toBe(403);
   expect(((await r.json()) as any).error).toContain("huddle participants");
   r = await fetch(`${url}/${j.id}`, as(src.id, "PATCH", { name: "Post A!" }));
@@ -829,8 +829,11 @@ test("one-time jobs: schedule, list, update, run now, and runs manage only their
   const done = (await (await fetch(`${url}/${j.id}`)).json()) as any;
   expect(done).toMatchObject({ state: "done", result: { exitCode: 0, output: "posted\n" } });
 
-  r = await fetch(`${url}/${j.id}/skip`, json("POST"));
+  r = await fetch(`${url}/${j.id}/cancel`, json("POST"));
   expect(r.status).toBe(409);
+  // Skipping is gone: a late command skips itself, cancel covers the rest.
+  r = await fetch(`${url}/${j.id}/skip`, json("POST"));
+  expect(r.status).toBe(404);
   r = await fetch(`${url}/nope1234`);
   expect(r.status).toBe(404);
 });

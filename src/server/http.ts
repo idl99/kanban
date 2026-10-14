@@ -834,7 +834,7 @@ export function createServer(deps: ServerDeps) {
     }
 
     // /profiles/:p/jobs — one-time jobs (jobs.ts). Anyone lists; a board run (RUN_HEADER) schedules jobs as its
-    // ticket and may change, run or skip only the jobs it scheduled.
+    // ticket and may change, run or cancel only the jobs it scheduled.
     if (parts[2] === "jobs") {
       if (parts.length === 3 && m === "GET") {
         // finishedDays (the board UI): every job finished in that many days, not just the last 20.
@@ -843,7 +843,7 @@ export function createServer(deps: ServerDeps) {
         return json(jobs.list(slug, url.searchParams.get("ticketId"), finishedDays).map((j) => jobs.view(j)));
       }
       if (parts.length === 4 && m === "GET") return json(jobs.view(jobs.get(slug, parts[3])));
-      // Huddle teammates run as their host ticket but only review: jobs run in the board folder and missed ones are the user's call.
+      // Huddle teammates run as their host ticket but only review: jobs run in the board folder.
       if (req.headers.get(HUDDLE_HEADER)) throw new HttpError(403, "huddle participants can't schedule or change jobs; ask @main");
       const by = runTicket(req, slug);
       if (by && !store.getTicket(slug, by)) throw new HttpError(404, `ticket ${by} not found`);
@@ -852,7 +852,6 @@ export function createServer(deps: ServerDeps) {
       if (parts.length === 4 && m === "PATCH") return json(jobs.view(await jobs.update(slug, jid, (await body(req)) ?? {}, by)));
       if (parts.length === 5 && m === "POST") {
         if (parts[4] === "cancel") return json(jobs.view(await jobs.cancel(slug, jid, by)));
-        if (parts[4] === "skip") return json(jobs.view(await jobs.skip(slug, jid, by)));
         if (parts[4] === "run") return json(jobs.view(await jobs.runNow(slug, jid, by)));
       }
       throw new HttpError(404, "not found");

@@ -1,6 +1,6 @@
 // Plain words for one-time scheduled jobs (no React and kept free of api.ts, so tests and the root typecheck can import it).
 
-export type JobState = "scheduled" | "running" | "done" | "failed" | "cancelled" | "missed" | "skipped";
+export type JobState = "scheduled" | "running" | "done" | "failed" | "cancelled" | "skipped";
 
 /** The fields of api.ts's Job these helpers read. */
 export interface Job {
@@ -45,7 +45,7 @@ export const jobWhen = (iso: string, now = Date.now()) => `${jobDate(iso)} · ${
 export const jobDoes = (j: Job) => (j.action.kind === "ticket" ? "Starts a ticket" : "Runs a command");
 
 export const STATE_LABEL: Record<JobState, string> = {
-  scheduled: "Scheduled", running: "Running", done: "Done", failed: "Failed", cancelled: "Cancelled", missed: "Missed", skipped: "Skipped",
+  scheduled: "Scheduled", running: "Running", done: "Done", failed: "Failed", cancelled: "Cancelled", skipped: "Skipped",
 };
 
 /** Still to come (scheduled), soonest first. */
@@ -53,16 +53,15 @@ export function upcoming<J extends Job>(jobs: J[], ticketId?: string | null): J[
   return jobs.filter((j) => j.state === "scheduled" && (!ticketId || j.sourceTicketId === ticketId)).sort((a, b) => a.at.localeCompare(b.at));
 }
 
-/** What the Upcoming list shows: missed first, then running and scheduled by time, then finished ones from the last 7 days, newest first. */
-export function jobsToShow<J extends Job>(jobs: J[], ticketId: string | null, now = Date.now()): { missed: J[]; open: J[]; over: J[] } {
+/** What the Upcoming list shows: running and scheduled by time, then finished ones from the last 7 days, newest first. */
+export function jobsToShow<J extends Job>(jobs: J[], ticketId: string | null, now = Date.now()): { open: J[]; over: J[] } {
   const mine = jobs.filter((j) => !ticketId || j.sourceTicketId === ticketId);
   const byAt = (a: Job, b: Job) => a.at.localeCompare(b.at);
   const ended = (j: Job) => j.firedAt ?? j.updatedAt;
   return {
-    missed: mine.filter((j) => j.state === "missed").sort(byAt),
     open: mine.filter((j) => j.state === "scheduled" || j.state === "running").sort(byAt),
     over: mine
-      .filter((j) => !["missed", "scheduled", "running"].includes(j.state) && now - new Date(j.updatedAt).getTime() < KEEP_DONE_MS)
+      .filter((j) => !["scheduled", "running"].includes(j.state) && now - new Date(j.updatedAt).getTime() < KEEP_DONE_MS)
       .sort((a, b) => ended(b).localeCompare(ended(a))),
   };
 }

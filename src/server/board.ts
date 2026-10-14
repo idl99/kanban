@@ -27,7 +27,7 @@ import { mcpConfig } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
 import { normalizeTags } from "./tags";
-import { autoHuddlesOn, runCapFor, workspaceOf, type Interrupted, type LimitHit, type MissedJob, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
+import { autoHuddlesOn, runCapFor, workspaceOf, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
 import { CLEANUP_TIMEOUT_MS, prepareWorktree, runShell, withSetup, type SetupResult } from "./worktree-setup";
 import { nowIso, slugify } from "./util";
 
@@ -262,11 +262,6 @@ export class Board {
     const needs = [...(before?.needs ?? []), ...(t.needs ?? [])];
     if (needs.length && ("status" in patch || "runStartedAt" in patch || "needs" in patch)) this.resourceChanged(needs);
     return t;
-  }
-
-  /** The source ticket's missed one-time jobs (jobs.ts): it needs the user while any are listed. */
-  setMissedJobs(slug: string, id: string, missedJobs: MissedJob[] | null): Ticket {
-    return this.patch(slug, id, { missedJobs });
   }
 
   /** Cache the ticket's PR status (prpoller.ts) and tell the UI. */

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, COLUMNS, safeHref, startWorkTarget, subscribe, type ClaudeSession, type Job, type Profile, type Status, type Ticket } from "./api";
 import { outcomeBadge } from "./Card";
-import { JobChip, MissedJobs } from "./Jobs";
+import { JobChip } from "./Jobs";
 import { CapActions } from "./CapActions";
 import { capLabel, capWait } from "./capText";
 import { LimitActions } from "./LimitActions";
@@ -217,7 +217,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   huddleSeed?: { seed: HuddleSeed; n: number } | null;
   /** Open the dock's Team tab on a teammate or a proposal to edit (teammate cards). */
   onOpenTeam?: (r: TeamRequest) => void;
-  /** The board's one-time scheduled jobs: this ticket's chip and its missed ones (Run now / Skip). */
+  /** The board's one-time scheduled jobs: this ticket's chip. */
   jobs?: Job[];
   /** The chip was clicked: open Schedules → Upcoming for this ticket. */
   onOpenJobs?: (ticketId: string) => void;
@@ -752,7 +752,6 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 <StallActions slug={slug} ticket={ticket} onError={onError} small />
               </div>
             )}
-            <MissedJobs slug={slug} ticket={ticket} jobs={jobs} tickets={tickets} onOpenTicket={onOpenTicket} />
             <nav className="tabs" role="tablist" aria-label="Ticket">
               <button role="tab" aria-selected={tab === "chat"} className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>
                 Chat {working && <span className="dot" />}

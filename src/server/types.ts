@@ -128,8 +128,6 @@ export interface Ticket {
   scheduleId?: string | null;
   /** Set on tickets created by a one-time scheduled job (see Job). */
   jobId?: string | null;
-  /** Jobs this ticket's run scheduled that were due while the computer was off: the user runs or skips them (Needs you). */
-  missedJobs?: MissedJob[] | null;
   /** Planner ticket whose Planning chat proposed this one. Missing on most tickets. */
   parentId?: string | null;
   /** Short name siblings use in dependsOn (from the planner's proposal). */
@@ -280,10 +278,11 @@ export type JobAction =
   /** Create a ticket and start it right away (like a schedule's fire). */
   | { kind: "ticket"; title: string; body: string; mode: TicketMode }
   /** Run a shell command in the board folder: no ticket, no Claude. */
-  | { kind: "command"; command: string; timeoutSec?: number };
+  /** ifLate: what to do when the board sees it more than 10 min late (computer off): skip it (default) or run it anyway. */
+  | { kind: "command"; command: string; timeoutSec?: number; ifLate?: "skip" | "run" };
 
-/** scheduled → running → done | failed; or cancelled, missed (was due while the computer was off), skipped. */
-export type JobState = "scheduled" | "running" | "done" | "failed" | "cancelled" | "missed" | "skipped";
+/** scheduled → running → done | failed; or cancelled, skipped (a command job that was due while the computer was off). */
+export type JobState = "scheduled" | "running" | "done" | "failed" | "cancelled" | "skipped";
 
 export interface JobResult {
   /** Ticket the job created (ticket action). */
@@ -311,14 +310,6 @@ export interface Job {
   updatedAt: string;
   firedAt: string | null;
   result: JobResult | null;
-}
-
-/** A missed job on its source ticket (Ticket.missedJobs). */
-export interface MissedJob {
-  id: string;
-  name: string;
-  at: string;
-  missedAt: string;
 }
 
 export type ScheduleTrigger = "schedule" | "missed" | "manual";

@@ -107,14 +107,14 @@ export interface ScheduleHistoryInfo {
 
 export type JobActionInfo =
   | { kind: "ticket"; title: string; body: string; mode?: TicketMode }
-  | { kind: "command"; command: string; timeoutSec?: number };
+  | { kind: "command"; command: string; timeoutSec?: number; ifLate?: "skip" | "run" };
 
 export interface JobInfo {
   id: string;
   name: string;
   at: string;
   action: JobActionInfo;
-  state: "scheduled" | "running" | "done" | "failed" | "cancelled" | "missed" | "skipped";
+  state: "scheduled" | "running" | "done" | "failed" | "cancelled" | "skipped";
   sourceTicketId: string | null;
   createdAt: string;
   firedAt: string | null;
@@ -330,7 +330,7 @@ export class BoardClient {
   createJob = (slug: string, input: JobInput, c: HuddleCaller = { run: null, agent: null }) => this.req<JobInfo>("POST", this.j(slug), input, this.as(c));
   updateJob = (slug: string, id: string, patch: JobInput, c: HuddleCaller = { run: null, agent: null }) =>
     this.req<JobInfo>("PATCH", this.j(slug, id), patch, this.as(c));
-  jobAction = (slug: string, id: string, action: "cancel" | "skip" | "run", c: HuddleCaller = { run: null, agent: null }) =>
+  jobAction = (slug: string, id: string, action: "cancel" | "run", c: HuddleCaller = { run: null, agent: null }) =>
     this.req<JobInfo>("POST", `${this.j(slug, id)}/${action}`, {}, this.as(c));
   cronPreview = (expr: string) => this.req<CronPreviewInfo>("GET", `/api/cron/preview?expr=${encodeURIComponent(expr)}`);
 

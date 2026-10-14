@@ -1258,12 +1258,11 @@ textarea.drop-target { border-color: var(--accent); box-shadow: 0 0 0 3px var(--
 .sched-at { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sched-ticket { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
 .sched-presets { flex-wrap: wrap; }
-/* one-time scheduled jobs (Schedules → Upcoming, the ticket's chip and missed-job banner) */
+/* one-time scheduled jobs (Schedules → Upcoming, the ticket's chip) */
 .sched-group { display: flex; flex-direction: column; gap: 6px; }
 .sched-heading { margin: 4px 0 0; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .jobs { display: flex; flex-direction: column; gap: 6px; }
 .job-filter { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 6px 10px; border-radius: 8px; background: var(--surface-2); }
-.job-missed-box { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 10px; background: var(--warn-soft); }
 .job-does { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .job-does code { font-size: 11.5px; }
 .job-source { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
@@ -1272,8 +1271,6 @@ textarea.drop-target { border-color: var(--accent); box-shadow: 0 0 0 3px var(--
 .job-time { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 10px; }
 .job-time input { width: auto; }
 .job-over-toggle { align-self: flex-start; }
-.banner.job-missed-banner { display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
-.job-missed-banner .sched-item:last-child .mcp-row { padding-bottom: 0; }
 button.badge.job-chip { border: 0; font: inherit; font-size: 11px; font-weight: 560; cursor: pointer; background: var(--info-soft); color: var(--info); }
 button.badge.job-chip:hover { filter: brightness(0.96); text-decoration: underline; }
 @media (max-width: 720px) {

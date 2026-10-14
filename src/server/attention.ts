@@ -3,7 +3,7 @@ import type { SessionSummary } from "./session";
 import type { Store } from "./store";
 import type { Ticket } from "./types";
 
-export type AttentionKind = "stalled" | "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle" | "job";
+export type AttentionKind = "stalled" | "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
 
 /**
  * Why a ticket is waiting on the user, or null if it isn't. This one rule drives every "needs you": the card's
@@ -60,12 +60,6 @@ export function attentionFor(
   t: Ticket, s: SessionSummary | null, running: boolean,
   o: { createdTitles?: Set<string>; managed?: boolean; planComplete?: boolean; huddle?: HostHuddle | null } = {},
 ): Attention | null {
-  // A job this ticket's run scheduled was due while the computer was off: only the user says run it now or skip it.
-  // Checked before Done: the ticket that scheduled it is usually finished by then.
-  const missed = t.missedJobs ?? [];
-  if (missed.length && !running) {
-    return { kind: "job", label: missed.length === 1 ? `Scheduled job missed: ${missed[0].name}` : `${missed.length} scheduled jobs missed`, since: missed[0].missedAt };
-  }
   // Done means accepted as-is; Backlog means parked. Neither waits on the user, whatever the session holds.
   if (t.status === "done") return null;
   const since = lastChange(t, s);

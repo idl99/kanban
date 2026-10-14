@@ -401,9 +401,11 @@ const JOB_ACTION = {
     "unattended, with no access to this conversation. The body is the whole prompt: put everything the future run needs in it " +
     "(goal, the exact text to post, where, how to check it worked); for long content or images, save files in the board folder first and give their paths. " +
     "mode: auto (default) or interview. " +
-    "{kind: \"command\", command, timeoutSec?}: runs the command with /bin/sh in the board folder, no ticket and no Claude " +
-    "(env CKANBAN_BOARD, CKANBAN_JOB, CKANBAN_SOURCE_TICKET; killed after timeoutSec, default 600); its exit code and last 4 KB of output are kept. " +
-    "A command can create tickets itself with `ckanban ticket create`.",
+    "{kind: \"command\", command, timeoutSec?, ifLate?}: runs the command with /bin/sh in the board folder, no ticket and no Claude " +
+    "(env CKANBAN_BOARD, CKANBAN_JOB, CKANBAN_SOURCE_TICKET; killed after timeoutSec, default 600); its exit code and last 4 KB of output are kept, " +
+    "and if it fails this ticket gets a comment. A command can create tickets itself with `ckanban ticket create`. " +
+    "ifLate: what happens when the computer was off at that time and the board sees it more than 10 minutes late: " +
+    "\"skip\" (default) or \"run\" it late. Pick per job: a post tied to a moment should skip; a backup or cleanup may run late.",
   properties: {
     kind: { type: "string", enum: ["ticket", "command"] },
     title: { type: "string" },
@@ -411,6 +413,7 @@ const JOB_ACTION = {
     mode: { type: "string", enum: ["auto", "interview"] },
     command: { type: "string" },
     timeoutSec: { type: "number" },
+    ifLate: { type: "string", enum: ["skip", "run"] },
   },
   required: ["kind"],
 };
@@ -418,7 +421,12 @@ const JOB_ACTION = {
 function jobAction(v: any): JobInput["action"] {
   if (!v || typeof v !== "object") throw new ClientError("action must be an object: {kind: \"ticket\", title, body} or {kind: \"command\", command}");
   if (v.kind === "ticket") return { kind: "ticket", title: String(v.title ?? ""), body: String(v.body ?? ""), ...(v.mode !== undefined ? { mode: parseMode(v.mode) } : {}) };
-  if (v.kind === "command") return { kind: "command", command: String(v.command ?? ""), ...(v.timeoutSec !== undefined ? { timeoutSec: Number(v.timeoutSec) } : {}) };
+  if (v.kind === "command") {
+    return {
+      kind: "command", command: String(v.command ?? ""),
+      ...(v.timeoutSec !== undefined ? { timeoutSec: Number(v.timeoutSec) } : {}), ...(v.ifLate !== undefined ? { ifLate: v.ifLate } : {}),
+    };
+  }
   throw new ClientError("action.kind must be \"ticket\" or \"command\"");
 }
 
@@ -434,7 +442,6 @@ export function jobLine(j: JobInfo): string {
     if (r.durationMs !== undefined) bits.push(`${(r.durationMs / 1000).toFixed(1)} s`);
   }
   if (r?.message && !r.timedOut) bits.push(r.message);
-  if (j.state === "missed") bits.push("was due while the computer was off: run_job_now or skip_job");
   return bits.join("; ");
 }
 
@@ -450,7 +457,10 @@ const JOB_TOOLS: Tool[] = [
       "Schedule a one-time job: at a set date and time the board either creates and starts a ticket (Claude works on it unattended) " +
       "or runs a command with no Claude. Use it for \"do this once later\", e.g. at the end of a planning run: post A on Tue 22:00, post B on Wed 09:00; " +
       "nothing has to stay awake until then. If the computer is off at that time and the board sees it more than 10 minutes late, " +
-      "it does not run: this ticket shows in Needs you and the user picks run now or skip. For recurring work use create_schedule instead. " +
+      "a ticket job still starts and its run is told how late it is, so it decides whether to do it, adapt it or stop; " +
+      "a command job follows its ifLate (skipped by default). For recurring work use create_schedule instead. " +
+      "If this ticket was itself created by a job, check the chain (shown at the top of its body) makes sense before scheduling another " +
+      "ticket job from it: work that repeats belongs in create_schedule. " +
       "Returns the job id and when it runs.",
     inputSchema: {
       type: "object",
@@ -467,7 +477,7 @@ const JOB_TOOLS: Tool[] = [
   },
   {
     name: "list_jobs",
-    description: "List a board's one-time jobs: upcoming and missed ones, plus recent finished ones (state, time, result: created ticket, exit code, errors).",
+    description: "List a board's one-time jobs: upcoming ones, plus recent finished or skipped ones (state, time, result: created ticket, exit code, errors).",
     inputSchema: {
       type: "object",
       properties: { profile: PROFILE, ticketId: { type: "string", description: "Only jobs this ticket's runs scheduled." } },
@@ -484,8 +494,8 @@ const JOB_TOOLS: Tool[] = [
   },
   {
     name: "update_job",
-    description: "Change a job that hasn't run yet (scheduled or missed): its name, time (at) or action. A new time puts a missed job back on the schedule. " +
-      "Inside a board run, only jobs this ticket scheduled.",
+    description: "Change a job that hasn't run yet: its name, time (at) or action. The action is replaced as a whole: " +
+      "send the whole action (kind and all its fields), not only the part you change. Inside a board run, only jobs this ticket scheduled.",
     inputSchema: { type: "object", properties: { profile: PROFILE, id: JOB_ID, name: { type: "string" }, at: JOB_AT, action: JOB_ACTION }, required: ["id"] },
     changes: true,
     allowInRun: true,
@@ -494,7 +504,13 @@ const JOB_TOOLS: Tool[] = [
       const patch: JobInput = {};
       if (typeof args?.name === "string") patch.name = args.name;
       if (typeof args?.at === "string") patch.at = args.at;
-      if (args?.action !== undefined) patch.action = jobAction(args.action);
+      if (args?.action !== undefined) {
+        try {
+          patch.action = jobAction(args.action);
+        } catch (e) {
+          throw new ClientError(`${(e as Error).message}: send the whole action (kind and all its fields), not only the part you change`);
+        }
+      }
       if (!Object.keys(patch).length) throw new ClientError("nothing to change: pass name, at or action");
       return `Updated: ${jobLine(await ctx.client.updateJob(slug, str(args, "id")!, patch, huddleCaller(ctx.env)))}`;
     },
@@ -512,7 +528,7 @@ const JOB_TOOLS: Tool[] = [
   },
   {
     name: "run_job_now",
-    description: "Run a scheduled or missed job right away (for a missed job: when the user said to run it). Inside a board run, only jobs this ticket scheduled.",
+    description: "Run a scheduled job right away, ahead of its time. Inside a board run, only jobs this ticket scheduled.",
     inputSchema: { type: "object", properties: { profile: PROFILE, id: JOB_ID }, required: ["id"] },
     changes: true,
     allowInRun: true,
@@ -522,17 +538,6 @@ const JOB_TOOLS: Tool[] = [
       if (j.state === "failed") throw new ClientError(`job ${j.id} failed: ${j.result?.message ?? "unknown error"}`);
       if (j.result?.ticketId) return `Started: created ticket ${j.result.ticketId}, Claude is working on it.`;
       return `Started: ${jobLine(j)}. Check list_jobs for its exit code and output.`;
-    },
-  },
-  {
-    name: "skip_job",
-    description: "Skip a missed (or scheduled) job: it won't run and no longer waits for the user. Inside a board run, only jobs this ticket scheduled.",
-    inputSchema: { type: "object", properties: { profile: PROFILE, id: JOB_ID }, required: ["id"] },
-    changes: true,
-    allowInRun: true,
-    async run(args, ctx) {
-      const slug = await slugFor(args, ctx);
-      return `Skipped: ${jobLine(await ctx.client.jobAction(slug, str(args, "id")!, "skip", huddleCaller(ctx.env)))}`;
     },
   },
 ];

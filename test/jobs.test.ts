@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { attentionFor } from "../src/server/attention";
 import { Board } from "../src/server/board";
 import { Bus, type BusEvent } from "../src/server/events";
-import { describeAt, JobRunner, parseAt, runCommand } from "../src/server/jobs";
+import { describeAt, JobRunner, MAX_CHAIN, parseAt, runCommand } from "../src/server/jobs";
+import { DEFAULT_NOTIFY, NOTIFY_KINDS } from "../src/server/notify";
 import { Store } from "../src/server/store";
 import { tempDir } from "./helpers";
 
@@ -15,7 +15,6 @@ let now: Date;
 let jobs: JobRunner;
 let events: BusEvent[];
 let folder: string;
-let notified: string[];
 
 const at = (d: number, h: number, mi = 0) => new Date(2026, 9, d, h, mi);
 const local = (d: Date) => `${d.getFullYear()}-10-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -30,8 +29,7 @@ beforeEach(() => {
   folder = tempDir();
   store.saveProfile({ name: "P", slug: "p", path: folder, baseBranch: "main", maxParallel: 1, createdAt: "" });
   now = at(14, 9);
-  notified = [];
-  jobs = new JobRunner(board, store, bus, { now: () => now, notify: (title) => notified.push(title) });
+  jobs = new JobRunner(board, store, bus, { now: () => now });
 });
 
 afterEach(async () => {
@@ -132,50 +130,122 @@ test("only the last 4 KB of output is kept", async () => {
   expect(r.output).toEndWith("line-299-xxxxxxxxxxxxxxxx\n");
 });
 
-test("a job seen more than 10 minutes late goes missed and waits for the user", async () => {
+test("a late ticket job still starts, told how late it is so its run decides", async () => {
   const src = source();
   const j = ticketJob("Post: new kitchen", at(14, 10), src.id);
+  now = at(15, 8, 15);
+  await jobs.tick();
+  await jobs.tick();
+  expect(jobTickets()).toHaveLength(1);
+  const t = jobTickets()[0];
+  expect(t.body).toStartWith("This was due Wed 14 Oct 10:00 but is running Thu 15 Oct 08:15 because the computer was off. " +
+    "Decide if it still makes sense: do it, adapt it, or stop and say why.\n\n" +
+    `Scheduled by ticket ${src.id} ("Weekly posts") as job 'Post: new kitchen'.`);
+  expect(t.body).toContain("Post Post: new kitchen now.");
+  expect(store.getJob("p", j.id)).toMatchObject({ state: "done", result: { ticketId: t.id } });
+  // Nothing asks the user: no comment on the source ticket.
+  expect(store.listComments("p", src.id)).toEqual([]);
+});
+
+test("a ticket job on time has no late line", async () => {
+  ticketJob("A", at(14, 10));
+  now = at(14, 10, 9);
+  await jobs.tick();
+  expect(jobTickets()[0].body).toBe("Post A now.");
+});
+
+test("a late command is skipped by default, and runs late with ifLate: run", async () => {
+  const src = source();
+  const skip = jobs.create("p", { name: "Post", at: local(at(14, 10)), action: { kind: "command", command: "echo posted > posted.txt" } }, src.id);
+  const run = jobs.create("p", { name: "Backup", at: local(at(14, 10)), action: { kind: "command", command: "echo backed > backup.txt", ifLate: "run" } }, src.id);
+  expect(run.action).toEqual({ kind: "command", command: "echo backed > backup.txt", ifLate: "run" });
+  expect(skip.action).toEqual({ kind: "command", command: "echo posted > posted.txt" });
   now = at(14, 10, 11);
   await jobs.tick();
   await jobs.tick();
-  expect(jobTickets()).toHaveLength(0);
-  expect(store.getJob("p", j.id)!.state).toBe("missed");
-  const comments = store.listComments("p", src.id);
-  expect(comments.at(-1)!.text).toContain("Scheduled job 'Post: new kitchen'");
-  expect(comments.at(-1)!.text).toContain("was due Wed 14 Oct 10:00 but the computer was off");
-  const t = store.getTicket("p", src.id)!;
-  expect(t.missedJobs).toEqual([expect.objectContaining({ id: j.id, name: "Post: new kitchen" })]);
-  // Needs you, even though the source ticket is done.
-  const done = { ...t, status: "done" as const };
-  expect(attentionFor(done, null, false)).toMatchObject({ kind: "job", label: "Scheduled job missed: Post: new kitchen" });
-  expect(notified).toEqual([]);
-
-  // Run now: it fires and the ticket no longer needs the user.
-  await jobs.runNow("p", j.id);
-  expect(jobTickets()).toHaveLength(1);
-  expect(store.getJob("p", j.id)!.state).toBe("done");
-  expect(store.getTicket("p", src.id)!.missedJobs).toBeNull();
-  expect(attentionFor(store.getTicket("p", src.id)!, null, false)?.kind).not.toBe("job");
+  await jobs.whenIdle();
+  expect(store.getJob("p", skip.id)).toMatchObject({ state: "skipped", firedAt: null, result: { message: "skipped: the computer was off at Wed 14 Oct 10:00" } });
+  expect(existsSync(join(folder, "posted.txt"))).toBe(false);
+  expect(store.getJob("p", run.id)).toMatchObject({ state: "done", result: { exitCode: 0 } });
+  expect(readFileSync(join(folder, "backup.txt"), "utf8")).toBe("backed\n");
+  expect(store.listComments("p", src.id)).toEqual([]);
+  expect(() => jobs.create("p", { name: "x", at: local(at(15, 9)), action: { kind: "command", command: "true", ifLate: "maybe" } })).toThrow("ifLate must be");
 });
 
-test("skip closes a missed job without running it", async () => {
-  const src = source();
-  const j = ticketJob("A", at(14, 10), src.id);
-  now = at(14, 12);
-  await jobs.tick();
-  expect(store.getJob("p", j.id)!.state).toBe("missed");
-  await jobs.skip("p", j.id);
-  expect(store.getJob("p", j.id)!.state).toBe("skipped");
-  expect(store.getTicket("p", src.id)!.missedJobs).toBeNull();
-  expect(jobTickets()).toHaveLength(0);
-  await expect(jobs.runNow("p", j.id)).rejects.toThrow("only a scheduled or missed job");
-});
-
-test("a missed job no ticket can show notifies the user directly", async () => {
-  ticketJob("Lonely", at(14, 10));
+test("a late command waiting on a pending restart is still skipped, not run later", async () => {
+  const j = jobs.create("p", { name: "Post", at: local(at(14, 10)), action: { kind: "command", command: "echo posted > posted.txt" } });
+  board.isRestartPending = () => true;
   now = at(14, 11);
   await jobs.tick();
-  expect(notified).toEqual(["Missed job: Lonely"]);
+  expect(store.getJob("p", j.id)!.state).toBe("skipped");
+  expect(existsSync(join(folder, "posted.txt"))).toBe(false);
+});
+
+test("a failed command leaves a quiet comment on its source ticket; a good one doesn't", async () => {
+  const src = source();
+  const bad = jobs.create("p", { name: "Post A", at: local(at(14, 10)), action: { kind: "command", command: "for i in 1 2 3 4 5 6 7 8 9 10; do echo line$i; done; exit 1" } }, src.id);
+  jobs.create("p", { name: "Fine", at: local(at(14, 10)), action: { kind: "command", command: "echo ok" } }, src.id);
+  now = at(14, 10);
+  await jobs.tick();
+  await jobs.whenIdle();
+  expect(store.getJob("p", bad.id)!.state).toBe("failed");
+  const comments = store.listComments("p", src.id);
+  expect(comments).toHaveLength(1);
+  expect(comments[0].text).toStartWith("Scheduled job 'Post A' failed: exited with code 1");
+  expect(comments[0].text).toContain("line10");
+  expect(comments[0].text).toContain("line3");
+  expect(comments[0].text).not.toContain("line2\n");
+  // Quiet: the ticket doesn't start needing the user.
+  expect(store.getTicket("p", src.id)!.status).toBe("review");
+});
+
+test("a command cut off by a restart comments on its source ticket", () => {
+  const src = source();
+  const j = jobs.create("p", { name: "Long", at: local(at(14, 10)), action: { kind: "command", command: "sleep 100" } }, src.id);
+  store.saveJob("p", { ...store.getJob("p", j.id)!, state: "running", firedAt: at(14, 10).toISOString() });
+  jobs.recover();
+  expect(store.getJob("p", j.id)!.state).toBe("failed");
+  expect(store.listComments("p", src.id).at(-1)!.text).toStartWith("Scheduled job 'Long' failed: interrupted by restart");
+});
+
+test("a ticket job's intro shows the chain of jobs and tickets that led to it", async () => {
+  const t1 = source();
+  const a = ticketJob("A", at(14, 10), t1.id);
+  now = at(14, 10);
+  await jobs.tick();
+  const t2 = store.getTicket("p", store.getJob("p", a.id)!.result!.ticketId!)!;
+  const b = ticketJob("B", at(14, 11), t2.id);
+  now = at(14, 11);
+  await jobs.tick();
+  const t3 = store.getTicket("p", store.getJob("p", b.id)!.result!.ticketId!)!;
+  expect(t3.body).toStartWith(`Created by job 'B', scheduled by ticket ${t2.id} ("A"), which was created by job 'A', ` +
+    `scheduled by ticket ${t1.id} ("Weekly posts") (chain of 2).`);
+  expect(jobs.chain("p", t3.id).map((l) => l.job.name)).toEqual(["B", "A"]);
+});
+
+test("the chain walk stops on a loop, and a ticket job from a 10-deep chain is refused", () => {
+  // Hand-made files: a job whose source ticket was created by that same job loops forever without the guard.
+  const t = store.createTicket("p", { title: "loop", body: "", status: "review" });
+  const j = ticketJob("L", at(15, 9), t.id);
+  store.updateTicket("p", t.id, { jobId: j.id });
+  expect(jobs.chain("p", t.id)).toHaveLength(1);
+
+  let src = source().id;
+  for (let i = 0; i < MAX_CHAIN; i++) {
+    const job = ticketJob(`J${i}`, at(15, 9), src);
+    src = store.createTicket("p", { title: `T${i}`, body: "", status: "review", jobId: job.id }).id;
+  }
+  expect(jobs.chain("p", src)).toHaveLength(MAX_CHAIN);
+  expect(() => ticketJob("one more", at(15, 9), src)).toThrow("chain of 10 tickets");
+  // A command job is still fine, and so is a ticket job one step earlier.
+  expect(() => jobs.create("p", { name: "c", at: local(at(15, 9)), action: { kind: "command", command: "true" } }, src)).not.toThrow();
+});
+
+test("an old missed job file reads as skipped", () => {
+  const j = ticketJob("Old", at(15, 9));
+  store.saveJob("p", { ...j, state: "missed" as any });
+  expect(store.getJob("p", j.id)).toMatchObject({ state: "skipped", result: { message: "was due while the computer was off" } });
+  expect(jobs.list("p").find((x) => x.id === j.id)!.state).toBe("skipped");
 });
 
 test("cancel stops a job from ever running", async () => {
@@ -188,21 +258,15 @@ test("cancel stops a job from ever running", async () => {
   await expect(jobs.cancel("p", j.id)).rejects.toThrow("is cancelled");
 });
 
-test("update changes a scheduled job; a new time puts a missed job back on the schedule", async () => {
-  const src = source();
-  const j = ticketJob("A", at(14, 10), src.id);
+test("update changes a scheduled job and replaces its whole action", async () => {
+  const j = ticketJob("A", at(14, 10));
   const u = await jobs.update("p", j.id, { name: "A2", at: local(at(14, 11)), action: { kind: "command", command: "true", timeoutSec: 5 } });
   expect(u).toMatchObject({ name: "A2", at: at(14, 11).toISOString(), action: { kind: "command", command: "true", timeoutSec: 5 } });
   await expect(jobs.update("p", j.id, { at: local(at(14, 8)) })).rejects.toThrow("in the past");
+  await expect(jobs.update("p", j.id, { action: { kind: "ticket", title: "only the title" } as any }))
+    .rejects.toThrow("send the whole action (kind and all its fields), not only the part you change");
 
-  now = at(14, 30);
-  await jobs.tick();
-  expect(store.getJob("p", j.id)!.state).toBe("missed");
-  const back = await jobs.update("p", j.id, { at: local(at(14, 31)) });
-  expect(back.state).toBe("scheduled");
-  expect(store.getTicket("p", src.id)!.missedJobs).toBeNull();
-
-  now = at(14, 31);
+  now = at(14, 11);
   await jobs.tick();
   await jobs.whenIdle();
   expect(store.getJob("p", j.id)!.state).toBe("done");
@@ -328,4 +392,9 @@ test("the board's list keeps every job finished in the last days; list_jobs keep
   expect(week.length).toBe(23);
   expect(week.map((j) => j.id)).toContain(open.id);
   expect(week.map((j) => j.id)).not.toContain(old.id);
+});
+
+test("nothing about jobs asks the user: no attention or notification kind for them", () => {
+  expect(NOTIFY_KINDS as string[]).not.toContain("job");
+  expect(Object.keys(DEFAULT_NOTIFY.kinds)).not.toContain("job");
 });

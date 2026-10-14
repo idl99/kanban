@@ -56,7 +56,7 @@ export async function startDaemon(): Promise<void> {
   const terminals = new TerminalWatcher(store, bus, sessions);
   const mcp = new McpManager(bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude", seenFile: join(store.root, "mcp-seen.json") });
   const scheduler = new Scheduler(board, store, bus);
-  const jobs = new JobRunner(board, store, bus, { notify: (title, body) => notifier.macOnly(title, body) });
+  const jobs = new JobRunner(board, store, bus);
   const huddles = new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());

@@ -15,7 +15,6 @@ const KINDS: { kind: NotifyKind; label: string }[] = [
   { kind: "limit", label: "Usage limit hit" },
   { kind: "blocked", label: "Blocked / plan stuck" },
   { kind: "huddle", label: "Huddle asks you" },
-  { kind: "job", label: "Scheduled job missed" },
   { kind: "reply", label: "Claude replied in Planning" },
 ];
 

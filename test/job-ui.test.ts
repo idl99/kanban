@@ -34,21 +34,19 @@ test("the chip counts the ticket's scheduled jobs and names the next one", () =>
   expect(upcoming(jobs).map((j) => j.id)).toEqual(["b", "d", "a"]);
 });
 
-test("the Upcoming list puts missed first and keeps finished jobs for 7 days", () => {
+test("the Upcoming list keeps finished jobs for 7 days", () => {
   const old = new Date(NOW - 8 * 86400_000).toISOString();
   const recent = new Date(NOW - 86400_000).toISOString();
   const jobs = [
     job("open"),
-    job("miss", { state: "missed", sourceTicketId: null }),
+    job("skip", { state: "skipped", updatedAt: recent }),
     job("run", { state: "running" }),
     job("done", { state: "done", updatedAt: recent, firedAt: recent }),
     job("stale", { state: "failed", updatedAt: old, firedAt: old }),
   ];
   const all = jobsToShow(jobs, null, NOW);
-  expect(all.missed.map((j) => j.id)).toEqual(["miss"]);
   expect(all.open.map((j) => j.id).sort()).toEqual(["open", "run"]);
-  expect(all.over.map((j) => j.id)).toEqual(["done"]);
-  expect(jobsToShow(jobs, "t1", NOW).missed).toEqual([]);
+  expect(all.over.map((j) => j.id).sort()).toEqual(["done", "skip"]);
 });
 
 test("a command's result reads as plain words", () => {
