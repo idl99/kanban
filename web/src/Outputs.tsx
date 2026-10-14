@@ -66,13 +66,29 @@ function fileIcon(name: string) {
 const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /**
+ * Appended to previewed HTML. Pages made for a desktop (a fixed-width card centred with flexbox, say) overflow a phone
+ * on both sides, and the part off the left edge can't be scrolled to. Lay the page out wide enough for everything to
+ * fit, then zoom it out to the frame's width (not below 60%, past that it scrolls, from the left edge).
+ */
+const FIT_SCRIPT = `<script>(function(){var d=document.documentElement,on=0;
+function fit(){if(on){d.style.zoom="";d.style.minWidth="";on=0}var vw=d.clientWidth,w=vw;window.scrollTo(0,window.scrollY);
+for(var i=0;i<3&&document.body;i++){var l=0,e=document.body.getElementsByTagName("*"),n=Math.min(e.length,5000);
+for(var j=0;j<n;j++){var r=e[j].getBoundingClientRect();if(r.width&&r.left<l)l=r.left}
+var need=Math.ceil(Math.max(d.scrollWidth,w-2*l));if(need<=w+1)break;w=need;d.style.minWidth=w+"px";on=1}
+if(on)d.style.zoom=String(Math.max(vw/w,0.6))}
+var t;function later(){clearTimeout(t);t=setTimeout(fit,60)}
+addEventListener("load",fit);addEventListener("resize",later);addEventListener("click",later,true);fit()})()</script>`;
+
+const withFit = (html: string) => html + FIT_SCRIPT;
+
+/**
  * Claude-written HTML only ever runs in an opaque-origin frame (sandbox without allow-same-origin), so it can't
  * reach the board's API. A new tab gets a script-free page on a blob URL that wraps the same sandboxed frame.
  */
 function openInTab(name: string, html: string) {
   const page = `<!doctype html><meta charset="utf-8"><title>${escapeAttr(name)}</title>`
     + `<style>html,body{margin:0;height:100%}iframe{display:block;border:0;width:100%;height:100%}</style>`
-    + `<iframe sandbox="allow-scripts" srcdoc="${escapeAttr(html)}"></iframe>`;
+    + `<iframe sandbox="allow-scripts" srcdoc="${escapeAttr(withFit(html))}"></iframe>`;
   const url = URL.createObjectURL(new Blob([page], { type: "text/html" }));
   window.open(url, "_blank", "noopener");
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
@@ -303,7 +319,7 @@ export function Outputs({ slug, ticket, onCount, focus }: {
       <div className="output-body" ref={bodyRef}>
       {kind === "html" ? (
         text === null ? <div className="muted output-html-note">Loading…</div>
-          : <iframe className="output-html" sandbox="allow-scripts" srcDoc={text} title={`Preview of ${open}`} />
+          : <iframe className="output-html" sandbox="allow-scripts" srcDoc={withFit(text)} title={`Preview of ${open}`} />
       ) : kind === "image" ? (
         <div className="output-image"><img src={`${rawUrl}?v=${encodeURIComponent(current?.updatedAt ?? "")}`} alt={open ?? ""} /></div>
       ) : kind === "binary" ? binaryNote
