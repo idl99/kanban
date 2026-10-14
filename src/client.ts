@@ -41,6 +41,7 @@ export interface TicketInfo {
   runStartedAt?: string | null;
   error: string | null;
   scheduleId?: string | null;
+  jobId?: string | null;
   /** Planner ticket whose plan runs this one. */
   parentId?: string | null;
   planKey?: string | null;
@@ -102,6 +103,30 @@ export interface ScheduleHistoryInfo {
   by?: "user" | { ticketId: string };
   previous?: { title?: string; body?: string; cron?: string };
   ticket: { id: string; title: string; status: Status; outcome: string | null; running: boolean } | null;
+}
+
+export type JobActionInfo =
+  | { kind: "ticket"; title: string; body: string; mode?: TicketMode }
+  | { kind: "command"; command: string; timeoutSec?: number };
+
+export interface JobInfo {
+  id: string;
+  name: string;
+  at: string;
+  action: JobActionInfo;
+  state: "scheduled" | "running" | "done" | "failed" | "cancelled" | "missed" | "skipped";
+  sourceTicketId: string | null;
+  createdAt: string;
+  firedAt: string | null;
+  result: { ticketId?: string; exitCode?: number | null; durationMs?: number; output?: string; timedOut?: boolean; message?: string } | null;
+  /** Due time in words, e.g. "Tue 20 Oct 22:00 (in 2 days)". */
+  when: string;
+}
+
+export interface JobInput {
+  name?: string;
+  at?: string;
+  action?: JobActionInfo;
 }
 
 export interface CronPreviewInfo {
@@ -294,6 +319,19 @@ export class BoardClient {
   runSchedule = (slug: string, id: string) =>
     this.req<{ entry: ScheduleHistoryInfo; schedule: ScheduleInfo }>("POST", `${this.s(slug, id)}/run`, {});
   scheduleHistory = (slug: string, id: string) => this.req<ScheduleHistoryInfo[]>("GET", `${this.s(slug, id)}/history`);
+  private j(slug: string, id?: string): string {
+    const base = `/api/profiles/${encodeURIComponent(slug)}/jobs`;
+    return id ? `${base}/${encodeURIComponent(id)}` : base;
+  }
+  // `run`: the board run's CKANBAN_TICKET; a run schedules jobs as its ticket and may only change its own.
+  listJobs = (slug: string, ticketId?: string) =>
+    this.req<JobInfo[]>("GET", ticketId ? `${this.j(slug)}?ticketId=${encodeURIComponent(ticketId)}` : this.j(slug));
+  // A huddle teammate (agent set) is refused by the daemon.
+  createJob = (slug: string, input: JobInput, c: HuddleCaller = { run: null, agent: null }) => this.req<JobInfo>("POST", this.j(slug), input, this.as(c));
+  updateJob = (slug: string, id: string, patch: JobInput, c: HuddleCaller = { run: null, agent: null }) =>
+    this.req<JobInfo>("PATCH", this.j(slug, id), patch, this.as(c));
+  jobAction = (slug: string, id: string, action: "cancel" | "skip" | "run", c: HuddleCaller = { run: null, agent: null }) =>
+    this.req<JobInfo>("POST", `${this.j(slug, id)}/${action}`, {}, this.as(c));
   cronPreview = (expr: string) => this.req<CronPreviewInfo>("GET", `/api/cron/preview?expr=${encodeURIComponent(expr)}`);
 
   // Huddle role presets (teammates): built-ins merged with the global ones and the board's own.
@@ -462,6 +500,7 @@ export function ticketText(t: TicketInfo, comments: CommentInfo[] = []): string 
     `status: ${state(t)}`,
     `mode: ${t.mode ?? "auto"}`,
   ];
+  if (t.jobId) lines.push(`job: ${t.jobId} (created by this one-time job; see list_jobs)`);
   if (t.scheduleId) lines.push(`schedule: ${t.scheduleId} (created by this schedule; see list_schedules)`);
   if (t.parentId) lines.push(`plan: child of ${t.parentId}${t.planKey ? ` (key ${t.planKey})` : ""}`);
   if (t.dependsOn?.length) lines.push(`depends on: ${t.dependsOn.join(", ")}`);

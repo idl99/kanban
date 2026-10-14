@@ -126,6 +126,10 @@ export interface Ticket {
   model?: string | null;
   /** Set on tickets created by a schedule (see Schedule). */
   scheduleId?: string | null;
+  /** Set on tickets created by a one-time scheduled job (see Job). */
+  jobId?: string | null;
+  /** Jobs this ticket's run scheduled that were due while the computer was off: the user runs or skips them (Needs you). */
+  missedJobs?: MissedJob[] | null;
   /** Planner ticket whose Planning chat proposed this one. Missing on most tickets. */
   parentId?: string | null;
   /** Short name siblings use in dependsOn (from the planner's proposal). */
@@ -269,6 +273,52 @@ export interface Schedule {
   nextRunAt: string | null;
   /** Why the last fire could not create its ticket (cleared by the next successful fire). */
   lastError: string | null;
+}
+
+/** What a one-time job does when it fires. */
+export type JobAction =
+  /** Create a ticket and start it right away (like a schedule's fire). */
+  | { kind: "ticket"; title: string; body: string; mode: TicketMode }
+  /** Run a shell command in the board folder: no ticket, no Claude. */
+  | { kind: "command"; command: string; timeoutSec?: number };
+
+/** scheduled → running → done | failed; or cancelled, missed (was due while the computer was off), skipped. */
+export type JobState = "scheduled" | "running" | "done" | "failed" | "cancelled" | "missed" | "skipped";
+
+export interface JobResult {
+  /** Ticket the job created (ticket action). */
+  ticketId?: string;
+  /** Command action: exit code (null when it was killed), how long it took, the last 4 KB of its output. */
+  exitCode?: number | null;
+  durationMs?: number;
+  output?: string;
+  timedOut?: boolean;
+  /** Why it failed, in plain words. */
+  message?: string;
+}
+
+/** Fires once at `at`: creates and starts a ticket, or runs a command (jobs.ts). */
+export interface Job {
+  id: string;
+  name: string;
+  /** ISO time it is due. */
+  at: string;
+  action: JobAction;
+  state: JobState;
+  /** Ticket whose board run scheduled it; null when the user or CLI did. */
+  sourceTicketId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  firedAt: string | null;
+  result: JobResult | null;
+}
+
+/** A missed job on its source ticket (Ticket.missedJobs). */
+export interface MissedJob {
+  id: string;
+  name: string;
+  at: string;
+  missedAt: string;
 }
 
 export type ScheduleTrigger = "schedule" | "missed" | "manual";

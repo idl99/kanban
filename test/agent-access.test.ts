@@ -126,6 +126,10 @@ function fakeClient() {
     skipIfRunning: true, lastFiredAt: null, nextRunAt: new Date(2026, 9, 2, 9).toISOString(), lastError: null,
     summary: "Weekdays at 09:00", active: false, ...over,
   });
+  const job = (over: object = {}) => ({
+    id: "j1", name: "Post A", at: new Date(2026, 9, 20, 22).toISOString(), state: "scheduled", sourceTicketId: "t_9",
+    action: { kind: "ticket", title: "Post A", body: "post it" }, createdAt: "", firedAt: null, result: null, when: "Tue 20 Oct 22:00 (in 6 days)", ...over,
+  });
   const rec = (fn: string, result: (...a: any[]) => unknown) => async (...args: unknown[]) => {
     calls.push({ fn, args });
     return result(...args);
@@ -158,6 +162,11 @@ function fakeClient() {
         ticket: { id: "t_5", title: "Audit 2026-10-01", status: "review", outcome: "done", running: false } },
       { at: new Date(2026, 9, 1, 8, 0).toISOString(), kind: "skipped", trigger: "schedule", ticketId: "t_4", ticket: null },
     ]),
+    createJob: rec("createJob", (_s, input) => job(input)),
+    updateJob: rec("updateJob", (_s, _id, patch) => job(patch)),
+    listJobs: rec("listJobs", () => [job(), job({ id: "j2", name: "Ping", state: "failed", action: { kind: "command", command: "curl x" },
+      result: { exitCode: 7, durationMs: 1200, output: "boom", message: "exited with code 7" } })]),
+    jobAction: rec("jobAction", (_s, _id, action) => job(action === "run" ? { state: "done", result: { ticketId: "t_6" } } : { state: action === "skip" ? "skipped" : "cancelled" })),
     cronPreview: rec("cronPreview", () => ({ valid: true, error: null, summary: "Weekdays at 09:00", next: [new Date(2026, 9, 2, 9).toISOString()] })),
   };
   return { client: client as unknown as ToolContext["client"], calls };
@@ -225,16 +234,16 @@ test("every tool advertises a profile argument; change tools are flagged", () =>
   const PLANNING = ["ask_questions", "propose_branch", "propose_delete", "propose_huddle", "propose_teammate", "propose_ticket", "propose_tickets", "publish_artifact", "read_artifact"];
   for (const t of TOOLS.filter((t) => t.name !== "list_profiles" && !PLANNING.includes(t.name))) expect(t.inputSchema.properties.profile).toBeDefined();
   expect(TOOLS.filter((t) => !t.changes).map((t) => t.name).sort()).toEqual([
-    "ask_questions", "get_ticket", "huddle_read", "list_huddle_presets", "list_profiles", "list_schedules", "list_tickets", "propose_branch", "propose_delete", "propose_huddle",
+    "ask_questions", "get_ticket", "huddle_read", "list_huddle_presets", "list_jobs", "list_profiles", "list_schedules", "list_tickets", "propose_branch", "propose_delete", "propose_huddle",
     "propose_teammate", "propose_ticket", "propose_tickets", "publish_artifact", "read_artifact", "report_bug", "schedule_history",
   ]);
   // Read tools run in a Planning chat (plan mode) without a permission ask; report_bug files an issue, so it asks.
-  const READ = ["get_ticket", "huddle_read", "list_huddle_presets", "list_profiles", "list_schedules", "list_tickets", "schedule_history"];
+  const READ = ["get_ticket", "huddle_read", "list_huddle_presets", "list_jobs", "list_profiles", "list_schedules", "list_tickets", "schedule_history"];
   expect(TOOLS.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name).sort()).toEqual([...READ, ...PLANNING].sort());
   // Huddle tools work inside runs: the daemon checks who the run is (lead, coordinator, the participant itself).
   expect(TOOLS.filter((t) => t.allowInRun).map((t) => t.name).sort()).toEqual([
-    "create_schedule", "delete_huddle_preset", "delete_schedule", "huddle_add_participant", "huddle_brief", "huddle_close", "huddle_findings", "huddle_mode", "huddle_post", "huddle_status",
-    "save_huddle_preset", "start_huddle", "suggest_tags", "update_schedule",
+    "cancel_job", "create_schedule", "delete_huddle_preset", "delete_schedule", "huddle_add_participant", "huddle_brief", "huddle_close", "huddle_findings", "huddle_mode", "huddle_post", "huddle_status",
+    "run_job_now", "save_huddle_preset", "schedule_job", "skip_job", "start_huddle", "suggest_tags", "update_job", "update_schedule",
   ]);
 });
 
@@ -554,4 +563,37 @@ test("needs and release go through create_ticket and update_ticket", async () =>
   await callTool("update_ticket", { id: "t_1", needs: [], release: true }, ctx);
   expect(calls.at(-1)).toEqual({ fn: "updateTicket", args: ["site", "t_1", { needs: [], parentId: null }, "site/t_9"] });
   expect((await callTool("update_ticket", { id: "t_1", needs: "emulator" }, ctx)).content[0].text).toContain("needs must be a list");
+});
+
+// --- one-time job tools -------------------------------------------------------------------------
+
+test("job tools work inside a board run and go to the daemon as that run", async () => {
+  const { ctx, calls } = ctxWith({ CKANBAN_TICKET: "site/t_9" }, "/elsewhere");
+  const action = { kind: "ticket", title: "Post A", body: "post it" };
+  const r = await callTool("schedule_job", { name: "Post A", at: "2026-10-20 22:00", action }, ctx);
+  expect(r.content[0].text).toBe("Scheduled job j1 on board site: Post A runs Tue 20 Oct 22:00 (in 6 days).");
+  const me = { run: "site/t_9", agent: null };
+  expect(calls.find((c) => c.fn === "createJob")?.args).toEqual(["site", { name: "Post A", at: "2026-10-20 22:00", action }, me]);
+
+  const l = await callTool("list_jobs", { ticketId: "t_9" }, ctx);
+  expect(l.content[0].text).toContain("j1  [scheduled]  Post A: Tue 20 Oct 22:00 (in 6 days), ticket \"Post A\"; scheduled by t_9");
+  expect(l.content[0].text).toContain("j2  [failed]  Ping");
+  expect(l.content[0].text).toContain("exit 7; 1.2 s; exited with code 7");
+  expect(l.content[0].text).toContain("Last output:\nboom");
+  expect(calls.find((c) => c.fn === "listJobs")?.args).toEqual(["site", "t_9"]);
+
+  expect((await callTool("run_job_now", { id: "j1" }, ctx)).content[0].text).toBe("Started: created ticket t_6, Claude is working on it.");
+  expect((await callTool("skip_job", { id: "j1" }, ctx)).content[0].text).toStartWith("Skipped: j1  [skipped]");
+  expect((await callTool("cancel_job", { id: "j1" }, ctx)).content[0].text).toStartWith("Cancelled: j1  [cancelled]");
+  expect(calls.filter((c) => c.fn === "jobAction").map((c) => c.args)).toEqual([
+    ["site", "j1", "run", me], ["site", "j1", "skip", me], ["site", "j1", "cancel", me],
+  ]);
+
+  await callTool("update_job", { id: "j1", at: "2026-10-21 09:00", action: { kind: "command", command: "./post.sh", timeoutSec: 60 } }, ctx);
+  expect(calls.find((c) => c.fn === "updateJob")?.args).toEqual([
+    "site", "j1", { at: "2026-10-21 09:00", action: { kind: "command", command: "./post.sh", timeoutSec: 60 } }, me,
+  ]);
+  expect((await callTool("update_job", { id: "j1" }, ctx)).content[0].text).toContain("nothing to change");
+  expect((await callTool("schedule_job", { name: "x", at: "2026-10-20 22:00", action: { kind: "email" } }, ctx)).content[0].text)
+    .toContain("action.kind must be");
 });

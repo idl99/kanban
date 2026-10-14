@@ -95,7 +95,7 @@ export interface QuickChat {
   title: string | null;
 }
 
-export type AttentionKind = "stalled" | "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
+export type AttentionKind = "stalled" | "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle" | "job";
 /** Why a ticket needs you (one server rule for cards, counts and the Inbox); since: when it started waiting. */
 export interface Attention {
   kind: AttentionKind;
@@ -845,7 +845,7 @@ export interface PushDevice {
 }
 
 /** "Needs you" notifications (src/server/notify.ts): webhook (ntfy or JSON), macOS banner, per-kind toggles. */
-export type NotifyKind = "stalled" | "questions" | "proposal" | "review" | "failed" | "limit" | "blocked" | "huddle" | "reply";
+export type NotifyKind = "stalled" | "questions" | "proposal" | "review" | "failed" | "limit" | "blocked" | "huddle" | "job" | "reply";
 export interface NotifyState {
   webhookUrl: string;
   format: "auto" | "ntfy" | "json";

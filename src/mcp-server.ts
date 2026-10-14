@@ -2,7 +2,7 @@
 // Hand-rolled instead of @modelcontextprotocol/sdk: we only need initialize, tools/list and tools/call.
 import {
   assertCanChange, BoardClient, bugReportText, ClientError, huddleCaller, parseMode, parseStatus, profileList, resolveProfile, RUN_ENV, runProfile,
-  ticketLine, ticketText, type HuddlePage, type ScheduleHistoryInfo, type ScheduleInfo, type ScheduleInput, type TicketPatch,
+  ticketLine, ticketText, type HuddlePage, type JobInfo, type JobInput, type ScheduleHistoryInfo, type ScheduleInfo, type ScheduleInput, type TicketPatch,
 } from "./client";
 import { BUILTIN_PRESETS, MAIN_PRESET, presetLine, presetName } from "./server/huddle-presets";
 import { HUDDLE_AGENT_ENV, huddleLine, PROPOSED_MAX_COST_USD, proposedBudget, rosterEntryError, rosterError } from "./server/huddle-roster";
@@ -130,7 +130,7 @@ export interface ToolContext {
   client: Pick<BoardClient,
     | "listProfiles" | "listTickets" | "getTicket" | "createTicket" | "updateTicket" | "deleteTicket" | "chat" | "stop" | "listComments"
     | "comment" | "reportBug" | "listSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "runSchedule"
-    | "scheduleHistory" | "cronPreview" | "adopt" | "planAction" | "huddleRead" | "huddlePost" | "huddleMode" | "huddleAdd" | "huddleFindings"
+    | "scheduleHistory" | "cronPreview" | "listJobs" | "createJob" | "updateJob" | "jobAction" | "adopt" | "planAction" | "huddleRead" | "huddlePost" | "huddleMode" | "huddleAdd" | "huddleFindings"
     | "huddleStatus" | "huddleCloseRequest" | "startAutoHuddle"
     | "listHuddlePresets" | "saveHuddlePreset" | "deleteHuddlePreset" | "listHuddleTemplates" | "huddleBrief" | "huddleProposeTeammate">;
   cwd: string;
@@ -382,6 +382,157 @@ const SCHEDULE_TOOLS: Tool[] = [
       const limit = Math.max(1, Math.min(100, Number(args?.limit) || 20));
       const lines = h.slice(0, limit).map(historyLine);
       return `${s ? scheduleText(s) : `Schedule ${id}`}\n\nHistory:\n${lines.length ? lines.join("\n") : "(not run yet)"}`;
+    },
+  },
+];
+
+// --- One-time jobs ---------------------------------------------------------------------------
+// The board fires them once at a set time. Runs may schedule them and manage the ones they scheduled.
+
+const JOB_ID = { type: "string", description: "Job id (from schedule_job or list_jobs)." };
+const JOB_AT = {
+  type: "string",
+  description: "When it runs, in this computer's local time: \"2026-10-20 22:00\" (or an ISO time with a timezone). Must be in the future.",
+};
+const JOB_ACTION = {
+  type: "object",
+  description:
+    "What happens at that time. {kind: \"ticket\", title, body, mode?}: the board creates a ticket and Claude starts on it right away, " +
+    "unattended, with no access to this conversation. The body is the whole prompt: put everything the future run needs in it " +
+    "(goal, the exact text to post, where, how to check it worked); for long content or images, save files in the board folder first and give their paths. " +
+    "mode: auto (default) or interview. " +
+    "{kind: \"command\", command, timeoutSec?}: runs the command with /bin/sh in the board folder, no ticket and no Claude " +
+    "(env CKANBAN_BOARD, CKANBAN_JOB, CKANBAN_SOURCE_TICKET; killed after timeoutSec, default 600); its exit code and last 4 KB of output are kept. " +
+    "A command can create tickets itself with `ckanban ticket create`.",
+  properties: {
+    kind: { type: "string", enum: ["ticket", "command"] },
+    title: { type: "string" },
+    body: { type: "string" },
+    mode: { type: "string", enum: ["auto", "interview"] },
+    command: { type: "string" },
+    timeoutSec: { type: "number" },
+  },
+  required: ["kind"],
+};
+
+function jobAction(v: any): JobInput["action"] {
+  if (!v || typeof v !== "object") throw new ClientError("action must be an object: {kind: \"ticket\", title, body} or {kind: \"command\", command}");
+  if (v.kind === "ticket") return { kind: "ticket", title: String(v.title ?? ""), body: String(v.body ?? ""), ...(v.mode !== undefined ? { mode: parseMode(v.mode) } : {}) };
+  if (v.kind === "command") return { kind: "command", command: String(v.command ?? ""), ...(v.timeoutSec !== undefined ? { timeoutSec: Number(v.timeoutSec) } : {}) };
+  throw new ClientError("action.kind must be \"ticket\" or \"command\"");
+}
+
+/** One line per job: id, state, time, what it does, and how it went. */
+export function jobLine(j: JobInfo): string {
+  const what = j.action.kind === "ticket" ? `ticket "${j.action.title}"` : `command \`${j.action.command.replace(/\s+/g, " ").slice(0, 80)}\``;
+  const bits = [`${j.id}  [${j.state}]  ${j.name}: ${j.when}, ${what}`];
+  if (j.sourceTicketId) bits.push(`scheduled by ${j.sourceTicketId}`);
+  const r = j.result;
+  if (r?.ticketId) bits.push(`created ticket ${r.ticketId}`);
+  if (r && j.action.kind === "command" && j.state !== "running" && (r.exitCode !== undefined || r.timedOut)) {
+    bits.push(r.timedOut ? "timed out" : `exit ${r.exitCode}`);
+    if (r.durationMs !== undefined) bits.push(`${(r.durationMs / 1000).toFixed(1)} s`);
+  }
+  if (r?.message && !r.timedOut) bits.push(r.message);
+  if (j.state === "missed") bits.push("was due while the computer was off: run_job_now or skip_job");
+  return bits.join("; ");
+}
+
+function jobText(j: JobInfo): string {
+  const out = j.result?.output?.trim();
+  return out ? `${jobLine(j)}\nLast output:\n${out.slice(-1500)}` : jobLine(j);
+}
+
+const JOB_TOOLS: Tool[] = [
+  {
+    name: "schedule_job",
+    description:
+      "Schedule a one-time job: at a set date and time the board either creates and starts a ticket (Claude works on it unattended) " +
+      "or runs a command with no Claude. Use it for \"do this once later\", e.g. at the end of a planning run: post A on Tue 22:00, post B on Wed 09:00; " +
+      "nothing has to stay awake until then. If the computer is off at that time and the board sees it more than 10 minutes late, " +
+      "it does not run: this ticket shows in Needs you and the user picks run now or skip. For recurring work use create_schedule instead. " +
+      "Returns the job id and when it runs.",
+    inputSchema: {
+      type: "object",
+      properties: { profile: PROFILE, name: { type: "string", description: "Short name the user sees, e.g. \"Post: new kitchen\"." }, at: JOB_AT, action: JOB_ACTION },
+      required: ["name", "at", "action"],
+    },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      const slug = await slugFor(args, ctx);
+      const j = await ctx.client.createJob(slug, { name: str(args, "name")!, at: str(args, "at")!, action: jobAction(args?.action) }, huddleCaller(ctx.env));
+      return `Scheduled job ${j.id} on board ${slug}: ${j.name} runs ${j.when}.`;
+    },
+  },
+  {
+    name: "list_jobs",
+    description: "List a board's one-time jobs: upcoming and missed ones, plus recent finished ones (state, time, result: created ticket, exit code, errors).",
+    inputSchema: {
+      type: "object",
+      properties: { profile: PROFILE, ticketId: { type: "string", description: "Only jobs this ticket's runs scheduled." } },
+    },
+    annotations: { readOnlyHint: true },
+    changes: false,
+    async run(args, ctx) {
+      const slug = await slugFor(args, ctx);
+      const tid = str(args, "ticketId", false);
+      const js = await ctx.client.listJobs(slug, tid);
+      if (!js.length) return tid ? `Ticket ${tid} has no scheduled jobs.` : `Board ${slug} has no scheduled jobs.`;
+      return `Jobs on board ${slug}${tid ? ` scheduled by ${tid}` : ""}:\n${js.map(jobText).join("\n")}`;
+    },
+  },
+  {
+    name: "update_job",
+    description: "Change a job that hasn't run yet (scheduled or missed): its name, time (at) or action. A new time puts a missed job back on the schedule. " +
+      "Inside a board run, only jobs this ticket scheduled.",
+    inputSchema: { type: "object", properties: { profile: PROFILE, id: JOB_ID, name: { type: "string" }, at: JOB_AT, action: JOB_ACTION }, required: ["id"] },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      const slug = await slugFor(args, ctx);
+      const patch: JobInput = {};
+      if (typeof args?.name === "string") patch.name = args.name;
+      if (typeof args?.at === "string") patch.at = args.at;
+      if (args?.action !== undefined) patch.action = jobAction(args.action);
+      if (!Object.keys(patch).length) throw new ClientError("nothing to change: pass name, at or action");
+      return `Updated: ${jobLine(await ctx.client.updateJob(slug, str(args, "id")!, patch, huddleCaller(ctx.env)))}`;
+    },
+  },
+  {
+    name: "cancel_job",
+    description: "Cancel a job that hasn't run yet, so it never runs. Inside a board run, only jobs this ticket scheduled.",
+    inputSchema: { type: "object", properties: { profile: PROFILE, id: JOB_ID }, required: ["id"] },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      const slug = await slugFor(args, ctx);
+      return `Cancelled: ${jobLine(await ctx.client.jobAction(slug, str(args, "id")!, "cancel", huddleCaller(ctx.env)))}`;
+    },
+  },
+  {
+    name: "run_job_now",
+    description: "Run a scheduled or missed job right away (for a missed job: when the user said to run it). Inside a board run, only jobs this ticket scheduled.",
+    inputSchema: { type: "object", properties: { profile: PROFILE, id: JOB_ID }, required: ["id"] },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      const slug = await slugFor(args, ctx);
+      const j = await ctx.client.jobAction(slug, str(args, "id")!, "run", huddleCaller(ctx.env));
+      if (j.state === "failed") throw new ClientError(`job ${j.id} failed: ${j.result?.message ?? "unknown error"}`);
+      if (j.result?.ticketId) return `Started: created ticket ${j.result.ticketId}, Claude is working on it.`;
+      return `Started: ${jobLine(j)}. Check list_jobs for its exit code and output.`;
+    },
+  },
+  {
+    name: "skip_job",
+    description: "Skip a missed (or scheduled) job: it won't run and no longer waits for the user. Inside a board run, only jobs this ticket scheduled.",
+    inputSchema: { type: "object", properties: { profile: PROFILE, id: JOB_ID }, required: ["id"] },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      const slug = await slugFor(args, ctx);
+      return `Skipped: ${jobLine(await ctx.client.jobAction(slug, str(args, "id")!, "skip", huddleCaller(ctx.env)))}`;
     },
   },
 ];
@@ -1387,6 +1538,7 @@ export const TOOLS: Tool[] = [
   ...HUDDLE_TOOLS,
   ...ARTIFACT_TOOLS,
   ...SCHEDULE_TOOLS,
+  ...JOB_TOOLS,
 ];
 
 export interface ToolResult {
@@ -1423,7 +1575,8 @@ export async function handleMessage(msg: JsonRpc, ctx: ToolContext): Promise<obj
         instructions:
           "Tools for the user's local ckanban board. Use them when the user asks to put work on the board, " +
           "find what to do next, or check on, start or steer tickets. Tickets you create land in Backlog in interview mode by default. " +
-          "Schedules (create_schedule etc.) make the board create and run a ticket on a cron, for work the user wants done regularly. " +
+          "Schedules (create_schedule etc.) make the board create and run a ticket on a cron, for work the user wants done regularly; " +
+          "schedule_job runs a ticket or a command once at a set time. " +
           "ask_questions, propose_ticket, propose_tickets, propose_branch and propose_teammate are for the board's ticket chats: they show a form or cards to the user.",
       });
     }

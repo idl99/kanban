@@ -148,7 +148,11 @@ test("a scheduled ticket's first run is told its schedule", () => {
   expect(p).toContain('created by schedule s1 ("Nightly audit") on board kanban');
   expect(p).toContain("update_schedule");
   expect(firstRunPrompt(t, { repo: "remote" as const, outputDir: "/out", schedule: { id: "s1", name: null, board: "kanban" } })).toContain("since been deleted");
-  expect(firstRunPrompt(ticket, { repo: "remote" as const, outputDir: "/out" })).not.toContain("schedule");
+  const plain = firstRunPrompt(ticket, { repo: "remote" as const, outputDir: "/out" });
+  expect(plain).not.toContain("created by schedule");
+  expect(plain).not.toContain("update_schedule");
+  // Every run learns it can do something once later with a one-time job.
+  expect(plain).toContain("use `schedule_job`; a ticket job's prompt is all its future run sees");
 });
 
 test("planning and Review/Done chats can propose new tickets, first runs can't", () => {

@@ -11,6 +11,7 @@ import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, resolveConflicts,
 import { resumeCommand } from "./prompts";
 import { cronError, describeCron, nextRuns, parseCron } from "./cron";
 import { RUN_HEADER, ScheduleError, Scheduler } from "./scheduler";
+import { JobError, JobRunner } from "./jobs";
 import { SnippetError, Snippets } from "./snippets";
 import { HuddleError, Huddles, type Caller } from "./huddle";
 import { HuddleSessionCache, participantSession, participantTool } from "./huddle-session";
@@ -57,6 +58,7 @@ export interface ServerDeps {
   shells?: ShellManager;
   mcp?: McpManager;
   scheduler?: Scheduler;
+  jobs?: JobRunner;
   agents?: AgentRegistry;
   huddles?: Huddles;
   /** Restart the daemon once no run is active (POST /api/restart); missing when not running as the daemon. */
@@ -185,6 +187,7 @@ export function createServer(deps: ServerDeps) {
   const shells = deps.shells ?? new ShellManager();
   const mcp = deps.mcp ?? new McpManager(bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const scheduler = deps.scheduler ?? new Scheduler(board, store, bus);
+  const jobs = deps.jobs ?? new JobRunner(board, store, bus);
   const agents = deps.agents ?? new AgentRegistry();
   const huddles = deps.huddles ?? new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const snippets = new Snippets(store, bus);
@@ -826,6 +829,26 @@ export function createServer(deps: ServerDeps) {
       if (parts.length === 5 && parts[4] === "run" && m === "POST") {
         const entry = await scheduler.runNow(slug, sid);
         return json({ entry, schedule: scheduler.view(slug, scheduler.get(slug, sid)) });
+      }
+      throw new HttpError(404, "not found");
+    }
+
+    // /profiles/:p/jobs — one-time jobs (jobs.ts). Anyone lists; a board run (RUN_HEADER) schedules jobs as its
+    // ticket and may change, run or skip only the jobs it scheduled.
+    if (parts[2] === "jobs") {
+      if (parts.length === 3 && m === "GET") return json(jobs.list(slug, url.searchParams.get("ticketId")).map((j) => jobs.view(j)));
+      if (parts.length === 4 && m === "GET") return json(jobs.view(jobs.get(slug, parts[3])));
+      // Huddle teammates run as their host ticket but only review: jobs run in the board folder and missed ones are the user's call.
+      if (req.headers.get(HUDDLE_HEADER)) throw new HttpError(403, "huddle participants can't schedule or change jobs; ask @main");
+      const by = runTicket(req, slug);
+      if (by && !store.getTicket(slug, by)) throw new HttpError(404, `ticket ${by} not found`);
+      if (parts.length === 3 && m === "POST") return json(jobs.view(jobs.create(slug, (await body(req)) ?? {}, by)), 201);
+      const jid = parts[3];
+      if (parts.length === 4 && m === "PATCH") return json(jobs.view(await jobs.update(slug, jid, (await body(req)) ?? {}, by)));
+      if (parts.length === 5 && m === "POST") {
+        if (parts[4] === "cancel") return json(jobs.view(await jobs.cancel(slug, jid, by)));
+        if (parts[4] === "skip") return json(jobs.view(await jobs.skip(slug, jid, by)));
+        if (parts[4] === "run") return json(jobs.view(await jobs.runNow(slug, jid, by)));
       }
       throw new HttpError(404, "not found");
     }
@@ -1617,6 +1640,7 @@ export function createServer(deps: ServerDeps) {
       if (e instanceof McpError) return json({ error: e.message }, e.status);
       if (e instanceof AgentError) return json({ error: e.message }, e.status);
       if (e instanceof ScheduleError) return json({ error: e.message }, e.status);
+      if (e instanceof JobError) return json({ error: e.message }, e.status);
       if (e instanceof SnippetError) return json({ error: e.message }, e.status);
       if (e instanceof HuddleError) return json({ error: e.message }, e.status);
       if (e instanceof RemoteError) return json({ error: e.message }, e.status);

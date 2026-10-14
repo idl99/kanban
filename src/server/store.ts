@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import YAML from "yaml";
 import type {
-  ActivityEntry, Comment, Config, Huddle, HuddleMessage, OutputFile, Profile, Schedule, ScheduleHistoryEntry, Status, Ticket, TicketMode,
+  ActivityEntry, Comment, Config, Huddle, HuddleMessage, Job, OutputFile, Profile, Schedule, ScheduleHistoryEntry, Status, Ticket, TicketMode,
 } from "./types";
 import { cleanPresets, type HuddlePreset } from "./huddle-presets";
 import { cleanTemplates, type HuddleTemplate } from "./huddle-templates";
@@ -159,7 +159,7 @@ export class Store {
   createTicket(
     slug: string,
     input: {
-      title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; parentId?: string; planKey?: string; dependsOn?: string[];
+      title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; jobId?: string; parentId?: string; planKey?: string; dependsOn?: string[];
       needs?: string[]; tags?: string[]; important?: boolean;
     },
   ): Ticket {
@@ -169,6 +169,7 @@ export class Store {
       sessionId: null, worktree: null, branch: null, prUrl: null, outcome: null, lastActivity: null,
       lastRunAt: null, runCount: 0, error: null, createdAt: at, updatedAt: at, body: input.body,
       ...(input.scheduleId ? { scheduleId: input.scheduleId } : {}),
+      ...(input.jobId ? { jobId: input.jobId } : {}),
       ...(input.parentId ? { parentId: input.parentId } : {}),
       ...(input.planKey ? { planKey: input.planKey } : {}),
       ...(input.dependsOn?.length ? { dependsOn: input.dependsOn } : {}),
@@ -324,6 +325,36 @@ export class Store {
 
   readScheduleHistory(slug: string, id: string): ScheduleHistoryEntry[] {
     return readJsonl<ScheduleHistoryEntry>(join(this.schedulesDir(slug), `${id}.history.jsonl`));
+  }
+
+  private jobsDir(slug: string) {
+    return join(this.profileDir(slug), "jobs");
+  }
+
+  /** One-time jobs (jobs.ts), oldest due first. */
+  listJobs(slug: string): Job[] {
+    const dir = this.jobsDir(slug);
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => this.getJob(slug, f.slice(0, -5)))
+      .filter((j): j is Job => j !== null)
+      .sort((a, b) => a.at.localeCompare(b.at) || a.createdAt.localeCompare(b.createdAt));
+  }
+
+  getJob(slug: string, id: string): Job | null {
+    if (!/^[a-z0-9]+$/.test(id)) return null;
+    const file = join(this.jobsDir(slug), `${id}.json`);
+    if (!existsSync(file)) return null;
+    try {
+      return JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      return null;
+    }
+  }
+
+  saveJob(slug: string, j: Job): void {
+    atomicWrite(join(this.jobsDir(slug), `${j.id}.json`), JSON.stringify(j, null, 2) + "\n");
   }
 
   /** Huddle presets at one level: a board's own (slug), or the global ones every board gets (slug null). Merge with mergePresets. */

@@ -1,7 +1,7 @@
 import type { HuddleView } from "./huddle";
 import type { McpState } from "./mcp";
 import type { SessionSummary } from "./session";
-import type { HuddleMessage, Profile, Schedule, Ticket } from "./types";
+import type { HuddleMessage, Job, Profile, Schedule, Ticket } from "./types";
 
 export type BusEvent =
   | { type: "ticket.updated"; profile: string; ticket: Ticket }
@@ -16,6 +16,8 @@ export type BusEvent =
   | { type: "mcp.updated"; state: McpState }
   /** A schedule was created, changed (fired, paused, edited) or deleted (schedule: null). */
   | { type: "schedule.updated"; profile: string; id: string; schedule: Schedule | null }
+  /** A one-time job was created, changed (fired, finished, missed, edited) or cancelled. */
+  | { type: "job.updated"; profile: string; id: string; job: Job | null }
   /** Prompt snippets changed (any scope); clients refetch. */
   | { type: "snippets.updated" }
   /** A daemon restart is waiting for `waiting` active runs; nothing new starts until then. */

@@ -784,3 +784,53 @@ test("tags: the user sets them; a ticket's own run may only suggest them", async
   const kept = (await r.json()) as any;
   expect([kept.tags, kept.suggestedTags]).toEqual([["post", "xhs", "video"], []]);
 });
+
+test("one-time jobs: schedule, list, update, run now, and runs manage only their own", async () => {
+  let r = await fetch(`${base}/api/profiles`, json("POST", { name: "Jobs", path: tempDir("ck-jobs-") }));
+  const slug = ((await r.json()) as any).slug;
+  const url = `${base}/api/profiles/${slug}/jobs`;
+  const src = (await (await fetch(`${base}/api/profiles/${slug}/tickets`, json("POST", { title: "Planner", status: "backlog" }))).json()) as any;
+  const as = (run: string, method: string, b?: unknown) => ({
+    method, headers: { "content-type": "application/json", "x-ckanban-run": `${slug}/${run}` }, body: b ? JSON.stringify(b) : undefined,
+  });
+  const d = new Date(Date.now() + 3 * 86400_000);
+  const when = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} 22:00`;
+
+  r = await fetch(url, as(src.id, "POST", { name: "Past", at: "2020-01-01 10:00", action: { kind: "command", command: "true" } }));
+  expect(r.status).toBe(400);
+  expect(((await r.json()) as any).error).toContain("in the past");
+
+  r = await fetch(url, as(src.id, "POST", { name: "Post A", at: when, action: { kind: "command", command: "echo posted" } }));
+  expect(r.status).toBe(201);
+  const j = (await r.json()) as any;
+  expect(j).toMatchObject({ name: "Post A", state: "scheduled", sourceTicketId: src.id });
+  expect(j.when).toContain("22:00 (in ");
+
+  r = await fetch(`${url}?ticketId=${src.id}`);
+  expect(((await r.json()) as any[]).map((x) => x.id)).toEqual([j.id]);
+
+  const other = (await (await fetch(`${base}/api/profiles/${slug}/tickets`, json("POST", { title: "Other", status: "backlog" }))).json()) as any;
+  r = await fetch(`${url}/${j.id}`, as(other.id, "PATCH", { name: "Hijack" }));
+  expect(r.status).toBe(403);
+  // A run whose ticket doesn't exist can't make a job it couldn't manage.
+  r = await fetch(url, as("t_20261001_ghost", "POST", { name: "x", at: when, action: { kind: "command", command: "true" } }));
+  expect(r.status).toBe(404);
+  // Huddle teammates run as the host ticket but may not touch its jobs.
+  const agent = as(src.id, "POST");
+  r = await fetch(`${url}/${j.id}/skip`, { ...agent, headers: { ...agent.headers, "x-ckanban-huddle-agent": "h_x/qa-1" } });
+  expect(r.status).toBe(403);
+  expect(((await r.json()) as any).error).toContain("huddle participants");
+  r = await fetch(`${url}/${j.id}`, as(src.id, "PATCH", { name: "Post A!" }));
+  expect(((await r.json()) as any).name).toBe("Post A!");
+
+  r = await fetch(`${url}/${j.id}/run`, as(src.id, "POST"));
+  expect(((await r.json()) as any).state).toBe("running");
+  for (let i = 0; i < 50 && ((await (await fetch(`${url}/${j.id}`)).json()) as any).state === "running"; i++) await Bun.sleep(50);
+  const done = (await (await fetch(`${url}/${j.id}`)).json()) as any;
+  expect(done).toMatchObject({ state: "done", result: { exitCode: 0, output: "posted\n" } });
+
+  r = await fetch(`${url}/${j.id}/skip`, json("POST"));
+  expect(r.status).toBe(409);
+  r = await fetch(`${url}/nope1234`);
+  expect(r.status).toBe(404);
+});

@@ -64,6 +64,8 @@ const CHROME_RULE = `# Browser
 Claude in Chrome is available (mcp__claude-in-chrome__* tools, in the user's own Chrome). Open your own new tab and don't close or take over the user's tabs. If it isn't connected, say so and carry on without it.`;
 
 /** Every run's Claude adapts to users who may not know git (see CLAUDE.md, "Users may not be technical"). */
+/** One-time jobs (schedule_job): the future run sees only the job's prompt. */
+const JOB_RULE = "To do something once at a later time (post at Tue 22:00, run a script tomorrow), use `schedule_job`; a ticket job's prompt is all its future run sees, so put everything it needs in it, and for long content or images save files in the board folder first and give their paths.";
 const PLAIN_WORDS = "The user may not be technical: explain results in plain words; if there's no git, just edit the files and list what changed.";
 
 /** The folder has commits to branch from, snapshot and land: a run there commits its work. */
@@ -275,6 +277,7 @@ ${interview ? `${INTERVIEW}\n\n` : ""}# Rules
 - A missing git repository, remote or \`gh\` is never a reason to stop or report "blocked": work with what the folder has.
 - If it is a non-code task (research, writing, analysis, file organisation), no PR is needed.${t.tags?.length ? "" : `
 - This ticket has no tags: if one clearly fits (prefer tags the board already uses), you may suggest 1-3 with \`suggest_tags\`; the user keeps or drops them.`}
+- ${JOB_RULE}
 - ${PLAIN_WORDS}${autoSection(t, ctx.autoHuddles, ctx.repo)}
 
 ${CHROME_RULE}

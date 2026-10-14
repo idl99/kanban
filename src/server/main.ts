@@ -12,6 +12,7 @@ import { Notifier } from "./notify";
 import { PushService } from "./push";
 import { RemoteAccess, remoteListenPort, remoteUrl } from "./remote";
 import { Scheduler } from "./scheduler";
+import { JobRunner } from "./jobs";
 import { LimitWatcher } from "./limit";
 import { startHuddleSessionWatcher } from "./huddle-session";
 import { SessionCache, startSessionWatcher } from "./session";
@@ -55,11 +56,12 @@ export async function startDaemon(): Promise<void> {
   const terminals = new TerminalWatcher(store, bus, sessions);
   const mcp = new McpManager(bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude", seenFile: join(store.root, "mcp-seen.json") });
   const scheduler = new Scheduler(board, store, bus);
+  const jobs = new JobRunner(board, store, bus, { notify: (title, body) => notifier.macOnly(title, body) });
   const huddles = new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
   const remotePort = remoteListenPort(port, config.remotePort);
-  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, huddles, assets: WEB_ASSETS, restart, notifier, push });
+  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, jobs, huddles, assets: WEB_ASSETS, restart, notifier, push });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   board.recover();
   huddles.recover();
@@ -69,6 +71,7 @@ export async function startDaemon(): Promise<void> {
   const stopPoller = startPoller(board, store, config.prPollMinutes);
   // After recover(): a missed run's ticket must not be mistaken for an interrupted one.
   const stopScheduler = scheduler.start();
+  const stopJobs = jobs.start();
   const stopLimits = new LimitWatcher(board, store).start();
   const stopWatcher = startSessionWatcher(store, bus, sessions);
   const stopHuddleWatcher = startHuddleSessionWatcher(store, bus, (id) => sessions.version(id));
@@ -81,6 +84,7 @@ export async function startDaemon(): Promise<void> {
     console.log("ckanban shutting down");
     stopPoller();
     stopScheduler();
+    stopJobs();
     stopLimits();
     stopWatcher();
     stopHuddleWatcher();
