@@ -40,7 +40,7 @@ async function settle(ms = 20000) {
   for (;;) {
     await board.whenIdle();
     await Bun.sleep(500);
-    if (!(board as any).runs.size) return;
+    if (!(board as any).runs.size && !(board as any).wakeDue.size) return;
     if (Date.now() > end) throw new Error("plan did not settle");
   }
 }
@@ -91,6 +91,9 @@ test("children failing together wake the planner once; an unresolved dead end ma
   const planner = await board.createTicket("p", { title: "Plan", body: "", status: "backlog" });
   await board.createTicket("p", { title: "X-fail", body: "", status: "backlog", parentId: planner.id });
   await board.createTicket("p", { title: "Y-fail", body: "", status: "backlog", parentId: planner.id });
+  // Both children end within the batching window even on a busy machine (default here is 300ms).
+  await board.shutdown();
+  board = new Board(store, bus, { claudeBin: FAKE, isSessionLive: async () => false, notify: (t) => notes.push(t), planWakeDelayMs: 3000 });
   // Child runs (their prompt has "# Ticket: <title>") end blocked; the planner answers "done", so the dead end shows.
   process.env.FAKE_BLOCK_MATCH = "# Ticket: ";
   board.startPlan("p", planner.id);

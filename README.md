@@ -102,12 +102,14 @@ Requires [Bun](https://bun.sh) ≥ 1.3.5 (the embedded terminal uses Bun's built
 
 ```bash
 bun install && (cd web && bun install)
-bun test test          # server tests (use a fake claude binary)
+bun run test           # server tests, files in parallel (use a fake claude binary)
 bun run build:web      # build the UI into web/dist
 bun run dev            # API + UI on :7777 from source
 cd web && bun run dev  # Vite dev server with /api proxy
 bun run build:bin      # standalone binaries in dist/ (UI embedded)
 ```
+
+`bun run test` runs test files side by side (`bun test --parallel`), slowest first using `test/timings.json`; refresh that file with `bun run test:timings` after adding or splitting slow test files. `bun test test/<file>` runs one file.
 
 Run from source as the daemon: `bun src/cli.ts install`. Data layout and env overrides: [docs/features.md](docs/features.md#data-layout).
 

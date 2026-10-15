@@ -8,7 +8,7 @@ import { isTransientText, transientError } from "../src/server/retry";
 import { buildArgs, startRun } from "../src/server/runner";
 import { Store } from "../src/server/store";
 import type { Ticket } from "../src/server/types";
-import { makeRepo, tempDir } from "./helpers";
+import { makeRepo, readJsonl, tempDir } from "./helpers";
 
 const FAKE = join(import.meta.dir, "fixtures", "fake-claude.ts");
 const STREAM = buildArgs("u1", false, null);
@@ -26,7 +26,7 @@ async function setup(opts: { stallMs?: number; retryDelayMs?: number } = {}) {
 }
 
 const runs = (): number => (existsSync(argsFile) ? readFileSync(argsFile, "utf8").trim().split("\n").length : 0);
-const prompts = (): string[] => (existsSync(argsFile) ? readFileSync(argsFile, "utf8").trim().split("\n").map((l) => JSON.parse(l).prompt) : []);
+const prompts = (): string[] => readJsonl(argsFile).map((l) => l.prompt);
 
 async function until(fn: () => boolean, ms = 8000) {
   const t0 = Date.now();
@@ -102,7 +102,8 @@ test("a silent run becomes stalled, needs the user, and Restart resumes the same
   process.env.FAKE_MODE = "silent";
   process.env.FAKE_ONCE_FILE = join(tempDir("ck-once-"), "once");
   const t = await board.createTicket("p", { title: "Hang", body: "", status: "ready" });
-  await until(() => !!store.getTicket("p", t.id)?.stalled);
+  // Restart only once the fake has marked its first run, so the restarted run behaves (slow machines can stall it sooner).
+  await until(() => !!store.getTicket("p", t.id)?.stalled && existsSync(process.env.FAKE_ONCE_FILE!));
   const got = store.getTicket("p", t.id)!;
   expect(got.status).toBe("in_progress");
   expect(got.stalled?.minutes).toBe(1);
@@ -206,7 +207,8 @@ test("Restart of a run that hung before its session was saved starts over with t
   process.env.FAKE_NO_SAVE = "1";
   process.env.FAKE_ONCE_FILE = join(tempDir("ck-once-"), "once");
   const t = await board.createTicket("p", { title: "Hang at start", body: "IMPORTANT TASK BODY", status: "ready" });
-  await until(() => !!store.getTicket("p", t.id)?.stalled);
+  // Restart only once the fake has marked its first run, so the restarted run behaves (slow machines can stall it sooner).
+  await until(() => !!store.getTicket("p", t.id)?.stalled && existsSync(process.env.FAKE_ONCE_FILE!));
   board.stallAction("p", t.id, "restart");
   await board.whenIdle();
   expect(runs()).toBe(2);

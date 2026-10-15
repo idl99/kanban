@@ -8,7 +8,8 @@
   },
   "scripts": {
     "dev": "bun src/cli.ts dev",
-    "test": "bun test test",
+    "test": "bun test test --parallel --timeout=20000 --timings=test/timings.json",
+    "test:timings": "bun test test --parallel --timeout=20000 --timings=test/timings.json --update-timings",
     "build:web": "cd web && bun install && bun run build",
     "typecheck": "tsc --noEmit",
     "build:bin": "bun scripts/build-bin.ts"

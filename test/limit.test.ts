@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { attentionFor } from "../src/server/attention";
 import { Board } from "../src/server/board";
@@ -8,7 +7,7 @@ import { clockTime, dayKey, isLimitText, limitMessage, LimitWatcher, nextFullHou
 import { planStep } from "../src/server/plan";
 import { Store } from "../src/server/store";
 import type { Plan, Profile, Ticket } from "../src/server/types";
-import { makeRepo, tempDir } from "./helpers";
+import { makeRepo, readJsonl, tempDir } from "./helpers";
 
 // Real messages from board runs that hit the limit (tickets t_20261005_vqm5, t_20261006_xa17, t_20261005_h89a).
 const REAL_4AM = "You've hit your individual spend limit · run /usage-credits to raise it, or visit claude.ai/admin-settings/usage · your session limit resets 4am (Asia/Kuala_Lumpur)";
@@ -103,8 +102,7 @@ async function setup(maxParallel = 1): Promise<Profile> {
   return p;
 }
 
-const prompts = (): string[] => existsSync(argsFile)
-  ? readFileSync(argsFile, "utf8").trim().split("\n").map((l) => JSON.parse(l).prompt as string) : [];
+const prompts = (): string[] => readJsonl(argsFile).map((l) => l.prompt as string);
 const continues = () => prompts().filter((p) => p.startsWith("continue")).length;
 
 beforeEach(() => {

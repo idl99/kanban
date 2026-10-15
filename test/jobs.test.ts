@@ -321,9 +321,10 @@ test("a timeout stops everything the command started, not just the shell", async
 
 test("background leftovers of a finished command are stopped", async () => {
   const marker = join(folder, "left");
-  const r = await runCommand(`(sleep 1; touch ${marker}) > /dev/null 2>&1 & echo done`, folder, {}, 10);
+  // The leftover would touch the marker after 2s: wait past that (with margin for a busy machine).
+  const r = await runCommand(`(sleep 2; touch ${marker}) > /dev/null 2>&1 & echo done`, folder, {}, 10);
   expect(r.exitCode).toBe(0);
-  await Bun.sleep(1500);
+  await Bun.sleep(2500);
   expect(existsSync(marker)).toBe(false);
 });
 

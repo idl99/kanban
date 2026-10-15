@@ -21,7 +21,7 @@ jobs:
           prev=$(git tag --sort=-v:refname --merged HEAD | grep -vx "${GITHUB_REF_NAME}" | head -1)
           [ -n "$prev" ] && printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' "${GITHUB_REPOSITORY}" "$prev" "${GITHUB_REF_NAME}" >> notes.md
           cat notes.md
-      - run: bun test test
+      - run: bun run test
       - name: Build binaries (web UI embedded)
         run: bun scripts/build-bin.ts "${GITHUB_REF_NAME}"
       - name: Ad-hoc sign

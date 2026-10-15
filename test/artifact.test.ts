@@ -191,7 +191,8 @@ test.skipIf(!ptySupported())("runArtifactJob types the second turn of a republis
 
 test.skipIf(!ptySupported())("runArtifactJob kills Claude when it times out", async () => {
   const f = fixture("hang");
-  const r = await runArtifactJob({ kind: "publish", file: "/o/p.html" }, { ...f.opts, timeoutMs: 800 });
+  // Long enough for the fake to start and note its pid even on a busy machine.
+  const r = await runArtifactJob({ kind: "publish", file: "/o/p.html" }, { ...f.opts, timeoutMs: 3000 });
   expect(r.ok).toBe(false);
   expect(!r.ok && r.error).toContain("took too long");
   expect(await gone(f.pid())).toBe(true);

@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { mcpConfig } from "../src/server/agents";
 import { buildArgs, controlResponse, inheritedEnv, PLANNING_DISALLOWED_TOOLS, startRun } from "../src/server/runner";
-import { tempDir } from "./helpers";
+import { tempDir, until } from "./helpers";
 
 const FAKE = join(import.meta.dir, "fixtures", "fake-claude.ts");
 
@@ -63,7 +64,7 @@ test("stop kills the whole process group (grandchildren too)", async () => {
   process.env.FAKE_CHILD_PID_FILE = pidFile;
   try {
     const h = startRun({ bin: FAKE, cwd: tempDir(), args: [], onEvent: () => {} });
-    await Bun.sleep(600);
+    await until(() => existsSync(pidFile) && readFileSync(pidFile, "utf8").length > 0);
     const childPid = Number(await Bun.file(pidFile).text());
     expect(childPid).toBeGreaterThan(0);
     h.stop();
