@@ -51,7 +51,7 @@ import {
   ALL_ROLES, cleanLessons, cleanNotes, type HuddleNote, lessonsSection, type LessonInput, NOTE_MAX, noteRole, noteText, type NoteScope, type RoleNotes,
 } from "./huddle-notes";
 import {
-  AUTO_REVIEW, AUTO_REVIEW_IMPORTANT, BUILTIN_TEMPLATES, deleteTemplate, type HuddleTemplate, type HuddleTemplateView, mergeTemplates, saveTemplate, templateBrief,
+  BUILTIN_TEMPLATES, customReviewBrief, deleteTemplate, type HuddleTemplate, type HuddleTemplateView, mergeTemplates, saveTemplate, templateBrief,
 } from "./huddle-templates";
 import type { HostHuddle } from "./attention";
 import { huddleUsage, type Usage } from "./huddle-usage";
@@ -62,7 +62,7 @@ import { addHuddleSpend } from "./spend";
 import type { Store } from "./store";
 import { contextTokens, messageCost } from "./ticket-usage";
 import { proposalPreset, teammateProposal, type TeammateProposal } from "./teammate-proposal";
-import { autoHuddlesOn } from "./types";
+import { AUTO_HUDDLE_TRIGGERS, autoHuddlesOn, isAutoHuddleTrigger } from "./types";
 import type {
   Huddle, HuddleFinding, HuddleLearning, HuddleMessage, HuddleMessageKind, HuddleMode, HuddleParticipant, HuddleSource, HuddleStopReason, Profile, Ticket,
 } from "./types";
@@ -930,7 +930,7 @@ export class Huddles {
    */
   create(
     slug: string, hostId: string, roster: RosterEntry[],
-    opts: { maxParticipants?: number; maxCostUsd?: number; template?: string; auto?: { reason: string; askedCostUsd?: number } } = {},
+    opts: { maxParticipants?: number; maxCostUsd?: number; template?: string; auto?: { reason: string; askedCostUsd?: number; trigger?: string } } = {},
   ): Huddle {
     const host = this.store.getTicket(slug, hostId);
     if (!host) throw new HuddleError(404, `ticket ${hostId} not found`);
@@ -959,7 +959,8 @@ export class Huddles {
     const h: Huddle = {
       id: `h_${newId()}`, hostTicket: hostId, status: "live", maxParticipants: max, findings: [], invited: [], seq: 0,
       maxCostUsd, maxMessages: DEFAULT_MAX_MESSAGES, posts: 0, sinceUser: 0, stopReason: null, createdAt: at, updatedAt: at,
-      template: tpl?.name ?? null, brief: tpl ? { text: templateBrief(tpl, maxCostUsd), by: USER_HANDLE, at } : null,
+      template: tpl?.name ?? null,
+      brief: tpl ? { text: templateBrief(tpl, maxCostUsd), by: USER_HANDLE, at } : opts.auto ? { text: customReviewBrief(maxCostUsd), by: USER_HANDLE, at } : null,
       ...(opts.auto ? { auto: { reason: opts.auto.reason } } : {}),
       participants: [
         { ...base, handle: USER_HANDLE, role: "User", model: null, mode: "monitor", lead: true, canEdit: false, kind: "human" },
@@ -977,7 +978,7 @@ export class Huddles {
     }
     this.save(slug, h);
     this.bus.emit({ type: "huddle.updated", profile: slug, huddle: this.view(slug, h) });
-    this.system(slug, h.id, `${opts.auto ? "Auto huddle" : "Huddle"} started on ticket ${hostId} "${host.title}"${opts.auto ? ` by its own run (${opts.auto.reason})` : ""}${tpl ? ` from template ${tpl.label}` : ""} with ${agents.map((p) => `@${p.handle} (${p.role})`).join(", ")}. @main coordinates. Budget ${money(maxCostUsd)}${budgetNote}.`);
+    this.system(slug, h.id, `${opts.auto ? "Auto huddle" : "Huddle"} started on ticket ${hostId} "${host.title}"${opts.auto ? ` by its own run (${opts.auto.trigger ? `${opts.auto.trigger}: ` : ""}${opts.auto.reason})` : ""}${tpl ? ` from template ${tpl.label}` : ""} with ${agents.map((p) => `@${p.handle} (${p.role})`).join(", ")}. @main coordinates. Budget ${money(maxCostUsd)}${budgetNote}.`);
     for (const p of agents) this.kickoff(slug, h.id, p.handle);
     return this.get(slug, h.id);
   }
@@ -991,7 +992,7 @@ export class Huddles {
    * the card stays In Progress and freeSlot() wakes it when that one ends.
    */
   startAuto(
-    slug: string, hostId: string, input: { reason: string; template?: string; roster?: RosterEntry[]; maxCostUsd?: number },
+    slug: string, hostId: string, input: { reason: string; trigger?: string; template?: string; roster?: RosterEntry[]; maxCostUsd?: number },
   ): { huddle: Huddle | null; waiting: boolean; template: string } {
     const profile = this.store.getProfile(slug);
     const host = this.store.getTicket(slug, hostId);
@@ -1010,24 +1011,37 @@ export class Huddles {
     }
     const open = this.store.listHuddles(slug).find((h) => h.hostTicket === hostId && h.status !== "closed");
     if (open) throw new HuddleError(409, `ticket ${hostId} already has an open huddle (${open.id})${propose}, or post in that one`);
-    const template = input.template?.trim() || (input.roster?.length ? "" : requested?.template || (host.important ? AUTO_REVIEW_IMPORTANT : AUTO_REVIEW));
+    // The trigger names the rule that called for the review, so the user can check it on the ticket.
+    const trigger = input.trigger?.trim();
+    if (!isAutoHuddleTrigger(trigger)) {
+      throw new HuddleError(400, `trigger is required: one of ${AUTO_HUDDLE_TRIGGERS.join(", ")} (the rule that calls for this review)`);
+    }
+    if (trigger === "asked" && !requested) throw new HuddleError(400, `trigger "asked" is only for a ticket with a "${REVIEW_HUDDLE_HEADING}" section; this one has none`);
+    if (trigger === "important" && !host.important) throw new HuddleError(400, `trigger "important" is only for a ticket marked ⭐ Important; this one isn't`);
+    const roster = input.roster?.length ? input.roster : undefined;
+    // A huddle the ticket asks for uses the template it names; otherwise the run builds a roster for this change.
+    const template = input.template?.trim() || (roster ? "" : trigger === "asked" ? requested?.template ?? "" : "");
+    if (!roster && !(trigger === "asked" && template)) {
+      throw new HuddleError(400, `pass a roster built for this change (trigger ${trigger}): 1-4 reviewers or testers whose prompts say what to check, ` +
+        "plus a lead (e.g. qa-lead) when there are 2 or more; list_huddle_presets lists the teammates you can use");
+    }
     if (template && !this.templates(slug).some((t) => t.name === template)) {
       throw new HuddleError(404, `no huddle template "${template}" (templates: ${this.templates(slug).map((t) => t.name).join(", ")})`);
     }
     const busy = this.liveAuto(slug).find((h) => h.hostTicket !== hostId);
     if (busy) {
       const at = host.autoHuddle?.state === "waiting" ? host.autoHuddle.at : nowIso();
-      this.board.setAutoHuddle(slug, hostId, { state: "waiting", reason, template: template || "custom", at, huddleId: null, ...(maxCostUsd !== undefined ? { maxCostUsd } : {}) });
-      if (host.autoHuddle?.state !== "waiting") this.store.addComment(slug, hostId, "ai", `Auto huddle wanted (${reason}); waiting for huddle slot: ticket ${busy.hostTicket} has the board's auto huddle.`);
+      this.board.setAutoHuddle(slug, hostId, { state: "waiting", reason, trigger, template: template || "custom", at, huddleId: null, ...(maxCostUsd !== undefined ? { maxCostUsd } : {}) });
+      if (host.autoHuddle?.state !== "waiting") this.store.addComment(slug, hostId, "ai", `Auto huddle wanted (${trigger}: ${reason}); waiting for huddle slot: ticket ${busy.hostTicket} has the board's auto huddle.`);
       return { huddle: null, waiting: true, template: template || "custom" };
     }
     if (!this.board.claimAutoHuddle(slug, hostId)) {
       throw new HuddleError(409, "this run already started an auto huddle (one per run); finish with the findings you have");
     }
-    const h = this.create(slug, hostId, input.roster ?? [], { template: template || undefined, maxCostUsd, auto: { reason, askedCostUsd: asked } });
+    const h = this.create(slug, hostId, roster ?? [], { template: template || undefined, maxCostUsd, auto: { reason, askedCostUsd: asked, trigger } });
     if (this.slotWoken.get(slug) === hostId) this.slotWoken.delete(slug);
-    this.board.setAutoHuddle(slug, hostId, { state: "live", reason, template: template || "custom", at: h.createdAt, huddleId: h.id });
-    this.store.addComment(slug, hostId, "ai", `Auto huddle started (${template || "custom roster"}): ${reason}`);
+    this.board.setAutoHuddle(slug, hostId, { state: "live", reason, trigger, template: template || "custom", at: h.createdAt, huddleId: h.id });
+    this.store.addComment(slug, hostId, "ai", `Auto huddle started (${template || "custom roster"}, ${trigger}): ${reason}`);
     return { huddle: h, waiting: false, template: template || "custom" };
   }
 
@@ -1080,7 +1094,7 @@ export class Huddles {
     this.slotWoken.set(slug, next.id);
     // It no longer waits: its run takes the slot with start_huddle, or lands without one.
     this.board.setAutoHuddle(slug, next.id, null, { lastActivity: "Huddle slot free: resuming" });
-    this.board.chat(slug, next.id, autoHuddleSlotPrompt(a.reason, a.template, a.maxCostUsd), { hostWake: true }).catch((e) => {
+    this.board.chat(slug, next.id, autoHuddleSlotPrompt(a), { hostWake: true }).catch((e) => {
       this.slotWoken.delete(slug);
       this.board.setAutoHuddle(slug, next.id, a);
       console.error(`couldn't wake ${slug}/${next.id} for the auto-huddle slot`, e);

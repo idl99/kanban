@@ -2,10 +2,11 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { helperCommand } from "./artifact";
 import { huddleLine, REVIEW_HUDDLE_HEADING, reviewHuddleRequest, summaryFile } from "./huddle-roster";
+import { AUTO_REVIEW_READ_ONLY } from "./huddle-templates";
 import { MOCKUPS_DIR } from "./mockups";
 import type { RepoKind } from "./git";
 import { MAX_RETRIES } from "./plan";
-import type { Comment, Huddle, HuddleMessage, HuddleParticipant, Ticket } from "./types";
+import type { AutoHuddle, Comment, Huddle, HuddleMessage, HuddleParticipant, Ticket } from "./types";
 import { shellQuote } from "./util";
 
 const RESULT_RULE = `When you finish this run, end your final message with exactly one line in this format (valid JSON, single line):
@@ -131,17 +132,29 @@ export function autoHuddleRule(t: Pick<Ticket, "important" | "body">, repo: Repo
   const asked = reviewHuddleRequest(t.body ?? "");
   const why = asked
     ? `This ticket asks for a review huddle (its "${REVIEW_HUDDLE_HEADING.slice(3)}" section). Do the work yourself first; the huddle checks and improves your result, it doesn't do the work.`
-    : t.important ? "This ticket is marked ⭐ Important, so it gets a review huddle before you land it." : "Start a review huddle before you land this work if the change is risky: user-facing behaviour, data, security, payments or migrations. Small, low-risk changes don't need one; heavy tasks are split into tickets, not huddled.";
+    : t.important ? "This ticket is marked ⭐ Important, so it gets a review huddle before you land it (trigger `important`)." : AUTO_HUDDLE_WHEN;
+  const budget = `If the ticket asks for a huddle budget (e.g. "~$40"), pass it as \`maxCostUsd\` (capped at $100); without it the default budget applies.`;
   const how = asked
-    ? `call the ckanban \`start_huddle\` tool with a one-line reason (it is posted on the ticket) and what the ticket's "${REVIEW_HUDDLE_HEADING.slice(3)}" section asks for: its template${asked.template ? ` (\`${asked.template}\`)` : ""} or roster, with what it should check in each reviewer's prompt or the reason. Without a template or roster there: \`auto-review-important\` when the ticket is ⭐ or the risk is security, data, payments or migrations; otherwise \`auto-review\`. Pass its budget as \`maxCostUsd\` (capped at $100)${asked.maxCostUsd ? ` ($${asked.maxCostUsd} here)` : ""}; without one the template's budget applies.`
-    : `call the ckanban \`start_huddle\` tool with a one-line reason (it is posted on the ticket) and a template: \`auto-review-important\` when the ticket is ⭐ or the risk is security, data, payments or migrations; otherwise \`auto-review\`. If the ticket asks for a huddle budget (e.g. "~$40"), pass it as \`maxCostUsd\` (capped at $100); without it the template's budget applies.`;
+    ? `call the ckanban \`start_huddle\` tool with trigger \`asked\`, a one-line reason (it is posted on the ticket) and what the ticket's "${REVIEW_HUDDLE_HEADING.slice(3)}" section asks for: its template${asked.template ? ` (\`${asked.template}\`)` : ""} or roster, with what it should check in each reviewer's prompt or the reason. If it names neither, ${BUILD_ROSTER} Pass its budget as \`maxCostUsd\` (capped at $100)${asked.maxCostUsd ? ` ($${asked.maxCostUsd} here)` : ""}; without one the template's or the default budget applies.`
+    : `call the ckanban \`start_huddle\` tool with the \`trigger\` (${t.important ? "`important`" : "`security`, `data` or `payments`"}), a one-line reason (it is posted on the ticket) and a roster: ${BUILD_ROSTER} ${budget}`;
   return `# ${asked ? "Review huddle (the ticket asks for one)" : "Auto huddle (review before landing)"}
 ${why}
 - When: after the work is done${commit ? " and committed, BEFORE landing it (before pushing it, opening a PR or moving it on)" : ", BEFORE you finish (the reviewers read the files in this folder)"}. At most once per run; never from a Planning chat (there, the huddle goes into the ticket as a "${REVIEW_HUDDLE_HEADING}" section).
-- How: ${how} Then end your turn with a short note, no result line needed: the board keeps the ticket In Progress and wakes you with the QA lead's consolidated findings. If the board says another auto huddle is running, end your turn the same way; the board wakes you when the slot frees.
+- How: ${how} Then end your turn with a short note, no result line needed: the board keeps the ticket In Progress and wakes you with the consolidated findings. If the board says another auto huddle is running, end your turn the same way; the board wakes you when the slot frees.
 - Then: fix every MUST finding${commit ? " and commit" : ""}, ask the same reviewer for one short re-check, then ${commit ? "land the work as usual" : "finish as usual"}, write the huddle summary and close the huddle with \`huddle_close\`. List the SHOULD and COULD findings in your result summary.
 - Budget: the huddle stops at its cap. If it stops while MUST findings are still open, do NOT ${commit ? "land" : "finish as done"}: end with status "blocked" and a summary like "Auto huddle hit its $N cap with N MUST findings open; not landed."`;
 }
+
+/** When a run decides on its own to huddle (the ticket isn't ⭐ and doesn't ask for one): real risk only. */
+const AUTO_HUDDLE_WHEN = `Most work lands without a review huddle. Start one only if the change does at least one of these (it is the \`trigger\` you name):
+  - \`security\`: new or changed input from outside that the app accepts or serves (uploads, new API routes or endpoints, anything that opens it to the network); login, permission or origin checks; running commands or code on someone's behalf; installer or update integrity.
+  - \`data\`: it can delete, overwrite or migrate stored data (databases, saved records, user files, settings, the project folder or its version history).
+  - \`payments\`: money, billing, or spending limits that stop work.
+  These don't count on their own: user-facing UI or text changes, new UI features without new outside input, refactors, prompt wording, bug fixes, tests, docs, or the size of the change. When unsure, don't huddle.
+  If every risk you see is already covered by a specific requirement in the ticket (e.g. "disable PDF scripting", "keep the sandbox header", "check the file's bytes"), don't huddle: check each of those points yourself, with a test or by reading the code, and list in your result what you checked and how. Huddle only for a risk the ticket doesn't already pin down.`;
+
+/** How a run builds its own huddle roster for the change (no fixed template). */
+const BUILD_ROSTER = `build a \`roster\` for this change. Pick roles that fit the risk: existing teammates where they fit (\`list_huddle_presets\` lists them, e.g. reviewer, security, qa), otherwise one-off roles with \`role\` + \`prompt\`. Each prompt says what to check in this change and starts with "${AUTO_REVIEW_READ_ONLY}". Keep it small: usually 2-4 helpers, never more than the participant cap. With 2 or more, add a lead (e.g. \`qa-lead\`) who sends @main one consolidated list; a single helper reports to @main directly. The board pins the MUST/SHOULD/COULD report format.`;
 
 /** The section above, when the board has auto huddles on or the ticket asks for a review huddle (else nothing). */
 const autoSection = (t: Pick<Ticket, "important" | "body">, on?: boolean, repo?: RepoKind) =>
@@ -670,8 +683,14 @@ ${RESULT_RULE}`, { huddle: h.id })}`;
 }
 
 /** The board wakes a ticket that waited for the auto-huddle slot. */
-export function autoHuddleSlotPrompt(reason: string, template: string, maxCostUsd?: number): string {
-  return context("Auto huddle slot free", `The other auto huddle on this board has ended, so the slot is free. If the work still needs its review, call the ckanban \`start_huddle\` tool now (template ${template}${maxCostUsd !== undefined ? `, maxCostUsd ${maxCostUsd}` : ""}, reason: ${reason}) and end your turn; otherwise land it as usual.
+export function autoHuddleSlotPrompt(a: Pick<AutoHuddle, "reason" | "trigger" | "template" | "maxCostUsd">): string {
+  const args = [
+    `trigger ${a.trigger ?? "(the rule that calls for it)"}`,
+    a.template === "custom" ? "the same roster you built before" : `template ${a.template}`,
+    ...(a.maxCostUsd !== undefined ? [`maxCostUsd ${a.maxCostUsd}`] : []),
+    `reason: ${a.reason}`,
+  ];
+  return context("Auto huddle slot free", `The other auto huddle on this board has ended, so the slot is free. If the work still needs its review, call the ckanban \`start_huddle\` tool now (${args.join(", ")}) and end your turn; otherwise land it as usual.
 
 ${RESULT_RULE}`);
 }

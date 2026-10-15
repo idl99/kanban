@@ -54,9 +54,20 @@ export const autoHuddlesOn = (p: Pick<Profile, "autoHuddles"> | null | undefined
  * A review huddle the ticket's unattended run started by itself (start_huddle). waiting: another auto huddle is live
  * on the board, so the ticket waits in In Progress and the board wakes it when that one ends. live: huddleId runs.
  */
+/**
+ * Why a run started its auto huddle: a risk it found (security, data, payments), the ticket is ⭐ (important) or its
+ * "## Review huddle" section asks for one (asked).
+ */
+export const AUTO_HUDDLE_TRIGGERS = ["security", "data", "payments", "important", "asked"] as const;
+export type AutoHuddleTrigger = (typeof AUTO_HUDDLE_TRIGGERS)[number];
+export const isAutoHuddleTrigger = (v: unknown): v is AutoHuddleTrigger => AUTO_HUDDLE_TRIGGERS.includes(v as AutoHuddleTrigger);
+
 export interface AutoHuddle {
   state: "waiting" | "live";
   reason: string;
+  /** Missing on huddles started before triggers were named. */
+  trigger?: AutoHuddleTrigger;
+  /** The template's name, or "custom" for a roster the run built. */
   template: string;
   at: string;
   huddleId?: string | null;

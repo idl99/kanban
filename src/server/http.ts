@@ -1415,6 +1415,7 @@ export function createServer(deps: ServerDeps) {
       const b = await body(req);
       const out = huddles.startAuto(slug, ticketId, {
         reason: typeof b.reason === "string" ? b.reason : "",
+        trigger: typeof b.trigger === "string" ? b.trigger : undefined,
         template: typeof b.template === "string" && b.template.trim() ? b.template.trim() : undefined,
         roster: Array.isArray(b.roster) ? b.roster : undefined,
         maxCostUsd: b.maxCostUsd === undefined || b.maxCostUsd === null ? undefined : Number(b.maxCostUsd),

@@ -70,6 +70,14 @@ function unattended(...ids: string[]) {
   board.claimAutoHuddle = (_slug, id) => (claimed.has(id) ? false : (claimed.add(id), true));
 }
 
+/** A roster a run builds for its change: two helpers and a lead. */
+const SQUAD = [
+  { preset: "reviewer", prompt: "Check the upload route's type checks." },
+  { preset: "qa", prompt: "Upload a fake PDF and an .exe; both must be refused." },
+  { preset: "qa-lead", prompt: "Send @main one list." },
+];
+const risky = (reason: string, extra: Record<string, unknown> = {}) => ({ trigger: "security", reason, roster: SQUAD, ...extra });
+
 function writeSummary(t: string, hid: string) {
   mkdirSync(join(store.outputsDir("p", t), "huddles", hid), { recursive: true });
   writeFileSync(join(store.outputsDir("p", t), summaryFile(hid)), "# Summary\n");
@@ -113,11 +121,11 @@ test("Auto huddles board setting: on unless turned off; toggling persists", asyn
 test("start_huddle guards: outside runs, chats, setting off, a live huddle on the ticket", async () => {
   const t = await inProgress("Login");
   // Not a board run at all.
-  let r = await callTool("start_huddle", { reason: "user-facing login" }, { client, cwd: "/", env: {} });
+  let r = await callTool("start_huddle", risky("new login route"), { client, cwd: "/", env: {} });
   expect(r.isError).toBe(true);
   expect(text(r)).toContain("propose_huddle");
   // A board run that isn't unattended work (no run, a chat reply or a Planning chat).
-  r = await callTool("start_huddle", { reason: "user-facing login" }, runCtx(t.id));
+  r = await callTool("start_huddle", risky("new login route"), runCtx(t.id));
   expect(r.isError).toBe(true);
   expect(text(r)).toContain("unattended run");
   expect(text(r)).toContain("propose_huddle");
@@ -132,35 +140,104 @@ test("start_huddle guards: outside runs, chats, setting off, a live huddle on th
   expect(r.isError).toBe(true);
   // Setting off.
   store.saveProfile({ ...store.getProfile("p")!, autoHuddles: false });
-  r = await callTool("start_huddle", { reason: "user-facing login" }, runCtx(t.id));
+  r = await callTool("start_huddle", risky("new login route"), runCtx(t.id));
   expect(r.isError).toBe(true);
   expect(text(r)).toContain("auto huddles are off");
   store.saveProfile({ ...store.getProfile("p")!, autoHuddles: true });
   // The ticket already has an open huddle (the user's).
   const mine = huddles.create("p", t.id, [{ preset: "reviewer" }]);
-  r = await callTool("start_huddle", { reason: "user-facing login" }, runCtx(t.id));
+  r = await callTool("start_huddle", risky("new login route"), runCtx(t.id));
   expect(r.isError).toBe(true);
   expect(text(r)).toContain(mine.id);
   expect(ticket(t.id).autoHuddle ?? null).toBeNull();
 });
 
+test("start_huddle: the trigger is required and must fit the ticket; a run's own huddle needs a roster", async () => {
+  const t = await inProgress("Upload");
+  const asks = await inProgress("Asks", { body: "## Goal\nDo it\n\n## Review huddle\nA reviewer checks the copy." });
+  unattended(t.id, asks.id);
+  const err = async (args: Record<string, unknown>, id = t.id) => {
+    const r = await callTool("start_huddle", args, runCtx(id));
+    expect(r.isError).toBe(true);
+    return text(r);
+  };
+  expect(await err({ reason: "upload route", roster: SQUAD })).toContain("trigger is required: one of security, data, payments, important, asked");
+  expect(await err({ trigger: "user-facing", reason: "upload route", roster: SQUAD })).toContain("trigger is required");
+  expect(await err({ trigger: "asked", reason: "upload route", roster: SQUAD })).toContain('only for a ticket with a "## Review huddle" section');
+  expect(await err({ trigger: "important", reason: "upload route", roster: SQUAD })).toContain("only for a ticket marked ⭐ Important");
+  // Deciding on its own, the run builds the roster: no template fallback, not even a named one.
+  for (const trigger of ["security", "data", "payments"]) {
+    expect(await err({ trigger, reason: "upload route" })).toContain("pass a roster built for this change");
+  }
+  expect(await err({ trigger: "security", reason: "upload route", template: "auto-review" })).toContain("pass a roster");
+  // A section that names neither a template nor a roster: the run builds one too.
+  expect(await err({ trigger: "asked", reason: "the ticket asks" }, asks.id)).toContain("pass a roster");
+  expect(ticket(t.id).autoHuddle ?? null).toBeNull();
+  expect(store.listHuddles("p")).toHaveLength(0);
+  // A valid custom roster starts exactly that roster.
+  const r = await callTool("start_huddle", risky("new upload route serves files from the app's address"), runCtx(t.id));
+  expect(r.isError).toBeUndefined();
+  const a = ticket(t.id).autoHuddle!;
+  expect(a).toMatchObject({ state: "live", trigger: "security", template: "custom" });
+  const agents = store.getHuddle("p", a.huddleId!)!.participants.filter((p) => p.kind === "agent");
+  expect(agents.map((p) => p.handle)).toEqual(SQUAD.map((e) => e.preset));
+  agents.forEach((p, i) => expect(p.prompt).toEndWith(SQUAD[i].prompt));
+  expect(store.listComments("p", t.id).at(-1)!.text).toBe("Auto huddle started (custom roster, security): new upload route serves files from the app's address");
+});
+
+test("the auto huddle rule: real risk only, named trigger, a roster built for the change", async () => {
+  const t = await board.createTicket("p", { title: "Login", body: "Do it", status: "backlog" });
+  const rule = firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o", autoHuddles: true });
+  for (const s of ["`security`", "`data`", "`payments`", "When unsure, don't huddle", "user-facing UI or text changes", "bug fixes",
+    "already covered by a specific requirement in the ticket", "check each of those points yourself", "list in your result what you checked and how",
+    "build a `roster` for this change", "`list_huddle_presets`", "`qa-lead`", "Read the code without changing the checkout"]) {
+    expect(rule).toContain(s);
+  }
+  expect(rule).not.toContain("user-facing behaviour");
+  expect(rule).not.toContain("`auto-review`");
+  // ⭐: always a huddle, trigger important, still a built roster.
+  const star = firstRunPrompt({ ...t, important: true }, { repo: "remote" as const, outputDir: "/o", autoHuddles: true });
+  expect(star).toContain("trigger `important`");
+  expect(star).toContain("build a `roster`");
+  expect(star).not.toContain("When unsure, don't huddle");
+  // The tool's own descriptions don't call user-facing work a risk either.
+  const { TOOLS } = await import("../src/mcp-server");
+  const tool = TOOLS.find((x: { name: string }) => x.name === "start_huddle")!;
+  expect(JSON.stringify(tool).toLowerCase()).not.toContain("user-facing");
+  expect(tool.inputSchema.required).toEqual(["trigger", "reason"]);
+});
+
 test("start_huddle starts the important roster for a ⭐ ticket, once per run; the coordinator closes it itself", async () => {
   const t = await inProgress("Payments", { important: true });
   unattended(t.id);
-  const r = await callTool("start_huddle", { reason: "⭐ important: payment flow" }, runCtx(t.id));
+  // ⭐ alone no longer picks a template: the run builds the roster.
+  const none = await callTool("start_huddle", { trigger: "important", reason: "⭐ important: payment flow" }, runCtx(t.id));
+  expect(none.isError).toBe(true);
+  expect(text(none)).toContain("pass a roster built for this change");
+  const roster = [
+    { preset: "security", prompt: "Check the refund amount can't go negative." },
+    { role: "Payments tester", prompt: "Refund twice; the second must be refused." },
+    { preset: "qa-lead", prompt: "Send @main one list." },
+  ];
+  const r = await callTool("start_huddle", { trigger: "important", reason: "⭐ important: payment flow", roster }, runCtx(t.id));
   expect(r.isError).toBeUndefined();
-  expect(text(r)).toContain("auto-review-important");
+  expect(text(r)).toContain("started (custom");
   const a = ticket(t.id).autoHuddle!;
-  expect(a).toMatchObject({ state: "live", reason: "⭐ important: payment flow", template: "auto-review-important" });
+  expect(a).toMatchObject({ state: "live", reason: "⭐ important: payment flow", trigger: "important", template: "custom" });
   const h = store.getHuddle("p", a.huddleId!)!;
   expect(h.auto).toEqual({ reason: "⭐ important: payment flow" });
   expect(h.maxCostUsd).toBe(20);
-  expect(h.participants.filter((p) => p.kind === "agent").map((p) => [p.handle, p.preset])).toEqual([
-    ["reviewer", "reviewer"], ["security", "security"], ["qa-1", "qa"], ["qa-2", "qa"], ["qa-lead", "qa-lead"],
+  expect(h.template).toBeNull();
+  expect(h.participants.filter((p) => p.kind === "agent").map((p) => [p.handle, p.role])).toEqual([
+    ["security", "Security reviewer"], ["payments-tester", "Payments tester"], ["qa-lead", "QA lead"],
   ]);
-  expect(store.listComments("p", t.id).at(-1)!.text).toContain("Auto huddle started (auto-review-important): ⭐ important: payment flow");
+  // The custom roster still gets the report format and read-only rule pinned.
+  expect(h.brief!.text).toContain("[MUST|SHOULD|COULD]");
+  expect(h.brief!.text).toContain("never edit, checkout or reset");
+  expect(h.brief!.text).toContain("Budget: $20.");
+  expect(store.listComments("p", t.id).at(-1)!.text).toBe("Auto huddle started (custom roster, important): ⭐ important: payment flow");
   // One per run (and the ticket now has an open huddle anyway).
-  expect((await callTool("start_huddle", { reason: "again" }, runCtx(t.id))).isError).toBe(true);
+  expect((await callTool("start_huddle", { trigger: "important", reason: "again", roster }, runCtx(t.id))).isError).toBe(true);
   // @main of an auto huddle closes it at once, after the summary; the ticket stops waiting for it.
   writeSummary(t.id, h.id);
   const c = await callTool("huddle_close", { reason: "landed" }, runCtx(t.id));
@@ -169,7 +246,7 @@ test("start_huddle starts the important roster for a ⭐ ticket, once per run; t
   expect(ticket(t.id).autoHuddle ?? null).toBeNull();
 });
 
-test("start_huddle budget: the template default, a budget the ticket asks for, capped at $100", async () => {
+test("start_huddle budget: the default, a budget the ticket asks for, capped at $100", async () => {
   const startMsg = (hid: string) => store.readHuddleMessages("p", hid)[0].text;
   const close = async (id: string) => {
     const hid = ticket(id).autoHuddle!.huddleId!;
@@ -179,27 +256,28 @@ test("start_huddle budget: the template default, a budget the ticket asks for, c
   const [a, b, c, d] = [await inProgress("A"), await inProgress("B"), await inProgress("C"), await inProgress("D")];
   unattended(a.id, b.id, c.id, d.id);
   // Without a budget: the template's.
-  let r = await callTool("start_huddle", { reason: "user-facing" }, runCtx(a.id));
+  let r = await callTool("start_huddle", risky("upload route"), runCtx(a.id));
   expect(text(r)).toContain("budget $20.00");
   let h = store.getHuddle("p", ticket(a.id).autoHuddle!.huddleId!)!;
   expect(h.maxCostUsd).toBe(20);
-  expect(startMsg(h.id)).toContain("Budget $20.00 (template default).");
+  expect(startMsg(h.id)).toContain("Budget $20.00 (default).");
+  expect(startMsg(h.id)).toContain("by its own run (security: upload route)");
   await close(a.id);
   // The ticket asks for $40: the cost brake is at $40.
-  r = await callTool("start_huddle", { reason: "user-facing", maxCostUsd: 40 }, runCtx(b.id));
+  r = await callTool("start_huddle", risky("upload route", { maxCostUsd: 40 }), runCtx(b.id));
   expect(text(r)).toContain("budget $40.00");
   h = store.getHuddle("p", ticket(b.id).autoHuddle!.huddleId!)!;
   expect(h.maxCostUsd).toBe(40);
   expect(startMsg(h.id)).toContain("Budget $40.00 (asked by the ticket's run).");
   await close(b.id);
   // Above the ceiling: capped.
-  await callTool("start_huddle", { reason: "user-facing", maxCostUsd: 250 }, runCtx(c.id));
+  await callTool("start_huddle", risky("upload route", { maxCostUsd: 250 }), runCtx(c.id));
   h = store.getHuddle("p", ticket(c.id).autoHuddle!.huddleId!)!;
   expect(h.maxCostUsd).toBe(AUTO_MAX_COST_USD);
   expect(startMsg(h.id)).toContain("Budget $100.00 (asked $250.00, capped at $100.00).");
   await close(c.id);
   // Not a positive amount: refused.
-  r = await callTool("start_huddle", { reason: "user-facing", maxCostUsd: -5 }, runCtx(d.id));
+  r = await callTool("start_huddle", risky("upload route", { maxCostUsd: -5 }), runCtx(d.id));
   expect(r.isError).toBe(true);
   expect(text(r)).toContain("maxCostUsd must be a positive amount");
 });
@@ -208,28 +286,31 @@ test("a ticket waiting for the slot keeps the budget it asked for in its wake", 
   const a = await inProgress("A");
   const b = await inProgress("B");
   unattended(a.id, b.id);
-  await callTool("start_huddle", { reason: "user-facing" }, runCtx(a.id));
+  await callTool("start_huddle", risky("upload route"), runCtx(a.id));
   const ha = ticket(a.id).autoHuddle!.huddleId!;
-  await callTool("start_huddle", { reason: "data migration", maxCostUsd: 500 }, runCtx(b.id));
+  await callTool("start_huddle", { trigger: "data", reason: "data migration", roster: SQUAD, maxCostUsd: 500 }, runCtx(b.id));
   expect(ticket(b.id).autoHuddle).toMatchObject({ state: "waiting", maxCostUsd: AUTO_MAX_COST_USD });
   writeSummary(a.id, ha);
   await callTool("huddle_close", { reason: "landed" }, runCtx(a.id));
   await until(() => sent.some((m) => m.id === b.id));
-  expect(sent.find((m) => m.id === b.id)!.text).toContain(`maxCostUsd ${AUTO_MAX_COST_USD}`);
+  const wake = sent.find((m) => m.id === b.id)!.text;
+  expect(wake).toContain(`maxCostUsd ${AUTO_MAX_COST_USD}`);
+  expect(wake).toContain("trigger data, the same roster you built before");
 });
 
 test("one auto huddle per board: the second ticket waits for the slot and is woken when it frees", async () => {
   const a = await inProgress("A");
   const b = await inProgress("B");
   unattended(a.id, b.id);
-  // The default roster without ⭐ is the normal squad.
-  expect(text(await callTool("start_huddle", { reason: "user-facing" }, runCtx(a.id)))).toContain("auto-review");
+  // The roster the run built is the huddle's roster.
+  expect(text(await callTool("start_huddle", risky("upload route"), runCtx(a.id)))).toContain("started");
   const ha = ticket(a.id).autoHuddle!.huddleId!;
   expect(store.getHuddle("p", ha)!.participants.filter((p) => p.kind === "agent").map((p) => p.handle)).toEqual(["reviewer", "qa", "qa-lead"]);
-  const r = await callTool("start_huddle", { reason: "data migration", template: "auto-review-important" }, runCtx(b.id));
+  const r = await callTool("start_huddle", { trigger: "data", reason: "data migration", roster: SQUAD }, runCtx(b.id));
   expect(r.isError).toBeUndefined();
   expect(text(r)).toContain("waits for the huddle slot");
-  expect(ticket(b.id).autoHuddle).toMatchObject({ state: "waiting", reason: "data migration", template: "auto-review-important", huddleId: null });
+  expect(ticket(b.id).autoHuddle).toMatchObject({ state: "waiting", reason: "data migration", trigger: "data", template: "custom", huddleId: null });
+  expect(store.listComments("p", b.id).at(-1)!.text).toContain("Auto huddle wanted (data: data migration)");
   expect(store.listHuddles("p").filter((h) => h.hostTicket === b.id)).toHaveLength(0);
   // Waiting doesn't need the user.
   const view = (await client.getTicket("p", b.id)) as Ticket & { attention: unknown };
@@ -244,7 +325,7 @@ test("one auto huddle per board: the second ticket waits for the slot and is wok
   expect(wake.text).toContain("data migration");
   expect(ticket(b.id).autoHuddle ?? null).toBeNull();
   // Its woken run takes the slot.
-  expect(text(await callTool("start_huddle", { reason: "data migration", template: "auto-review-important" }, runCtx(b.id)))).toContain("started");
+  expect(text(await callTool("start_huddle", { trigger: "data", reason: "data migration", roster: SQUAD }, runCtx(b.id)))).toContain("started");
   expect(ticket(b.id).autoHuddle).toMatchObject({ state: "live" });
 });
 
@@ -271,7 +352,7 @@ test("a ticket waiting for the huddle slot survives a restart and is woken after
 test("a brake stopping an auto huddle wakes the host to decide (no landing with MUST findings open); the user stopping it sends the card to Review", async () => {
   const t = await inProgress("Login", { important: true });
   unattended(t.id);
-  await callTool("start_huddle", { reason: "⭐ important" }, runCtx(t.id));
+  await callTool("start_huddle", { trigger: "important", reason: "⭐ important", roster: SQUAD }, runCtx(t.id));
   const hid = ticket(t.id).autoHuddle!.huddleId!;
   (huddles as any).halt("p", hid, "budget", "The huddle spent $20.00 of its $20.00 budget and stopped.");
   await until(() => sent.some((m) => m.id === t.id && m.opts.hostWake));
@@ -283,7 +364,7 @@ test("a brake stopping an auto huddle wakes the host to decide (no landing with 
 
   const u = await inProgress("Other");
   unattended(u.id);
-  await callTool("start_huddle", { reason: "user-facing" }, runCtx(u.id));
+  await callTool("start_huddle", risky("upload route"), runCtx(u.id));
   const uh = ticket(u.id).autoHuddle!.huddleId!;
   huddles.stopAll("p", uh);
   expect(ticket(u.id)).toMatchObject({ status: "review", outcome: "stopped", autoHuddle: null });
@@ -343,14 +424,15 @@ test("a ticket that asks for a review huddle: its run starts it after the work, 
   const asks = await inProgress("Login", { body: ASKS });
   unattended(plain.id, asks.id);
   // No section: the setting still decides.
-  const off = await callTool("start_huddle", { reason: "risky" }, runCtx(plain.id));
+  const off = await callTool("start_huddle", risky("risky"), runCtx(plain.id));
   expect(off.isError).toBe(true);
   expect(text(off)).toContain("auto huddles are off");
   // The section counts as opt-in and gives the template and budget.
-  const r = await callTool("start_huddle", { reason: "the ticket asks for one" }, runCtx(asks.id));
+  const r = await callTool("start_huddle", { trigger: "asked", reason: "the ticket asks for one" }, runCtx(asks.id));
   expect(r.isError).toBeUndefined();
   const a = ticket(asks.id).autoHuddle!;
-  expect(a).toMatchObject({ state: "live", template: "auto-review-important" });
+  expect(a).toMatchObject({ state: "live", trigger: "asked", template: "auto-review-important" });
+  expect(store.listComments("p", asks.id).at(-1)!.text).toBe("Auto huddle started (auto-review-important, asked): the ticket asks for one");
   expect(store.getHuddle("p", a.huddleId!)!.maxCostUsd).toBe(30);
   // The run prompt gets the section even with the setting off; it says to do the work first.
   const t = ticket(asks.id);

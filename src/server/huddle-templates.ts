@@ -35,13 +35,27 @@ export const AUTO_REVIEW = "auto-review";
 export const AUTO_REVIEW_IMPORTANT = "auto-review-important";
 export const AUTO_TEMPLATES = [AUTO_REVIEW, AUTO_REVIEW_IMPORTANT];
 
-const AUTO_REVIEW_READ = "Read the code without changing the checkout; never edit, checkout or reset. Report to @qa-lead, not @main. ";
+/** How auto-huddle reviewers read the work; the templates add who they report to. */
+export const AUTO_REVIEW_READ_ONLY = "Read the code without changing the checkout; never edit, checkout or reset.";
+const AUTO_REVIEW_READ = `${AUTO_REVIEW_READ_ONLY} Report to @qa-lead, not @main. `;
 const AUTO_REVIEW_LEAD =
   "Collect the reviewers' and testers' findings, de-duplicate them, pin them with huddle_findings and send @main one consolidated list, MUST first. " +
   "When @main asks for the re-check after its fixes, have the same reviewer check the MUST fixes once, briefly, then tell @main the result.";
-const AUTO_REVIEW_REPORT =
+/** The finding format every auto huddle reports in. */
+export const AUTO_REVIEW_FINDINGS =
   "One finding per line: [MUST|SHOULD|COULD] file:line - problem - concrete fix. MUST = a bug, data loss, security hole or broken user path; " +
-  "evidence required. SHOULD/COULD are listed in the ticket's result, not fixed now. Workers report to @qa-lead, who sends @main one list.";
+  "evidence required. SHOULD/COULD are listed in the ticket's result, not fixed now.";
+const AUTO_REVIEW_REPORT = `${AUTO_REVIEW_FINDINGS} Workers report to @qa-lead, who sends @main one list.`;
+
+/** Pinned brief of an auto huddle the run built its own roster for (no template): its budget and report format. */
+export function customReviewBrief(budget: number): string {
+  return [
+    "Custom review (roster built by the ticket's run for this change).",
+    `Budget: $${budget}.`,
+    `Report format: ${AUTO_REVIEW_FINDINGS} With a lead, helpers report to the lead, who sends @main one list; without one, they report to @main.`,
+    `Reviewers: ${AUTO_REVIEW_READ_ONLY}`,
+  ].join("\n");
+}
 
 export const BUILTIN_TEMPLATES: HuddleTemplate[] = [
   {

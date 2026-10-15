@@ -13,7 +13,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ArtifactJob, type ArtifactOutcome, runArtifactJob } from "./server/artifact";
-import { STATUSES } from "./server/types";
+import { AUTO_HUDDLE_TRIGGERS, STATUSES } from "./server/types";
 import { REPO, VERSION } from "./server/version";
 
 const PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -1118,21 +1118,29 @@ const HUDDLE_TOOLS: Tool[] = [
     name: "start_huddle",
     description:
       "Unattended board runs only (Ready / In Progress work, plan children, schedule runs) on a board with Auto huddles on: start a review huddle on your own ticket " +
-      "yourself, before landing important or risky work, instead of proposing one. Same inputs as propose_huddle plus a required reason (posted on the ticket). " +
-      "Default template: auto-review-important for ⭐ tickets, else auto-review. After it starts, end your turn: the board keeps the ticket In Progress and wakes you " +
+      "yourself, before landing work with a real risk (security, data, payments) or a ⭐ ticket, instead of proposing one. UI, text, refactors and bug fixes alone don't need one. " +
+      "Required: the trigger and a one-line reason (both posted on the ticket). Build a roster for this change (1-4 helpers whose prompts say what to check, plus a lead such as " +
+      "qa-lead when there are 2 or more); a template is only used when the ticket's section names one. After it starts, end your turn: the board keeps the ticket In Progress and wakes you " +
       "with the findings. If another auto huddle is live on the board, the ticket waits for the slot and the board wakes you when it frees. " +
-      "A ticket whose description has a \"## Review huddle\" section asked for one: start it after the work with that section's template, roster and budget, even when the setting is off. " +
+      "A ticket whose description has a \"## Review huddle\" section asked for one (trigger asked): start it after the work with that section's template, roster and budget, even when the setting is off. " +
       "Refused in chats and Planning, when the setting is off and the ticket has no such section, or when the ticket already has a huddle: use propose_huddle then.",
     inputSchema: {
       type: "object",
       properties: {
-        reason: { type: "string", description: "One line: why this work needs a review (⭐ important, or the risk: user-facing, data, security, payments, migrations)." },
-        template: { type: "string", description: "auto-review, or auto-review-important for ⭐ tickets and security/data/payments/migration risks." },
-        roster: { type: "array", minItems: 1, items: ROSTER_ENTRY, description: "Optional custom roster instead of a template." },
+        trigger: {
+          type: "string", enum: [...AUTO_HUDDLE_TRIGGERS],
+          description: "The rule that calls for the review: security, data or payments (the risk you found), important (the ticket is ⭐) or asked (its \"## Review huddle\" section).",
+        },
+        reason: { type: "string", description: "One line: what in this change carries that risk, e.g. \"new upload route serves files from the app's address\"." },
+        template: { type: "string", description: "Only with trigger asked: the template the ticket's \"## Review huddle\" section names." },
+        roster: {
+          type: "array", minItems: 1, items: ROSTER_ENTRY,
+          description: "The reviewers and testers for this change (required unless trigger asked names a template): existing teammates or one-off roles (role + prompt), each prompt saying what to check.",
+        },
         maxCostUsd: { type: "number", description: "Optional budget in USD when the ticket asks for one (capped at $100). Default: the template's budget." },
         profile: PROFILE,
       },
-      required: ["reason"],
+      required: ["trigger", "reason"],
     },
     changes: true,
     allowInRun: true,
@@ -1146,14 +1154,15 @@ const HUDDLE_TOOLS: Tool[] = [
       }
       const maxCostUsd = args?.maxCostUsd === undefined || args?.maxCostUsd === null ? undefined : Number(args.maxCostUsd);
       const slug = await slugFor(args, ctx);
-      const r = await ctx.client.startAutoHuddle(slug, { reason, template, roster: args?.roster, maxCostUsd }, huddleCaller(ctx.env));
+      const trigger = typeof args?.trigger === "string" ? args.trigger : undefined;
+      const r = await ctx.client.startAutoHuddle(slug, { reason, trigger, template, roster: args?.roster, maxCostUsd }, huddleCaller(ctx.env));
       if (r.waiting) {
         return "Another auto huddle is running on this board, so this ticket waits for the huddle slot. End your turn now with a short note (no landing); " +
           "the board keeps the ticket In Progress and wakes you when the slot frees.";
       }
       const h = r.huddle!;
       return `Auto huddle ${h.id} started (${r.template}${h.maxCostUsd !== undefined ? `, budget $${h.maxCostUsd.toFixed(2)}` : ""}) with ${h.participants.filter((p) => p.kind === "agent").map((p) => `@${p.handle}`).join(", ")}; you are @main. ` +
-        "Don't land yet: end your turn now with a short note. The board keeps the ticket In Progress and wakes you with the QA lead's consolidated findings.";
+        "Don't land yet: end your turn now with a short note. The board keeps the ticket In Progress and wakes you with the consolidated findings.";
     },
   },
   {
