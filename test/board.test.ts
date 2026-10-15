@@ -217,7 +217,8 @@ test("a run stopped before its session was saved doesn't break the next runs", a
   expect(calls.length).toBe(2);
   expect(calls[1].args).toContain("--session-id");
   expect(calls[1].args).not.toContain("--resume");
-  expect(calls[1].args[calls[1].args.indexOf("--permission-mode") + 1]).toBe("plan");
+  expect(calls[1].args[calls[1].args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
+  expect(calls[1].args[calls[1].args.indexOf("--disallowedTools") + 1]).toStartWith("Edit,Write,NotebookEdit,");
   const got = store.getTicket("p", t.id)!;
   expect(got.error).toBeNull();
   expect(got.status).toBe("planning");
@@ -773,7 +774,8 @@ test("chat in Planning refines read-only and keeps the card in place", async () 
   expect(got.runCount).toBe(0);
   expect(got.sessionStarted).toBe(true);
   const call = readArgs()[0];
-  expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("plan");
+  expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
+  expect(call.args[call.args.indexOf("--disallowedTools") + 1]).toStartWith("Edit,Write,NotebookEdit,");
   // The planning tools come from the board's own MCP server, whatever the user registered.
   expect(JSON.parse(call.args[call.args.indexOf("--mcp-config") + 1]).mcpServers.ckanban.args.at(-1)).toBe("mcp");
   const prompt = call.prompt;
@@ -836,6 +838,7 @@ test("chat in Review acts right away: In Progress then back to Review", async ()
   const call = readArgs()[1];
   expect(call.args).toContain("--resume");
   expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
+  expect(call.args).not.toContain("--disallowedTools");
   expect(call.prompt.startsWith("Please also add tests")).toBe(true);
 });
 
@@ -1129,7 +1132,8 @@ test("creating a ticket in Planning starts the refine interview automatically", 
   expect(board.isRunning("p", t.id)).toBe(true);
   await board.whenIdle();
   const call = readArgs()[0];
-  expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("plan");
+  expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
+  expect(call.args[call.args.indexOf("--disallowedTools") + 1]).toStartWith("Edit,Write,NotebookEdit,");
   expect(call.prompt.startsWith("<ckanban-context")).toBe(true);
   expect(call.prompt).toContain("gym tracker");
   const got = store.getTicket("p", t.id)!;
@@ -1303,7 +1307,7 @@ test("restart mid-reply: planning chat keeps its partial text and recover() resu
   const calls = readArgs();
   expect(calls.length).toBe(2);
   expect(calls[1].prompt).toContain("Reply interrupted by daemon restart");
-  expect(calls[1].args.join(" ")).toContain("--permission-mode plan");
+  expect(calls[1].args.join(" ")).toContain("--disallowedTools Edit,Write,NotebookEdit,");
   expect(calls[1].args).toContain(cut.sessionId!);
   expect(store.listComments("p", t.id).map((c) => c.text)).toContain("Reply interrupted by daemon restart; resuming.");
   const after = store.getTicket("p", t.id)!;

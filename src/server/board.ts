@@ -20,7 +20,7 @@ import { run as runCmd } from "./git";
 import { parseResult } from "./result";
 import { AUTO_CONTINUE_PER_DAY, clockTime, CONTINUE_TEXT, dayKey, limitMessage, parseReset } from "./limit";
 import { DraftTracker } from "./draft";
-import { buildArgs, DEFAULT_STALL_MINUTES, startRun, type RunHandle } from "./runner";
+import { buildArgs, DEFAULT_STALL_MINUTES, PLANNING_DISALLOWED_TOOLS, startRun, type RunHandle } from "./runner";
 import { RETRY_DELAY_MS, RETRY_TEXT, transientError } from "./retry";
 import { BOARD_COMMANDS, commandText, listCommands, MODEL_HELP, parseSlash, REFUSED_COMMANDS, rememberInit, slashMessage, useBundledFile, validModel, type SlashCommand } from "./commands";
 import { mcpConfig } from "./agents";
@@ -105,7 +105,7 @@ function replayText(ev: any): string | null {
   return text === null ? null : commandText(text) ?? text;
 }
 
-/** Backlog/Planning chats refine the ticket (read-only); everywhere else Claude acts on the message. */
+/** Backlog/Planning chats refine the ticket (no file edits); everywhere else Claude acts on the message. */
 export function chatModeFor(status: Status): ChatMode {
   return status === "backlog" || status === "planning" ? "refine" : "act";
 }
@@ -750,7 +750,7 @@ export class Board {
     run.handle = startRun({
       bin: this.opts.claudeBin,
       cwd: session.dir,
-      args: buildArgs(session.sessionId, session.existed, t.model ?? profile.model, refine ? "plan" : "bypassPermissions", mcpConfig(), systemPrompt, cap),
+      args: buildArgs(session.sessionId, session.existed, t.model ?? profile.model, refine ? PLANNING_DISALLOWED_TOOLS : [], mcpConfig(), systemPrompt, cap),
       input: prompt,
       inputLocal: run.chat?.slash === "local" && !resume,
       planning: refine,
@@ -1051,7 +1051,7 @@ export class Board {
       .map((t) => t.id);
   }
 
-  /** Planning replies carry mockups as blocks (plan mode can't write files); save them for the Outputs tab. */
+  /** Planning replies carry mockups as blocks (they can't write files); save them for the Outputs tab. */
   private saveMockups(slug: string, id: string, outputDir: string, ev: any) {
     const content = ev.message?.content;
     if (!Array.isArray(content)) return;

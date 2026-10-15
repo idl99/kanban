@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * Planning runs are read-only (plan mode), so Claude can't write mockup files itself. It puts each one in a
+ * Planning runs can't edit files, so Claude can't write mockup files itself. It puts each one in a
  * <ckanban-mockup name="..."> block in its reply instead; the board saves it to the ticket's outputs folder,
  * where the Outputs tab previews it. Feedback goes through the chat's question form.
  */

@@ -112,7 +112,7 @@ interface Tool {
   name: string;
   description: string;
   inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
-  /** MCP tool hints; readOnlyHint lets Claude Code call it in plan mode (the planning chat). */
+  /** MCP tool hints; readOnlyHint marks tools that change nothing. */
   annotations?: { readOnlyHint?: boolean };
   /** Changes the board: refused inside board runs, unless allowInRun. */
   changes: boolean;
@@ -164,8 +164,8 @@ function runArtifact(job: ArtifactJob, ctx: ToolContext): Promise<ArtifactOutcom
 
 const ARTIFACT_URL = { type: "string", description: "claude.ai artifact link, e.g. https://claude.ai/artifact/AbC123." };
 
-// The board's stand-in for the Artifact tool, which headless runs don't get. readOnlyHint lets the planning
-// chat (plan mode) use them: publishing only writes the page to the ticket's outputs folder, never the project.
+// The board's stand-in for the Artifact tool, which headless runs don't get. The planning chat uses
+// them too: publishing only writes the page to the ticket's outputs folder, never the project.
 const ARTIFACT_TOOLS: Tool[] = [
   {
     name: "read_artifact",

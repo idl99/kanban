@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { mcpConfig } from "../src/server/agents";
-import { buildArgs, controlResponse, inheritedEnv, startRun } from "../src/server/runner";
+import { buildArgs, controlResponse, inheritedEnv, PLANNING_DISALLOWED_TOOLS, startRun } from "../src/server/runner";
 import { tempDir } from "./helpers";
 
 const FAKE = join(import.meta.dir, "fixtures", "fake-claude.ts");
@@ -127,15 +127,22 @@ test("run without follow-ups exits once Claude has answered", async () => {
 test("buildArgs passes the board's MCP server so every run has the ckanban tools", () => {
   const cfg = mcpConfig(["/bin/bun", "/src/cli.ts", "mcp"]);
   expect(JSON.parse(cfg)).toEqual({ mcpServers: { ckanban: { command: "/bin/bun", args: ["/src/cli.ts", "mcp"] } } });
-  const args = buildArgs("u1", false, null, "plan", cfg);
+  const args = buildArgs("u1", false, null, PLANNING_DISALLOWED_TOOLS, cfg);
   expect(args[args.indexOf("--mcp-config") + 1]).toBe(cfg);
-  expect(args[args.indexOf("--permission-mode") + 1]).toBe("plan");
   expect(JSON.parse(mcpConfig()).mcpServers.ckanban.args.at(-1)).toBe("mcp");
 });
 
+test("buildArgs: planning chats skip plan mode but can't edit files", () => {
+  const planning = buildArgs("u1", false, null, PLANNING_DISALLOWED_TOOLS);
+  expect(planning[planning.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
+  const off = planning[planning.indexOf("--disallowedTools") + 1].split(",");
+  for (const t of ["Edit", "Write", "NotebookEdit", "mcp__ckanban__run_schedule", "mcp__ckanban__schedule_job", "mcp__ckanban__start_huddle"]) expect(off).toContain(t);
+  expect(buildArgs("u1", false, null)).not.toContain("--disallowedTools");
+});
+
 test("buildArgs turns Claude in Chrome on for work runs and planning chats", () => {
-  for (const mode of ["bypassPermissions", "plan"] as const) {
-    const args = buildArgs("u1", false, null, mode);
+  for (const off of [[], PLANNING_DISALLOWED_TOOLS]) {
+    const args = buildArgs("u1", false, null, off);
     expect(args).toContain("--chrome");
     expect(args[args.indexOf("--permission-prompt-tool") + 1]).toBe("stdio");
   }

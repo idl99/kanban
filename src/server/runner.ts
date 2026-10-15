@@ -1,3 +1,4 @@
+import { NO_EDIT_TOOLS } from "./huddle-roster";
 import type { BackgroundTask } from "./types";
 
 export interface RunOutput {
@@ -46,7 +47,8 @@ function killGroup(p: { pid: number; exitCode: number | null; signalCode: unknow
 
 export function buildArgs(
   sessionId: string, resume: boolean, model?: string | null,
-  permissionMode: "bypassPermissions" | "plan" = "bypassPermissions",
+  /** Tools this run can't use (--disallowedTools), e.g. NO_EDIT_TOOLS or PLANNING_DISALLOWED_TOOLS. */
+  disallowedTools: string[] = [],
   /** Inline MCP config (see mcpConfig) so every run has the board's tools. */
   mcp?: string,
   /** Board instructions for a run whose message is a slash command (they can't share its text, see Board.executeOnce). */
@@ -58,7 +60,8 @@ export function buildArgs(
   // --replay-user-messages echoes each one back when Claude picks it up.
   // --include-partial-messages: token-level stream events, used for live replies in the chat.
   const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--replay-user-messages",
-    "--include-partial-messages", "--permission-mode", permissionMode];
+    "--include-partial-messages", "--permission-mode", "bypassPermissions"];
+  if (disallowedTools.length) args.push("--disallowedTools", disallowedTools.join(","));
   args.push(resume ? "--resume" : "--session-id", sessionId);
   if (model) args.push("--model", model);
   if (mcp) args.push("--mcp-config", mcp);
@@ -72,13 +75,24 @@ export function buildArgs(
 
 const CHROME_TOOL = "mcp__claude-in-chrome__";
 /**
- * The board's huddle tools: they only touch the huddle, never files, so a Planning chat (plan mode, which asks
- * before every MCP tool that isn't read-only) can coordinate its huddle too.
+ * Backlog/Planning chats may act outside the project when the user asks (APIs, browser, commands), so they don't
+ * use plan mode. Instead they can't edit files (the prompt also rules out shell edits), and the board tools that
+ * plan mode used to block and the daemon doesn't check per run (schedules, jobs, starting a huddle) are off too.
+ */
+export const PLANNING_DISALLOWED_TOOLS = [
+  ...NO_EDIT_TOOLS.split(","),
+  ...["create_schedule", "update_schedule", "delete_schedule", "run_schedule", "schedule_job", "update_job", "run_job_now", "cancel_job", "start_huddle"]
+    .map((t) => `mcp__ckanban__${t}`),
+];
+/**
+ * The board's huddle tools: they only touch the huddle, never files, so any run (a Planning chat too) can
+ * coordinate its huddle.
  */
 const HUDDLE_TOOLS = new Set(["huddle_post", "huddle_read", "huddle_mode", "huddle_findings", "huddle_add_participant", "huddle_status", "huddle_close", "huddle_brief"].map((t) => `mcp__ckanban__${t}`));
 /**
- * Board tools a Planning chat may use when the user asks for it in their message. They never touch files; the
- * daemon still decides per call (Board.userRequestRights), so a Planning run without the user's message gets nothing.
+ * Board tools a Planning chat may use when the user asks for it in their message, should Claude ask permission for
+ * them. They never touch files; the daemon decides per call (Board.userRequestRights), so a Planning run without the
+ * user's message gets nothing.
  * suggest_tags only adds suggestions to the chat's own ticket, which the user keeps or drops.
  */
 const PLANNING_BOARD_TOOLS = new Set(["move_ticket", "update_ticket", "comment_ticket", "create_ticket", "chat_ticket", "stop_ticket", "plan_control", "adopt_tickets", "suggest_tags"]
@@ -86,7 +100,7 @@ const PLANNING_BOARD_TOOLS = new Set(["move_ticket", "update_ticket", "comment_t
 
 /**
  * The board's answer to a control request from claude (stream-json). Permission asks for Claude in Chrome
- * tools and the huddle tools are allowed, and in a Planning run (plan mode) the board tools too; every other ask
+ * tools and the huddle tools are allowed, and in a Planning run the board tools too; every other ask
  * is denied, as it was before prompts reached the board (headless runs had nobody to answer them). Anything else
  * gets an error so claude never waits on the board.
  */
@@ -132,7 +146,7 @@ export function startRun(opts: {
   input?: string;
   /** The first message is a local slash command (see RunHandle.send). */
   inputLocal?: boolean;
-  /** A Planning chat (plan mode): its permission asks for the board tools are allowed (see controlResponse). */
+  /** A Planning chat: its permission asks for the board tools are allowed (see controlResponse). */
   planning?: boolean;
   onEvent: (ev: any) => void;
   /**

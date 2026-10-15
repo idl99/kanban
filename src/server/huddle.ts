@@ -1737,10 +1737,7 @@ export class Huddles {
     if (!p.sessionId) this.updateP(slug, hid, handle, { sessionId });
     const outputDir = this.store.huddleOutputsDir(slug, h.hostTicket, handle);
     const system = huddleAgentSystemPrompt(h, p, host as Ticket, outputDir, dir, profile.baseBranch, this.lessonsFor(slug, p.preset));
-    const args = [
-      ...buildArgs(sessionId, resume, p.model ?? profile.model, "bypassPermissions", mcpConfig(), system),
-      ...(p.canEdit ? [] : ["--disallowedTools", NO_EDIT_TOOLS]),
-    ];
+    const args = buildArgs(sessionId, resume, p.model ?? profile.model, p.canEdit ? [] : NO_EDIT_TOOLS.split(","), mcpConfig(), system);
     let lastWrite = 0;
     let started = resume;
     run.handle = startRun({
