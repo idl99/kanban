@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, safeHref, type BugBlock, type BugBlockId, type BugReportResult } from "./api";
 import { ExternalIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
+import { AttachmentChips } from "./AttachmentChips";
 import { ImagePickButton } from "./ImagePickButton";
 import { Modal } from "./Modal";
 
@@ -95,11 +96,12 @@ export function BugReportDialog({ ticket, onClose }: {
           <textarea ref={descRef} rows={9} value={description} onChange={(e) => setDescription(e.target.value)}
             className={images.dragOver ? "drop-target" : undefined} {...images.handlers}
             onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(e); }} />
+          <AttachmentChips text={description} images={images} />
           {images.error && <span className="form-error">{images.error}</span>}
         </label>
         <div className="bug-pick">
           <ImagePickButton images={images} target={descRef} disabled={busy} />
-          <span className="muted small">{images.uploading ? "Uploading image…" : "Screenshots help. You can also paste or drop them into the description."}</span>
+          <span className="muted small">{images.uploading ? "Uploading…" : "Screenshots help. You can also paste or drop them into the description."}</span>
         </div>
         <div className="field">
           <div className="field-label">Included context</div>
@@ -131,7 +133,7 @@ export function BugReportDialog({ ticket, onClose }: {
         <div className="form-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
           <button type="submit" className="btn primary" disabled={busy || !title.trim() || blocks === null || images.uploading}>
-            {images.uploading ? "Uploading image…" : busy ? "Reporting…" : "Report bug"}
+            {images.uploading ? "Uploading…" : busy ? "Reporting…" : "Report bug"}
           </button>
         </div>
       </form>

@@ -25,6 +25,7 @@ export const FileIcon = (p: IconProps) => svg(<><path d="M9 2H4.8c-.7 0-1.3.6-1.
 export const FileTextIcon = (p: IconProps) => svg(<><path d="M9 2H4.8c-.7 0-1.3.6-1.3 1.3v9.4c0 .7.6 1.3 1.3 1.3h6.4c.7 0 1.3-.6 1.3-1.3V5.5L9 2z" /><path d="M9 2v3.5h3.5M5.8 8.5h4.4M5.8 11h4.4" /></>, p);
 export const FileCodeIcon = (p: IconProps) => svg(<><path d="M9 2H4.8c-.7 0-1.3.6-1.3 1.3v9.4c0 .7.6 1.3 1.3 1.3h6.4c.7 0 1.3-.6 1.3-1.3V5.5L9 2z" /><path d="M6.8 8.3L5.5 9.8l1.3 1.5M9.2 8.3l1.3 1.5-1.3 1.5" /></>, p);
 export const FileImageIcon = (p: IconProps) => svg(<><path d="M9 2H4.8c-.7 0-1.3.6-1.3 1.3v9.4c0 .7.6 1.3 1.3 1.3h6.4c.7 0 1.3-.6 1.3-1.3V5.5L9 2z" /><path d="M5 12l2-2.5 1.5 1.5 1-1L11 12" /></>, p);
+export const PaperclipIcon = (p: IconProps) => svg(<path d="M13.2 7.6l-5 5a3.2 3.2 0 01-4.5-4.5l5.4-5.4a2.1 2.1 0 013 3l-5.3 5.3a1 1 0 01-1.5-1.5l4.8-4.8" />, p);
 export const ImageIcon = (p: IconProps) => svg(<><rect x="2" y="3" width="12" height="10" rx="1.6" /><circle cx="5.8" cy="6.6" r="1.1" /><path d="M14 10.6l-3.4-3.4L4 13" /></>, p);
 export const FolderIcon = (p: IconProps) => svg(<path d="M2.5 4.3c0-.7.6-1.3 1.3-1.3h2.6l1.4 1.5h4.4c.7 0 1.3.6 1.3 1.3v5.9c0 .7-.6 1.3-1.3 1.3H3.8c-.7 0-1.3-.6-1.3-1.3V4.3z" />, p);
 export const FolderOpenIcon = (p: IconProps) => svg(<path d="M2.5 11.7V4.3c0-.7.6-1.3 1.3-1.3h2.6l1.4 1.5h4c.7 0 1.3.6 1.3 1.3V7M2.5 11.7L4.3 7.6c.2-.4.6-.6 1-.6h8.4c.5 0 .8.5.6.9L12.5 12c-.2.4-.6.6-1 .6H3.4c-.6 0-1-.5-.9-.9z" />, p);

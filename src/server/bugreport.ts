@@ -2,6 +2,7 @@
 // the ckanban repo, with `gh issue create`, or a prefilled "new issue" URL when gh can't do it.
 import { homedir, platform, arch, release } from "node:os";
 import { extractFinalText, summarizeEvent } from "./activity";
+import { ATTACHMENT_NAME_SRC } from "./attachments";
 import { run, type RunResult } from "./git";
 import { maskSecrets } from "./mcp";
 import type { Store } from "./store";
@@ -58,6 +59,9 @@ export class BugReportError extends Error {
 const TOKEN_RE = /\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})\b/g;
 const ATTACHMENT_RE = /\S*?attachments\/([0-9a-f]{32}\.(?:png|jpg|gif|webp))\b/g;
 const IMAGE_MD_RE = /!\[[^\]]*\]\(\s*<?\S*?attachments\/([0-9a-f]{32}\.(?:png|jpg|gif|webp))>?\s*\)/g;
+/** Attached files (PDF, documents, text): local only too. */
+const FILE_MD_RE = new RegExp(`\\[[^\\]]*\\]\\(\\s*<?\\S*?attachments\\/${ATTACHMENT_NAME_SRC}>?\\s*\\)`, "g");
+const FILE_RE = new RegExp(`\\S*?attachments\\/${ATTACHMENT_NAME_SRC}`, "g");
 
 /** Hides the data folder, the home folder and anything that looks like a secret or token. */
 export function scrub(text: string, opts: { home?: string; dataRoot?: string } = {}): string {
@@ -75,9 +79,10 @@ export function screenshotNames(...texts: string[]): string[] {
   return [...out];
 }
 
-/** Replaces local image references with a placeholder, since GitHub can't load them. */
+/** Replaces local image and file references with a placeholder, since GitHub can't load them. */
 export function stripScreenshots(text: string): string {
-  return text.replace(IMAGE_MD_RE, "_[screenshot not uploaded]_").replace(ATTACHMENT_RE, "_[screenshot not uploaded]_");
+  return text.replace(IMAGE_MD_RE, "_[screenshot not uploaded]_").replace(ATTACHMENT_RE, "_[screenshot not uploaded]_")
+    .replace(FILE_MD_RE, "_[attached file not uploaded]_").replace(FILE_RE, "_[attached file not uploaded]_");
 }
 
 /** Last `maxLines` lines of the text, and at most `maxBytes` of it. */

@@ -1257,9 +1257,9 @@ test("prompts get image file paths; deleting the ticket deletes its images", asy
   await setup({ git: false });
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]);
   const { saveAttachment } = await import("../src/server/attachments");
-  const inBody = saveAttachment(store.attachmentsDir, "image/png", png);
-  const inComment = saveAttachment(store.attachmentsDir, "image/png", png);
-  const other = saveAttachment(store.attachmentsDir, "image/png", png);
+  const inBody = saveAttachment(store.attachmentsDir, "png", png);
+  const inComment = saveAttachment(store.attachmentsDir, "png", png);
+  const other = saveAttachment(store.attachmentsDir, "png", png);
   const t = await board.createTicket("p", { title: "x", body: `see ![image](/api/attachments/${inBody})`, status: "ready" });
   await board.whenIdle();
   const prompt = readArgs()[0].prompt;

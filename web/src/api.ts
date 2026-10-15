@@ -1,3 +1,4 @@
+import { isImageFile } from "./attachText";
 import type { SlashCommand } from "./slashText";
 import type { TicketUsage, UsageResult } from "./usage";
 import type { Status } from "./columns";
@@ -972,6 +973,8 @@ const jb = (slug: string, id?: string) =>
 const t = (slug: string, id?: string) =>
   `/api/profiles/${encodeURIComponent(slug)}/tickets${id ? `/${encodeURIComponent(id)}` : ""}`;
 
+const sizes = new Map<string, Promise<number | null>>();
+
 export const api = {
   claudeProjects: () => req<ClaudeProject[]>("GET", "/api/claude/projects"),
   claudeDefaults: () => req<{ model: string | null }>("GET", "/api/claude/defaults"),
@@ -1185,11 +1188,24 @@ export const api = {
   limitAuto: (slug: string, id: string, auto: boolean) => req<Ticket>("POST", `${t(slug, id)}/limit`, { auto }),
   planningCommand: (slug: string, id: string) => req<{ command: string }>("POST", `${t(slug, id)}/planning-command`),
   /** Raw image bytes; the server saves them and returns the URL to put in markdown. */
-  uploadImage: async (file: Blob) => {
-    const r = await fetch("/api/attachments", { method: "POST", headers: { "content-type": file.type }, body: file });
+  /** Images go up with their type; other files as bytes with their name (the server checks both). */
+  uploadAttachment: async (file: File, signal?: AbortSignal) => {
+    const headers: Record<string, string> = isImageFile(file)
+      ? { "content-type": file.type }
+      : { "content-type": "application/octet-stream", "x-file-name": encodeURIComponent(file.name) };
+    const r = await fetch("/api/attachments", { method: "POST", headers, body: file, signal });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error((data as any).error ?? `${r.status} ${r.statusText}`);
     return data as { url: string; path: string };
+  },
+  /** Size of a stored attachment, fetched once per file (file cards show it). */
+  attachmentSize: (stored: string): Promise<number | null> => {
+    let p = sizes.get(stored);
+    if (!p) {
+      p = fetch(`/api/attachments/${stored}/info`).then((r) => (r.ok ? r.json() : null)).then((d: any) => d?.size ?? null, () => null);
+      sizes.set(stored, p);
+    }
+    return p;
   },
 };
 

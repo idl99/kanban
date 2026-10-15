@@ -100,7 +100,7 @@ export function NewTicketDialog({ slug, folder, knownTags = [], onClose, onCreat
           <button type="button" className="btn ghost" onClick={onClose}>Cancel<KeyHint keys="Esc" /></button>
           <button type="button" className="btn" disabled={busy || !title.trim() || images.uploading} onClick={() => submit("backlog")} title={`Park it in Backlog; nothing runs (${MOD}S)`}>Create<KeyHint keys="⌘S" /></button>
           <button type="button" className="btn primary icon-label" onClick={() => submit(startStatus)} disabled={busy || !title.trim() || images.uploading}>
-            {images.uploading ? "Uploading image…" : <>{startLabel} <kbd className="kbd-on-primary">⌘↵</kbd></>}
+            {images.uploading ? "Uploading…" : <>{startLabel} <kbd className="kbd-on-primary">⌘↵</kbd></>}
             <KeyHint keys="⌘↵" />
           </button>
         </div>

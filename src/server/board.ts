@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { extractFinalText, summarizeEvent } from "./activity";
-import { copyAttachments, deleteAttachments, localizeImages, localizeUrls, referencedAttachments } from "./attachments";
+import { copyAttachments, deleteAttachments, localizeAttachments, localizeUrls, referencedAttachments } from "./attachments";
 import type { Bus } from "./events";
 import { isSessionLive as psSessionLive, sessionTitle } from "./claude";
 import { addWorktree, branchesWithPrefix, branchExists, isGitRepo, listWorktrees, removeWorktree, repoKind, resolveBaseBranch, worktreeDir, type RepoKind } from "./git";
@@ -550,7 +550,7 @@ export class Board {
   private steer(run: ActiveRun, msg: QueuedMessage): boolean {
     if (run.inFlight.has(msg.id) || run.promptMsgId === msg.id) return true;
     // A slash command goes alone: anything after it would become the command's arguments.
-    const text = msg.slash ? localizeUrls(msg.text, this.store.attachmentsDir) : localizeImages(msg.peer || msg.hostWake ? msg.text : steerPrompt(msg.text), this.store.attachmentsDir);
+    const text = msg.slash ? localizeUrls(msg.text, this.store.attachmentsDir) : localizeAttachments(msg.peer || msg.hostWake ? msg.text : steerPrompt(msg.text), this.store.attachmentsDir);
     if (!run.handle?.send(text, { local: msg.slash === "local" })) return false;
     // Claude never echoes a local command back: it is read once it is written.
     if (msg.slash === "local") this.dropQueued(run.slug, run.id, [msg.id]);
@@ -708,7 +708,7 @@ export class Board {
     const outputDir = this.store.outputsDir(slug, id);
     // Start fresh session: a work run in a new session that picks up from the branch (until that session exists).
     const fresh = !!t.freshSession && !run.chat;
-    let prompt = resume ?? withSetup(localizeImages(run.chat?.raw
+    let prompt = resume ?? withSetup(localizeAttachments(run.chat?.raw
       ? run.chat.text
       : run.chat
       ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir, !!profile.artifacts, session.repo, session.inPlace)
@@ -1283,7 +1283,7 @@ export class Board {
   async planningCommand(slug: string, id: string): Promise<string> {
     const s = await this.ensureSession(slug, id);
     const t = this.store.getTicket(slug, id)!;
-    return planningCommand(s.dir, s.sessionId, localizeImages(planningPrompt(t, this.store.ticketPath(slug, id)), this.store.attachmentsDir), s.existed);
+    return planningCommand(s.dir, s.sessionId, localizeAttachments(planningPrompt(t, this.store.ticketPath(slug, id)), this.store.attachmentsDir), s.existed);
   }
 
   async createTicket(

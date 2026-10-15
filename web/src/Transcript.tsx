@@ -1,7 +1,8 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { useEffect, useMemo, useRef } from "react";
-import type { ActivityEntry } from "./api";
+import { api, type ActivityEntry } from "./api";
+import { ATTACHMENT_SRC, fileHref, fileKind, formatSize, opensInline } from "./attachText";
 import { opensNewTab } from "./links";
 import { sourceLabel, splitCommandMentions, type SlashCommand } from "./slashText";
 
@@ -24,16 +25,16 @@ const PURIFY = {
   FORBID_ATTR: ["style", "action", "formaction"],
 };
 
-// Pasted images: the UI URL, or the absolute file path Claude was given in its prompt (seen in the chat history).
-const ATTACHMENT_SRC = /(?:^|\/)attachments\/([0-9a-f]{32}\.(?:png|jpg|gif|webp))$/;
+const IMAGE_NAME = /\.(?:png|jpg|gif|webp)$/;
 
 function thumbnails(html: string, commands?: SlashCommand[] | null, handles?: string[]): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
   if (commands?.length) mentionChips(doc, commands);
   if (handles?.length) handleChips(doc, handles);
+  // Pasted images: the UI URL, or the absolute file path Claude was given in its prompt (seen in the chat history).
   doc.querySelectorAll("img").forEach((img) => {
     const m = (img.getAttribute("src") ?? "").match(ATTACHMENT_SRC);
-    if (!m) return;
+    if (!m || !IMAGE_NAME.test(m[1])) return;
     img.setAttribute("src", `/api/attachments/${m[1]}`);
     img.classList.add("attachment");
   });
@@ -43,7 +44,64 @@ function thumbnails(html: string, commands?: SlashCommand[] | null, handles?: st
     a.setAttribute("target", "_blank");
     a.setAttribute("rel", "noopener noreferrer");
   });
+  fileCards(doc);
   return doc.body.innerHTML;
+}
+
+/**
+ * Links to attached files become cards: type tile, name, "PDF · 2.4 MB" (the size is filled in after render)
+ * and a Download button. Clicking opens PDFs, images and text in a new tab and downloads Office files.
+ */
+function fileCards(doc: Document) {
+  doc.querySelectorAll("a").forEach((a) => {
+    const m = (a.getAttribute("href") ?? "").match(ATTACHMENT_SRC);
+    if (!m) return;
+    const stored = m[1];
+    const name = (a.textContent ?? "").trim() || stored;
+    const kind = fileKind(name.includes(".") ? name : stored);
+    const el = (tag: string, cls: string, text?: string) => {
+      const e = doc.createElement(tag);
+      e.className = cls;
+      if (text !== undefined) e.textContent = text;
+      return e;
+    };
+    const card = el("span", "file-card");
+    card.dataset.stored = stored;
+    card.dataset.type = kind.type;
+    const open = el("a", "file-open") as HTMLAnchorElement;
+    open.href = fileHref(stored, name);
+    if (opensInline(stored)) {
+      open.target = "_blank";
+      open.rel = "noopener noreferrer";
+    } else open.setAttribute("download", name);
+    open.title = name;
+    const meta = el("span", "file-meta");
+    meta.append(el("span", "file-name", name), el("span", "file-size", kind.type));
+    open.append(el("span", `file-tile ${kind.cls}`, kind.tile), meta);
+    const dl = el("a", "file-btn", "⤓") as HTMLAnchorElement;
+    dl.href = fileHref(stored, name, true);
+    dl.setAttribute("download", name);
+    dl.title = "Download";
+    dl.setAttribute("aria-label", `Download ${name}`);
+    card.append(open, dl);
+    a.replaceWith(card);
+  });
+  // Cards on consecutive lines sit in one wrapping row instead of one per line.
+  doc.querySelectorAll(".file-card + br").forEach((br) => {
+    let next = br.nextSibling;
+    while (next && next.nodeType === 3 && !next.textContent?.trim()) next = next.nextSibling;
+    if (next instanceof Element && next.classList.contains("file-card")) br.remove();
+  });
+}
+
+/** Fill in the file cards' sizes ("PDF · 2.4 MB") once they are in the page. */
+function fillSizes(root: HTMLElement | null) {
+  root?.querySelectorAll<HTMLElement>(".file-card[data-stored]").forEach((card) => {
+    void api.attachmentSize(card.dataset.stored!).then((n) => {
+      const line = card.querySelector(".file-size");
+      if (n !== null && line) line.textContent = `${card.dataset.type} · ${formatSize(n)}`;
+    });
+  });
 }
 
 /** `/name` of a known skill or command in prose (not code or links) becomes a chip; hover tells what it is. */
@@ -106,8 +164,10 @@ export function Markdown({ text, commands, handles }: { text: string; commands?:
     () => thumbnails(DOMPurify.sanitize(marked.parse(text, { async: false, breaks: true }) as string, PURIFY), commands, handles),
     [text, commands, handles?.join(" ")],
   );
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => fillSizes(ref.current), [html]);
   return (
-    <div className="md" dangerouslySetInnerHTML={{ __html: html }}
+    <div ref={ref} className="md" dangerouslySetInnerHTML={{ __html: html }}
       onClick={(e) => {
         const img = e.target as HTMLElement;
         if (img.tagName === "IMG" && img.classList.contains("attachment")) window.open(img.getAttribute("src")!, "_blank", "noopener");

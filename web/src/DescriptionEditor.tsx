@@ -1,4 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, type KeyboardEvent, type RefObject } from "react";
+import { AttachmentChips } from "./AttachmentChips";
 import { ImagePickButton } from "./ImagePickButton";
 import type { useImagePaste } from "./imagePaste";
 import { useSlashCommands, useSlashPicker } from "./SlashPicker";
@@ -71,6 +72,7 @@ export function DescriptionEditor({ slug, ticketId, value, setValue, images, inp
           if (snippets.onKeyDown(e) || slash.onKeyDown(e)) return;
           onKeyDown?.(e);
         }} />
+      {images && <AttachmentChips text={value} images={images} />}
       {phone ? (
         // Phones: tap buttons instead of keyboard hints (paste and `@` / `/` are awkward on a phone keyboard).
         <div className="desc-editor-foot phone">
@@ -79,13 +81,13 @@ export function DescriptionEditor({ slug, ticketId, value, setValue, images, inp
           {!!commands?.length && (
             <button type="button" className="desc-editor-tool" onMouseDown={keepFocus} onClick={() => typeTrigger("/")}><kbd>/</kbd> Skill</button>
           )}
-          {images?.uploading && <span className="desc-editor-status">Uploading image…</span>}
+          {images?.uploading && <span className="desc-editor-status">Uploading…</span>}
         </div>
       ) : (
         <div className="desc-editor-foot">
           <span><kbd>@</kbd> snippet</span>
           <span><kbd>/</kbd> skill</span>
-          {images && <span>{images.uploading ? "Uploading image…" : "Paste images"}</span>}
+          {images && <span>{images.uploading ? "Uploading…" : "Paste or drop files"}</span>}
           {images && <ImagePickButton images={images} target={inputRef} className="desc-editor-pick" />}
         </div>
       )}

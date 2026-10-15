@@ -15,6 +15,7 @@ import { AgentRows } from "./AgentRow";
 import { ToolRows } from "./ToolRows";
 import { ArrowDownIcon, BranchIcon, CloseIcon, FileCodeIcon, FileTextIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
+import { AttachmentChips } from "./AttachmentChips";
 import { ImagePickButton } from "./ImagePickButton";
 import { NewTicketsCard } from "./NewTicketsCard";
 import { KeyHint } from "./KeyHint";
@@ -791,6 +792,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           }} />
         {snippets.popup}
         {slash.popup}
+        <AttachmentChips text={draft} images={images} />
         {images.error && <div className="form-error">{images.error}</div>}
         <div className="composer-foot">
           <span className="muted small composer-hint">

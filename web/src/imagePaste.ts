@@ -1,17 +1,14 @@
 import { useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { api } from "./api";
+import { cleanFileName, fileHolder, isImageFile, refusal } from "./attachText";
 import { insertBlock, mapIndex, pickRange, swapHolder, type Edit } from "./imageText";
 
-const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 let seq = 0;
 
-function imagesOf(list: DataTransfer | null): File[] {
-  return Array.from(list?.files ?? []).filter((f) => f.type.startsWith("image/"));
-}
-
 /**
- * Paste, drop or pick (ImagePickButton) images into a markdown textarea: each one is uploaded and inserted
- * at the cursor, on its own line, as `![image](/api/attachments/…)`. Text paste is left alone.
+ * Paste, drop or pick (ImagePickButton) images and files into a markdown textarea: each one is uploaded and
+ * inserted at the cursor, on its own line, as `![image](/api/attachments/…)` or, for other files,
+ * `[<file name>](/api/attachments/…)`. Text paste is left alone. Files that can't be attached are refused with an error.
  */
 export function useImagePaste(setValue: Dispatch<SetStateAction<string>>) {
   const [error, setError] = useState<string | null>(null);
@@ -40,32 +37,48 @@ export function useImagePaste(setValue: Dispatch<SetStateAction<string>>) {
       return r.value;
     });
 
-  const insert = (el: HTMLTextAreaElement, files: File[], picked = false) => {
-    setError(null);
-    const holders = files.map(() => `![uploading image ${++seq}…]()`);
+  // Uploads in flight by placeholder, so a chip's ✕ can cancel one.
+  const inFlight = useRef(new Map<string, AbortController>());
+
+  const insert = (el: HTMLTextAreaElement, all: File[], picked = false) => {
+    const refused = all.map(refusal).filter((r): r is string => !!r);
+    setError(refused.length ? `Not added: ${refused.join("; ")}` : null);
+    const files = all.filter((f) => !refusal(f));
+    if (!files.length) return;
+    const holders = files.map((f) => (isImageFile(f) ? `![uploading image ${++seq}…]()` : fileHolder(f.name, ++seq)));
     const inBox = !picked || touched.current.has(el);
     edit(el, (v, start, end) => insertBlock(v, ...pickRange(v.length, start, end, inBox), holders), picked);
     if (picked) touched.current.add(el);
     files.forEach(async (file, i) => {
+      const abort = new AbortController();
+      inFlight.current.set(holders[i], abort);
       uploads.current++;
       setUploading(true);
       try {
-        if (!IMAGE_TYPES.includes(file.type)) throw new Error("only PNG, JPEG, GIF and WebP images are supported");
-        const { url } = await api.uploadImage(file);
-        edit(el, (v, start, end) => swapHolder(v, holders[i], `![image](${url})`, start, end));
+        const { url } = await api.uploadAttachment(file, abort.signal);
+        const md = isImageFile(file) ? `![image](${url})` : `[${cleanFileName(file.name)}](${url})`;
+        edit(el, (v, start, end) => swapHolder(v, holders[i], md, start, end));
       } catch (e: any) {
         edit(el, (v, start, end) => swapHolder(v, holders[i], "", start, end));
-        setError(`Image not added: ${e.message}`);
+        if (!abort.signal.aborted) setError(`Not added: ${file.name || "image"}: ${e.message}`);
       } finally {
+        inFlight.current.delete(holders[i]);
         if (--uploads.current === 0) setUploading(false);
       }
     });
   };
 
+  /** A chip's ✕: cancel the upload behind a placeholder, or drop an uploaded file's line from the text. */
+  const remove = (token: string) => {
+    const abort = inFlight.current.get(token);
+    if (abort) return abort.abort();
+    setValue((v) => swapHolder(v, token, "", 0, 0).value);
+  };
+
   const handlers = {
     onFocus: (e: React.FocusEvent<HTMLTextAreaElement>) => { touched.current.add(e.currentTarget); },
     onPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      const files = imagesOf(e.clipboardData);
+      const files = Array.from(e.clipboardData?.files ?? []);
       if (!files.length) return;
       e.preventDefault();
       insert(e.currentTarget, files);
@@ -80,18 +93,12 @@ export function useImagePaste(setValue: Dispatch<SetStateAction<string>>) {
       setDragOver(false);
       if (!e.dataTransfer.files.length) return;
       e.preventDefault();
-      const files = imagesOf(e.dataTransfer);
-      if (!files.length) return setError("Only images can be dropped here (PNG, JPEG, GIF or WebP).");
-      insert(e.currentTarget, files);
+      insert(e.currentTarget, Array.from(e.dataTransfer.files));
     },
   };
 
-  /** Add images chosen in a file picker; files that aren't supported images are refused with an error. */
-  const pick = (el: HTMLTextAreaElement, files: File[]) => {
-    const ok = files.filter((f) => IMAGE_TYPES.includes(f.type));
-    if (ok.length) insert(el, ok, true);
-    if (ok.length < files.length) setError("Image not added: only PNG, JPEG, GIF and WebP images are supported");
-  };
+  /** Add images and files chosen in a file picker. */
+  const pick = (el: HTMLTextAreaElement, files: File[]) => insert(el, files, true);
 
-  return { handlers, pick, error, uploading, dragOver, clearError: () => setError(null) };
+  return { handlers, pick, remove, error, uploading, dragOver, clearError: () => setError(null) };
 }

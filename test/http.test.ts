@@ -290,7 +290,7 @@ test("attachments: upload, serve, and reject bad input", async () => {
   expect(r.status).toBe(415);
   r = await fetch(`${base}/api/attachments`, { method: "POST", headers: { "content-type": "image/png" }, body: "not a png" });
   expect(r.status).toBe(400);
-  r = await fetch(`${base}/api/attachments`, { method: "POST", headers: { "content-type": "image/png" }, body: new Uint8Array(10 * 1024 * 1024 + 1) });
+  r = await fetch(`${base}/api/attachments`, { method: "POST", headers: { "content-type": "image/png" }, body: new Uint8Array(25 * 1024 * 1024 + 1) });
   expect(r.status).toBe(413);
   r = await fetch(`${base}/api/attachments/..%2Fconfig.json`);
   expect(r.status).toBe(404);
@@ -298,6 +298,37 @@ test("attachments: upload, serve, and reject bad input", async () => {
     method: "POST", headers: { "content-type": "image/png", origin: "http://evil.com" }, body: png,
   });
   expect(r.status).toBe(403);
+});
+
+test("attachments: files upload with their name, serve safely and report their size", async () => {
+  const up = (name: string, body: string | Uint8Array, type = "application/octet-stream") =>
+    fetch(`${base}/api/attachments`, { method: "POST", headers: { "content-type": type, "x-file-name": encodeURIComponent(name) }, body });
+  let r = await up("Q3 contract.pdf", "%PDF-1.7\nhello");
+  expect(r.status).toBe(201);
+  const pdf = ((await r.json()) as any).url as string;
+  expect(pdf).toMatch(/^\/api\/attachments\/[0-9a-f]{32}\.pdf$/);
+  r = await fetch(`${base}${pdf}`);
+  expect(r.headers.get("content-type")).toBe("application/pdf");
+  expect(r.headers.get("content-disposition") ?? "").not.toContain("attachment"); // opens in the browser
+  expect(r.headers.get("content-security-policy")).toBe("sandbox");
+  r = await fetch(`${base}${pdf}?download=1&name=${encodeURIComponent("Q3 contract.pdf")}`);
+  expect(r.headers.get("content-disposition")).toStartWith('attachment; filename="Q3 contract.pdf"');
+  r = await fetch(`${base}${pdf}/info`);
+  expect(await r.json()).toEqual({ size: 14 });
+
+  r = await up("notes.docx", new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0, 0]));
+  const docx = ((await r.json()) as any).url as string;
+  r = await fetch(`${base}${docx}?name=notes.docx`);
+  expect(r.headers.get("content-disposition")).toStartWith('attachment; filename="notes.docx"');
+
+  r = await up("page.html", "<script>alert(1)</script>");
+  const html = ((await r.json()) as any).url as string;
+  r = await fetch(`${base}${html}`);
+  expect(r.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+
+  expect((await up("setup.exe", "MZ")).status).toBe(415);
+  expect((await up("fake.pdf", "not a pdf")).status).toBe(400);
+  expect((await up("notes.txt", "hi", "text/plain")).status).toBe(415); // a plain form post can't upload
 });
 
 test("files API lists and reads inside the profile, rejects escapes", async () => {
