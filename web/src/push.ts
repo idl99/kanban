@@ -8,7 +8,8 @@ export type PushStatus = PushSupport | "denied" | "off" | "on";
 
 export const PUSH_HINT_KEY = "ckanban.pushHintDone";
 /** Fired on window when this device turned notifications on or off. */
-const CHANGED = "ckanban-push-changed";
+export const PUSH_CHANGED = "ckanban-push-changed";
+const CHANGED = PUSH_CHANGED;
 
 export function isIOS(): boolean {
   return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);

@@ -887,6 +887,8 @@ export interface NotifyState {
   kinds: Record<NotifyKind, boolean>;
   lastSentAt: string | null;
   lastError: string | null;
+  /** A browser on this Mac gets notifications: they replace the macOS banner. */
+  macBrowser: boolean;
 }
 
 export interface InboxItem {

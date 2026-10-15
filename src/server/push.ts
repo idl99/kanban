@@ -11,6 +11,8 @@ export interface PushDevice extends PushTarget {
   /** e.g. "iPhone · Safari (Home Screen)". */
   label: string;
   createdAt: string;
+  /** Turned on in a browser on this Mac (the board's localhost address): its notifications replace the macOS banner. */
+  thisMac?: boolean;
 }
 
 interface PushFile {
@@ -76,8 +78,13 @@ export class PushService {
     return this.read().devices.map(({ id, label, createdAt }) => ({ id, label, createdAt }));
   }
 
+  /** Whether a browser on this Mac gets notifications (they open the ticket when clicked, unlike the macOS banner). */
+  hasThisMac(): boolean {
+    return this.read().devices.some((d) => d.thisMac);
+  }
+
   /** Add (or refresh) a device. Throws on input that isn't a browser push subscription. */
-  subscribe(raw: any, label: unknown): PushDevice {
+  subscribe(raw: any, label: unknown, thisMac = false): PushDevice {
     const endpoint = typeof raw?.endpoint === "string" ? raw.endpoint : "";
     let u: URL;
     try {
@@ -96,6 +103,7 @@ export class PushService {
       id, endpoint, keys: { p256dh, auth },
       label: typeof label === "string" && label.trim() ? label.trim().slice(0, 80) : "Browser",
       createdAt: f.devices.find((d) => d.id === id)?.createdAt ?? nowIso(),
+      ...(thisMac ? { thisMac: true } : {}),
     };
     f.devices = [...f.devices.filter((d) => d.id !== id), device];
     this.write(f);
@@ -113,6 +121,16 @@ export class PushService {
     return true;
   }
 
+  /** A known device was seen in a browser on this Mac (devices turned on before `thisMac` existed); true when it changed. */
+  markThisMac(endpoint: string): boolean {
+    const f = this.read();
+    const d = f.devices.find((x) => x.endpoint === endpoint);
+    if (!d || d.thisMac) return false;
+    d.thisMac = true;
+    this.write(f);
+    return true;
+  }
+
   /** The page's heartbeat: its board is on screen (or not anymore). */
   setVisible(endpoint: string, visible: boolean): void {
     const id = deviceId(endpoint);
@@ -125,10 +143,14 @@ export class PushService {
     return until !== undefined && until > this.now();
   }
 
-  /** Send to every device (or only one), skipping those with the board on screen unless skipVisible is false. */
-  async send(p: PushPayload, o: { only?: string; skipVisible?: boolean } = {}): Promise<PushResult> {
+  /**
+   * Send to every device (or only one, or only this Mac's browsers), skipping those with the board on screen unless
+   * skipVisible is false.
+   */
+  async send(p: PushPayload, o: { only?: string; thisMac?: boolean; skipVisible?: boolean } = {}): Promise<PushResult> {
     const f = this.read();
-    const targets = f.devices.filter((d) => (o.only ? d.id === o.only || d.endpoint === o.only : true) && !(o.skipVisible !== false && this.isVisible(d.id)));
+    const targets = f.devices.filter((d) => (o.only ? d.id === o.only || d.endpoint === o.only : true) && (!o.thisMac || d.thisMac)
+      && !(o.skipVisible !== false && this.isVisible(d.id)));
     const errors: string[] = [];
     const gone: string[] = [];
     let sent = 0;

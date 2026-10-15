@@ -39,8 +39,11 @@ export interface BoardOptions {
   isSessionLive?: (sessionId: string, title: string | null) => Promise<boolean>;
   /** The ticket's session open in one of the board's own terminals (the dock), which the board can close (Take over here). */
   findOwnedSession?: (sessionId: string) => Promise<OwnedSession | null>;
-  /** Tells the user about board events that aren't "needs you", e.g. a plan done (default: a macOS banner, see notify.ts). */
-  notify?: (title: string, body: string) => void;
+  /**
+   * Tells the user about board events that aren't "needs you", e.g. a plan done, about ticket `id` on board `slug`
+   * (default: a macOS banner, see notify.ts).
+   */
+  notify?: (title: string, body: string, slug: string, id: string) => void;
   /** Child events that arrive within this window wake the planner once (default 3s). */
   planWakeDelayMs?: number;
   /** The ticket's Claude session as the board UI sees it (open questions, pending proposal); a plan skips children waiting on the user. */
@@ -235,7 +238,7 @@ export class Board {
   private hostHuddleStates: (slug: string) => Map<string, HostHuddle> = () => new Map();
   private sessionExists: (id: string) => boolean;
   private isSessionLive: (id: string, title: string | null) => Promise<boolean>;
-  private notify: (title: string, body: string) => void;
+  private notify: (title: string, body: string, slug: string, id: string) => void;
 
   private sessionSummary: (sessionId: string) => SessionSummary | null;
 
@@ -243,7 +246,7 @@ export class Board {
     this.sessionSummary = opts.sessionSummary ?? (() => null);
     this.sessionExists = opts.sessionExists ?? claudeSessionExists;
     this.isSessionLive = opts.isSessionLive ?? psSessionLive;
-    this.notify = opts.notify ?? macBanner;
+    this.notify = opts.notify ?? ((title, body) => macBanner(title, body));
     useBundledFile(join(store.root, "claude-commands.json"));
   }
 
@@ -1592,7 +1595,7 @@ export class Board {
       if (plan.awaiting === "final") {
         this.patch(slug, planner.id, { plan: { ...plan, state: "done", awaiting: null, finishedAt: nowIso() } });
         this.store.addComment(slug, planner.id, "ai", "Plan done: all child tickets finished and the final check ran.");
-        this.notify(`Plan done: ${planner.title}`, "All child tickets finished. Summary in the ticket's outputs.");
+        this.notify(`Plan done: ${planner.title}`, "All child tickets finished. Summary in the ticket's outputs.", slug, planner.id);
         return false;
       }
       plan.awaiting = null;

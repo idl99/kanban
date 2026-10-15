@@ -461,7 +461,8 @@ export function createServer(deps: ServerDeps) {
       const endpoint = typeof b?.endpoint === "string" ? b.endpoint : "";
       if (parts[1] === "subscribe" && m === "POST") {
         try {
-          const d = push.subscribe(b?.subscription, b?.label);
+          // On the board's own port: a browser on this Mac (phone access comes in on the remote listener).
+          const d = push.subscribe(b?.subscription, b?.label, listenerOf(req) === "local");
           return json({ id: d.id, label: d.label, createdAt: d.createdAt });
         } catch (e) {
           throw new HttpError(400, (e as Error).message);
@@ -475,6 +476,7 @@ export function createServer(deps: ServerDeps) {
       if (parts[1] === "visible" && m === "POST") {
         if (!endpoint) throw new HttpError(400, "endpoint is required");
         push.setVisible(endpoint, b?.visible === true);
+        if (listenerOf(req) === "local") push.markThisMac(endpoint);
         return json({ ok: true });
       }
       if (parts[1] === "test" && m === "POST") {

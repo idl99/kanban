@@ -712,10 +712,13 @@ test("phone push: public key, turn a device on, heartbeat, remove; board runs ar
   expect(r.status).toBe(400);
   r = await fetch(`${base}/api/push/visible`, json("POST", { endpoint: sub.endpoint, visible: true }));
   expect(r.status).toBe(200);
+  // Turned on at the board's own (localhost) address: a browser on this Mac, so the macOS banner steps aside.
+  expect(((await (await fetch(`${base}/api/notify`)).json()) as any).macBrowser).toBe(true);
   r = await fetch(`${base}/api/push`, { headers: { "x-ckanban-run": "p/t_1" } });
   expect(r.status).toBe(403);
   r = await fetch(`${base}/api/push/remove`, json("POST", { id: d.id }));
   expect(((await r.json()) as any).devices).toEqual([]);
+  expect(((await (await fetch(`${base}/api/notify`)).json()) as any).macBrowser).toBe(false);
 });
 
 test("version history: offered for a plain folder, turned on with one local commit, a .gitignore and nothing pushed", async () => {

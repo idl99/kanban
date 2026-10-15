@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type NotifyKind, type NotifyState } from "./api";
 import { Modal } from "./Modal";
+import { PUSH_CHANGED } from "./push";
 import { PushSection } from "./PushSection";
 import { Select } from "./Select";
 import { timeAgo } from "./time";
@@ -27,6 +28,10 @@ export function NotificationsDialog({ profile, onClose }: { profile: string | nu
 
   useEffect(() => {
     api.notify().then((s) => { setState(s); setUrl(s.webhookUrl); }).catch((e) => setError(e.message));
+    // Turning this device on or off decides whether the macOS banner is used.
+    const refresh = () => void api.notify().then((s) => setState((cur) => (cur ? { ...cur, macBrowser: s.macBrowser } : s))).catch(() => {});
+    window.addEventListener(PUSH_CHANGED, refresh);
+    return () => window.removeEventListener(PUSH_CHANGED, refresh);
   }, []);
 
   const save = async (patch: Parameters<typeof api.setNotify>[0]) => {
@@ -99,7 +104,11 @@ export function NotificationsDialog({ profile, onClose }: { profile: string | nu
               <input type="checkbox" checked={state.mac} onChange={(e) => void save({ mac: e.target.checked })} />
               <span>
                 macOS banner on this Mac
-                <span className="muted small">Also used for “Plan done”.</span>
+                <span className="muted small">
+                  {state.macBrowser
+                    ? "Not used: this Mac's browser gets the notifications, and clicking one opens the ticket."
+                    : "Also used for “Plan done”. Clicking it doesn't open the ticket: for that, turn on notifications for this device above."}
+                </span>
               </span>
             </label>
             <div className="form-section"><span>Notify me about</span></div>

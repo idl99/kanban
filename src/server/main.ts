@@ -37,7 +37,7 @@ export async function startDaemon(): Promise<void> {
     claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude",
     sessionSummary: (id) => sessions.summary(id),
     findOwnedSession: (id) => shells.findSession(id),
-    notify: (title, body) => notifier.macOnly(title, body),
+    notify: (title, body, slug, id) => notifier.macOnly(title, body, notifier.link(slug, id)),
   });
   // Links in notifications open the ticket on the phone when phone access is on (remote.json), else on this Mac.
   const remoteConfig = new RemoteAccess(store.root, () => 0);

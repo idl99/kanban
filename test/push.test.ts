@@ -175,6 +175,72 @@ describe("Notifier with phone push", () => {
     stop();
   });
 
+  test("a browser on this Mac replaces the macOS banner: needs-you and Plan done go to it and open the ticket", async () => {
+    const store = new Store(tempDir("ck-home-"));
+    const bus = new Bus();
+    let clock = 0;
+    const p: Profile = { name: "Kanban", slug: "kb", path: tempDir(), baseBranch: "main", maxParallel: 1, model: null, createdAt: "" };
+    store.saveProfile(p);
+    const ticket = store.createTicket("kb", { title: "Fix it", body: "b", status: "in_progress" });
+    const bodies: { url: string; body: Buffer }[] = [];
+    const push = new PushService(store.root, { now: () => clock, fetch: async (url, init) => (bodies.push({ url, body: init.body as Buffer }), new Response("", { status: 201 })) });
+    const banners: string[] = [];
+    const notifier = new Notifier(store, bus, {
+      root: store.root, push, sessionSummary: () => null, isRunning: () => false, hostHuddles: () => new Map(),
+      baseUrl: () => "http://localhost:7777", debounceMs: 1000, tickMs: 60_000, now: () => clock, banner: (t) => banners.push(t),
+    });
+    const phone = browser(), mac = browser();
+    push.subscribe(phone.sub, "Phone");
+
+    // No browser on this Mac yet: the plain banner (default on) for both.
+    notifier.macOnly("Plan done: Big plan", "All done", notifier.link("kb", "t_plan"));
+    expect(banners).toEqual(["Plan done: Big plan"]);
+    expect(bodies).toHaveLength(0);
+    expect(notifier.state().macBrowser).toBe(false);
+
+    push.subscribe(mac.sub, "Mac · Chrome", true);
+    expect(notifier.state().macBrowser).toBe(true);
+    banners.length = 0;
+    const stop = notifier.start();
+    bus.emit({ type: "ticket.updated", profile: "kb", ticket: store.updateTicket("kb", ticket.id, { status: "review", outcome: "done" }) });
+    notifier.tick();
+    clock += 1000;
+    notifier.tick();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(banners).toEqual([]);
+    expect(bodies.map((b) => b.url).sort()).toEqual([phone.sub.endpoint, mac.sub.endpoint].sort());
+
+    // Plan done: only this Mac's browser (not the phone), with the planner ticket's link.
+    bodies.length = 0;
+    notifier.macOnly("Plan done: Big plan", "All done", notifier.link("kb", "t_plan"));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(banners).toEqual([]);
+    expect(bodies.map((b) => b.url)).toEqual([mac.sub.endpoint]);
+    expect(JSON.parse(decryptPayload(bodies[0].body, mac.privateKey, mac.auth).toString()).url).toBe("http://localhost:7777/#/kb/t_plan");
+
+    // Banner turned off: Plan done goes nowhere on the Mac either.
+    bodies.length = 0;
+    notifier.update({ mac: false });
+    notifier.macOnly("Plan done: Big plan", "All done", notifier.link("kb", "t_plan"));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(bodies).toHaveLength(0);
+    stop();
+  });
+
+  test("a device turned on before this Mac was told apart is marked by its heartbeat from this Mac", () => {
+    const push = new PushService(tempDir("ck-home-"));
+    const mac = browser(), other = browser();
+    push.subscribe(mac.sub, "Mac");
+    expect(push.hasThisMac()).toBe(false);
+    expect(push.markThisMac(other.sub.endpoint)).toBe(false);
+    expect(push.markThisMac(mac.sub.endpoint)).toBe(true);
+    expect(push.markThisMac(mac.sub.endpoint)).toBe(false);
+    expect(push.hasThisMac()).toBe(true);
+    // Re-subscribing from elsewhere (phone access address) doesn't count as this Mac.
+    push.subscribe(mac.sub, "Mac");
+    expect(push.hasThisMac()).toBe(false);
+  });
+
   test("push payload: ticket title on top, what it needs and the board below", () => {
     expect(pushPayload({ board: "kb", boardName: "Kanban", ticketId: "t_1", title: "Fix", kind: "questions", label: "Answer 2 questions", url: "u" }))
       .toEqual({ title: "Fix", body: "Answer 2 questions · Kanban", url: "u", tag: "kb/t_1" });

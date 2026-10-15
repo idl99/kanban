@@ -21,7 +21,7 @@ export interface NotifySettings {
   /** Empty: no webhook. */
   webhookUrl: string;
   format: WebhookFormat;
-  /** macOS banner on this Mac. */
+  /** macOS banner on this Mac (skipped while a browser on this Mac gets notifications, see Notifier.macBrowser). */
   mac: boolean;
   kinds: Record<AttentionKind, boolean>;
 }
@@ -30,6 +30,8 @@ export interface NotifySettings {
 export interface NotifyState extends NotifySettings {
   lastSentAt: string | null;
   lastError: string | null;
+  /** A browser on this Mac gets notifications, so the macOS banner isn't used (see Notifier.macBrowser). */
+  macBrowser: boolean;
 }
 
 // "Claude replied" fires on every Planning chat turn, mostly while the user is watching: off until they want it.
@@ -227,7 +229,7 @@ export class Notifier {
   }
 
   state(): NotifyState {
-    return { ...this.settings(), lastSentAt: this.lastSentAt, lastError: this.lastError };
+    return { ...this.settings(), lastSentAt: this.lastSentAt, lastError: this.lastError, macBrowser: this.macBrowser() };
   }
 
   update(patch: unknown): NotifyState {
@@ -290,9 +292,22 @@ export class Notifier {
     return `${this.o.baseUrl()}/#/${encodeURIComponent(slug)}${id ? `/${encodeURIComponent(id)}` : ""}`;
   }
 
-  /** A banner on this Mac (when on); not sent to the webhook. For board events that aren't "needs you" (plan done). */
-  macOnly(title: string, body: string): void {
-    if (this.settings().mac) this.banner(title, body);
+  /**
+   * Whether a browser on this Mac gets notifications. Then it replaces the macOS banner: its notifications open the
+   * ticket when clicked, the banner can't (a click opens Finder or Script Editor).
+   */
+  private macBrowser(): boolean {
+    return !!this.o.push?.hasThisMac();
+  }
+
+  /**
+   * Only on this Mac (when the banner is on), not to the webhook or phones. For board events that aren't "needs you"
+   * (plan done). `url` is the ticket a click opens.
+   */
+  macOnly(title: string, body: string, url: string): void {
+    if (!this.settings().mac) return;
+    if (!this.macBrowser()) return this.banner(title, body);
+    void this.o.push!.send({ title, body, url, tag: url }, { thisMac: true }).then((r) => r.error && console.warn(`notify: ${r.error}`));
   }
 
   /**
@@ -300,7 +315,7 @@ export class Notifier {
    * the board on screen unless `everyDevice` (the test button).
    */
   async send(settings: NotifySettings, m: NotifyMessage, everyDevice = false): Promise<string | null> {
-    if (settings.mac) this.banner(`${m.label}: ${m.title}`, m.boardName);
+    if (settings.mac && !this.macBrowser()) this.banner(`${m.label}: ${m.title}`, m.boardName);
     const [hook, push] = await Promise.all([this.sendWebhook(settings, m), this.sendPush(m, everyDevice)]);
     const error = hook.error ?? push.error;
     if (error) console.warn(`notify: ${error}`);
