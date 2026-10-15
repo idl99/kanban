@@ -9,6 +9,7 @@ import { baseName, BINARY, dragFile, HTML, IMAGE, MARKDOWN } from "./share";
 import { ShareMenu } from "./ShareMenu";
 import { useLayer } from "./layers";
 import { usePhone } from "./usePhone";
+import { PdfView } from "./PdfView";
 
 function kb(n: number): string {
   return n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`;
@@ -56,9 +57,12 @@ function flatten(d: Folder): string[] {
 /** Keep in step with the `@container (max-width: 640px)` rules for .outputs in styles.css. */
 const NARROW = 640;
 
+const PDF = /\.pdf$/i;
+
 function fileIcon(name: string) {
   if (IMAGE.test(name) || /\.svg$/i.test(name)) return <FileImageIcon />;
   if (HTML.test(name)) return <FileCodeIcon />;
+  if (PDF.test(name)) return <FileTextIcon />;
   if (BINARY.test(name)) return <FileIcon />;
   return <FileTextIcon />;
 }
@@ -149,7 +153,7 @@ function Links({ links }: { links: TicketLink[] }) {
 }
 
 /**
- * Deliverables Claude saved in the ticket's outputs folder; markdown is rendered, images and HTML previewed, other text shown raw.
+ * Deliverables Claude saved in the ticket's outputs folder; markdown is rendered, images, HTML and PDFs previewed, other text shown raw.
  * The ticket's artifacts and share links sit above them.
  */
 export function Outputs({ slug, ticket, onCount, focus }: {
@@ -200,7 +204,7 @@ export function Outputs({ slug, ticket, onCount, focus }: {
   }), [slug, ticketId]);
 
   const current = files?.find((f) => f.name === open);
-  const kind = !open ? null : IMAGE.test(open) ? "image" : BINARY.test(open) ? "binary" : HTML.test(open) ? "html" : "text";
+  const kind = !open ? null : IMAGE.test(open) ? "image" : PDF.test(open) ? "pdf" : BINARY.test(open) ? "binary" : HTML.test(open) ? "html" : "text";
   useEffect(() => {
     setText(null);
     if (!open || (kind !== "text" && kind !== "html")) return;
@@ -305,7 +309,7 @@ export function Outputs({ slug, ticket, onCount, focus }: {
   );
 
   const view = (
-    <div className={`output-view${kind === "html" ? " html" : ""}${readerOn ? " reader" : ""}`} role={readerOn ? "dialog" : undefined} aria-label={readerOn ? baseName(open ?? "") : undefined}>
+    <div className={`output-view${kind === "html" || kind === "pdf" ? ` ${kind}` : ""}${readerOn ? " reader" : ""}`} role={readerOn ? "dialog" : undefined} aria-label={readerOn ? baseName(open ?? "") : undefined}>
       {open && (
         <div className="output-bar">
           {readerOn && <button className="output-back" onClick={closeReader}><ChevronLeftIcon size={14} /> Files</button>}
@@ -320,6 +324,8 @@ export function Outputs({ slug, ticket, onCount, focus }: {
       {kind === "html" ? (
         text === null ? <div className="muted output-html-note">Loading…</div>
           : <iframe className="output-html" sandbox="allow-scripts" srcDoc={withFit(text)} title={`Preview of ${open}`} />
+      ) : kind === "pdf" ? (
+        <PdfView key={`${open}@${current?.updatedAt ?? ""}`} url={rawUrl} name={baseName(open ?? "")} downloadUrl={api.outputDownloadUrl(slug, ticketId, open!)} />
       ) : kind === "image" ? (
         <div className="output-image"><img src={`${rawUrl}?v=${encodeURIComponent(current?.updatedAt ?? "")}`} alt={open ?? ""} /></div>
       ) : kind === "binary" ? binaryNote
