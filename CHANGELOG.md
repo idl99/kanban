@@ -4,6 +4,53 @@ What changed in each ckanban release. Get the latest with `ckanban update`.
 
 ## Unreleased
 
+## [0.12.0] - 2026-10-18
+
+### Added
+- **Follow-ups**: when work waits on something outside (an email reply, a person, a deploy), Claude sets a time to come back to the ticket by itself, or you ask it to ("check for a reply every morning"). The card shows *Follows up tomorrow 09:00*, with the note, history, cost, *Follow up now* and *Stop following up*. A message you type stops it.
+- **One-time scheduled jobs**: Claude (or you) can start a ticket or run a command at a set time ("post this Tuesday at 22:00"). *Schedules* opens on an *Upcoming* list with *Run now*, *Change time* and *Cancel*, and the ticket that scheduled them shows *⏰ N scheduled*. A job that runs late still starts and is told how late it is.
+- **Tags**: short labels on tickets, shown as colored chips. Click a chip or type `#tag` in search to filter the board. Schedules tag their tickets, and Claude can suggest tags that you keep or drop.
+- **Attach any file**: PDF, Word, Excel, PowerPoint, text and code files (up to 25 MB), not just images, in ticket descriptions and chats. Claude gets the files and knows how to open them.
+- **PDF preview** in the Outputs tab, on phone and desktop.
+- **File names in chat open with one tap**: a file Claude mentions opens in a full-screen viewer (Markdown, images, PDF and web pages previewed). Files Claude asks you to review are also copied to Outputs.
+- **Phone notifications from the board itself**: turn them on in *Notifications → This phone*, no extra app needed. Tapping one opens the ticket. On iPhone and iPad, add the board to the Home Screen first; the board shows how.
+- **Works without git**: a board can be a plain folder. Runs edit the folder in place, one ticket at a time, and list what changed. New board and Board settings offer *Turn on version history* to keep a history of changes.
+- **Workspace setting** per board: a separate copy of the folder for each ticket (default), or work straight in the project folder.
+- **Help me understand** menu in the ticket header: *What happened while I was away?* and *Explain the changes* answer as cards in the chat, without touching the ticket's session.
+- **Learn from this ticket**: after you corrected Claude on a ticket, it suggests up to 3 lessons. Add one to the project's rules, turn it into a ticket, or dismiss it.
+- **Say it simpler** under Claude's replies rewrites the reply in plain words.
+- Runs and Planning chats start with a short brief of related past tickets on the board, so Claude doesn't redo or undo earlier work.
+- Planning and Backlog chats can do things outside the project when you ask (call a service, use the browser, run a command). They still don't change the project's files.
+- New huddle teammates: *blast-radius* (what else a small change can break) and *breaker* (tries to break risky logic). The review for ⭐ Important work checks the blast radius.
+- Phone *More* menu shows your Claude plan usage with reset times and today's spend.
+- *Copy text* bar under grey text boxes in the chat.
+- Outputs tab: a *Links* section with the ticket's claude.ai artifacts and share links, and a ↗ artifact chip on board cards.
+- Huddle teammates get the ticket's description, show how full their conversation is, and their cost counts in the ticket's spend.
+- Huddle sidebar: each participant on its own readable rows, and you can drag the sidebar wider.
+- New shortcuts: in the New ticket dialog `⌘S` creates in Backlog, `⌘I` switches mode, `⌘D` stars. In the ticket panel `S` stars, `M` moves, `[` `]` switch tabs, `⌘.` stops Claude.
+
+### Changed
+- **Huddles run after the main work.** A huddle you want goes into the ticket as a *Review huddle* section; the run does the work first, then starts the huddle itself, even with Auto huddles off.
+- Auto huddles start only for real risk (security, data or payments), say which one, and use a team picked for the change.
+- A new requirement on a ticket in Review or Done becomes a linked **add-on** ticket, so the original keeps its title and description.
+- Each ticket's copy starts from the latest version others have shared, and project dependencies are installed only when Claude needs them, so writing and question tickets start at once.
+- Run summaries and replies use plainer words, and Planning plays back the goal before proposing a ticket.
+- Sharing claude.ai artifacts no longer needs tmux.
+- Phones: *Photo* opens the gallery straight away, with a paperclip for other files. A *Ticket* tab shows and edits the description. Outputs open in a full-screen reader. Toasts are a light card at the top with a clear *Undo*; swipe to dismiss. Full output file names, a bigger huddle chat and slimmer message boxes.
+
+### Fixed
+- A message stopped before Claude read it comes back unsent (Send, Edit or Discard) instead of sticking in the chat.
+- A ⭐ before a title marks the ticket Important, and planners can mark proposed tickets Important.
+- Connections shows a claude.ai connector as needing login when Claude sessions can't use it, and the Connections window works on phones and shows added or edited servers right away.
+- On the Mac, notifications open the ticket when clicked, through the browser, instead of a macOS banner that opened Finder.
+- A ticket with very large output folders no longer freezes the browser.
+- Phone access says when Tailscale is off on the Mac instead of showing a green *On*.
+- On phones, Enter in chat boxes adds a new line and the Send button sends. The message box uses the full width, its hint fits, and it grows line by line. Web pages in Outputs made for a desktop fit the screen. The description box has *Image*, *Snippet* and *Skill* buttons.
+- Huddle proposals keep the budget Claude was asked for.
+- Huddle teammates no longer fail to start in projects with checkout hooks (such as husky).
+- *Mark done* moves to the next ticket at once, and closing the panel meanwhile no longer reopens it.
+- The test suite runs in about a minute instead of four and a half.
+
 ## [0.11.0] - 2026-10-11
 
 ### Added
@@ -190,6 +237,7 @@ First release.
 - Terminal & file explorer panel, Connections panel for MCP servers, scheduled tickets on a cron, claude.ai artifacts from runs.
 - Standalone binary, installer, `ckanban update` and a background service that starts at login.
 
+[0.12.0]: https://github.com/leoawesome/kanban/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/leoawesome/kanban/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/leoawesome/kanban/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/leoawesome/kanban/compare/v0.8.0...v0.9.0

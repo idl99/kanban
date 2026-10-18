@@ -15,10 +15,13 @@
 
 ## What it does
 
-- 🤖 **Tickets run by headless Claude.** Move a card to Ready and a `claude -p` session works it in its own git worktree and branch, up to 5 at once per board.
+- 🤖 **Tickets run by headless Claude.** Move a card to Ready and a `claude -p` session works it in its own copy of the folder, up to 5 at once per board. No git? It works in the folder itself and lists what changed.
 - 💬 **Planning chat.** Claude interviews you with a clickable question form, draws HTML mockups for UI work and proposes a clear ticket. *Apply & start work* is one click.
 - 🗺️ **Plans.** Split a big ticket into child tickets that run unattended in dependency order; Claude is only woken when one needs it.
 - 🗣️ **Huddles.** A team of Claude teammates (reviewer, QA, researcher, UX critic, facilitator, ...) discuss one ticket in a shared room, tag each other and pin findings, with a budget you set. While you're away, Claude starts a review huddle on its own before landing ⭐ Important or risky work.
+- ⏰ **Follow-ups and scheduled jobs.** Claude comes back to a ticket by itself when work waits on someone ("check for a reply every morning"), and can start a ticket or run a command at a set time.
+- 📎 **Files and tags.** Attach PDFs, Office, text and code files, preview them in Outputs, tap a file name in the chat to open it. Tag tickets and filter the board by tag.
+- 💡 **Help me understand.** Ask what happened while you were away, have the changes explained, get a reply in simpler words, or turn your corrections into project rules.
 - ✅ **Review with PR checks.** See the diff, comment on lines, watch the PR's checks on the card, send failures back to Claude, or **Merge & done**.
 - 👥 **Team tab.** Your teammates, their prompts and the notes they've learned, for every board or just one.
 - ⌘ **`⌘K` everywhere.** Jump to any ticket on any board by title, description, result or PR number, or run any action.
@@ -27,7 +30,7 @@ All data lives in plain files under `~/.claude-kanban/`.
 
 ## Install (macOS)
 
-You need [Claude Code](https://claude.com/claude-code) installed and logged in, plus `git`. For PRs, also install `gh` and run `gh auth login`.
+You need [Claude Code](https://claude.com/claude-code) installed and logged in. `git` is optional: with it each ticket gets its own copy of the folder. For PRs, also install `gh` and run `gh auth login`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/leoawesome/kanban/main/install.sh | bash
@@ -58,7 +61,7 @@ Then open the board switcher (top left) → **New board…**, pick a folder you'
 
 ## More features
 
-Inbox of everything waiting on you, Changes tab with line comments, worktree setup (`.env` copy and install), auto-continue after a usage limit, one-click session recovery, schedules on a cron, prompt snippets, terminal & files panel, MCP connections, branching a ticket, and tickets that ask each other questions.
+Inbox of everything waiting on you, Changes tab with line comments, per-ticket folder setup (`.env` copy, install only when needed), auto-continue after a usage limit, one-click session recovery, schedules on a cron and one-time jobs, add-on tickets, a brief of related past tickets for every run, prompt snippets, terminal & files panel, MCP connections, branching a ticket, and keyboard shortcuts for nearly everything.
 
 Every feature in detail: **[docs/features.md](docs/features.md)**. What changed in each release: **[CHANGELOG.md](CHANGELOG.md)**.
 
@@ -76,7 +79,7 @@ It runs in the background and survives restarts ([details](docs/features.md#runs
 
 ## On your phone
 
-With [Tailscale](https://tailscale.com/download) on your Mac and phone (same account, MagicDNS and HTTPS certificates on for the tailnet), run `ckanban remote on` or use **⋯ → Phone access**. You get `https://<your-mac>.<tailnet>.ts.net` and a QR code. On a phone the board opens on **Now** (what needs you, what runs, what's being planned); tickets open full screen. Add it to the Home Screen to use it like an app.
+With [Tailscale](https://tailscale.com/download) on your Mac and phone (same account, MagicDNS and HTTPS certificates on for the tailnet), run `ckanban remote on` or use **⋯ → Phone access**. You get `https://<your-mac>.<tailnet>.ts.net` and a QR code. On a phone the board opens on **Now** (what needs you, what runs, what's being planned); tickets open full screen. Add it to the Home Screen to use it like an app. Turn on **Notifications → This phone** to get a notification on the phone when a ticket needs you, no extra app needed. *More* shows your Claude plan usage and today's spend.
 
 ## Use the board from Claude Code / Codex
 
