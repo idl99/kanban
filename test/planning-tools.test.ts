@@ -41,6 +41,8 @@ test("propose_tickets: unique keys, valid titles, every dependsOn key exists", (
   expect(ticketsError({ tickets: [t("api"), t("ui", ["db"])] })).toContain('dependsOn "db" is not the key');
   expect(ticketsError({ tickets: [t("api", ["api"])] })).toContain('dependsOn "api"');
   expect(ticketsError({ tickets: [{ ...t("api"), dependsOn: "x" }] })).toContain("list of keys");
+  expect(ticketsError({ tickets: [{ ...t("api"), important: true }] })).toBeNull();
+  expect(ticketsError({ tickets: [{ ...t("api"), important: "yes" }] })).toBe("ticket 1: important must be true or false");
 });
 
 test("the tools return an error Claude can fix, or tell it to wait; nothing touches the board", async () => {

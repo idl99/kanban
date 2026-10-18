@@ -34,3 +34,12 @@ export function shellQuote(s: string): string {
 export function nowIso(): string {
   return new Date().toISOString();
 }
+
+/**
+ * A ⭐ typed at the start of a title marks the ticket ⭐ Important (Claude and users write it that way); the title
+ * keeps the rest. important is false when there is no star.
+ */
+export function starredTitle(title: string): { title: string; important: boolean } {
+  const m = /^\s*(?:⭐️?\s*)+/u.exec(title);
+  return m ? { title: title.slice(m[0].length), important: true } : { title, important: false };
+}

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { KeyHint } from "./KeyHint";
 import { MOD } from "./Shortcuts";
+import { ImportantStar } from "./StarToggle";
 import { Markdown } from "./Transcript";
 
 /**
@@ -17,7 +18,7 @@ export interface AddOn {
 
 /** Claude's proposed title/description; Apply replaces the ticket's fields, Apply & start work also moves it to Ready. */
 export function ProposalCard({ proposal, applied, started, onApply, onApplyStart, keyHint, addOn }: {
-  proposal: { title: string; description: string };
+  proposal: { title: string; description: string; important?: true };
   applied: boolean;
   /** Applied with "Apply & start work" in this session. */
   started?: boolean;
@@ -43,7 +44,7 @@ export function ProposalCard({ proposal, applied, started, onApply, onApplyStart
         <span className="proposal-tag">Proposed ticket</span>
         <button className="link-btn" onClick={() => setOpen((o) => !o)}>{open ? "Collapse" : "Expand"}</button>
       </div>
-      {proposal.title && <div className="proposal-title">{proposal.title}</div>}
+      {proposal.title && <div className="proposal-title">{proposal.important && <ImportantStar />}{proposal.title}</div>}
       {open && proposal.description && <div className="proposal-body"><Markdown text={proposal.description} /></div>}
       <div className="proposal-actions">
         {applied ? (
@@ -77,7 +78,7 @@ export function ProposalCard({ proposal, applied, started, onApply, onApplyStart
 }
 
 function AddOnCard({ proposal, addOn, open, setOpen, busy, run, onApply, keyHint, hint }: {
-  proposal: { title: string; description: string }; addOn: AddOn; open: boolean; setOpen: (f: (o: boolean) => boolean) => void;
+  proposal: { title: string; description: string; important?: true }; addOn: AddOn; open: boolean; setOpen: (f: (o: boolean) => boolean) => void;
   busy: "apply" | "start" | null; run: (kind: "apply" | "start", fn: () => Promise<void>) => () => Promise<void>;
   onApply: () => Promise<void>; keyHint?: boolean; hint: string | null;
 }) {
@@ -88,7 +89,7 @@ function AddOnCard({ proposal, addOn, open, setOpen, busy, run, onApply, keyHint
         <span className="proposal-tag">Proposed add-on ticket</span>
         <button className="link-btn" onClick={() => setOpen((o) => !o)}>{open ? "Collapse" : "Expand"}</button>
       </div>
-      {proposal.title && <div className="proposal-title">{proposal.title}</div>}
+      {proposal.title && <div className="proposal-title">{proposal.important && <ImportantStar />}{proposal.title}</div>}
       {open && proposal.description && <div className="proposal-body"><Markdown text={proposal.description} /></div>}
       {created ? (
         <div className="proposal-actions">

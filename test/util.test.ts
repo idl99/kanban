@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { newTicketId, shellQuote, slugify } from "../src/server/util";
+import { newTicketId, shellQuote, slugify, starredTitle } from "../src/server/util";
 
 test("slugify basic", () => {
   expect(slugify("Add Dark Mode!")).toBe("add-dark-mode");
@@ -21,4 +21,11 @@ test("newTicketId format", () => {
 
 test("shellQuote", () => {
   expect(shellQuote("a b'c")).toBe("'a b'\\''c'");
+});
+
+test("starredTitle: a leading ⭐ marks important and leaves the rest of the title", () => {
+  expect(starredTitle("⭐ Apply to OpenAI")).toEqual({ title: "Apply to OpenAI", important: true });
+  expect(starredTitle("  ⭐️⭐ Fix login")).toEqual({ title: "Fix login", important: true });
+  expect(starredTitle("Fix ⭐ rating")).toEqual({ title: "Fix ⭐ rating", important: false });
+  expect(starredTitle("Plain")).toEqual({ title: "Plain", important: false });
 });

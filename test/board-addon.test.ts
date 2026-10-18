@@ -145,3 +145,17 @@ test("a ticket saved with the old followUpOf field loads as an add-on", async ()
   expect(readFileSync(file, "utf8")).not.toContain("followUpOf");
   expect(store.getTicket("p", t.id)!.addOnOf).toBe(src.id);
 });
+
+test("a ⭐ at the start of a title marks the ticket Important and leaves the star out of the title", async () => {
+  await setup();
+  const t = await board.createTicket("p", { title: "⭐ Apply to OpenAI", body: "", status: "backlog" });
+  expect(store.getTicket("p", t.id)).toMatchObject({ title: "Apply to OpenAI", important: true });
+  const u = await board.createTicket("p", { title: "Fix login", body: "", status: "backlog" });
+  expect(store.getTicket("p", u.id)!.important).toBeUndefined();
+  await board.updateTicket("p", u.id, { title: "⭐ Fix login fast" });
+  expect(store.getTicket("p", u.id)).toMatchObject({ title: "Fix login fast", important: true });
+  // An add-on whose proposal was marked Important.
+  store.updateTicket("p", u.id, { status: "done", outcome: "done", runCount: 1 });
+  const f = await board.addOnTicket("p", u.id, { title: "Export", body: "", important: true });
+  expect(f.important).toBe(true);
+});

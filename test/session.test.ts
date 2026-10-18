@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Bus, type BusEvent } from "../src/server/events";
-import { SessionCache, findSessionFile, parseSession, pollSessions } from "../src/server/session";
+import { SessionCache, findSessionFile, parseNewTickets, parseProposal, parseSession, pollSessions } from "../src/server/session";
 import { Store } from "../src/server/store";
 import { tempDir } from "./helpers";
 
@@ -417,4 +417,15 @@ test("parseSession: a propose_huddle card with a template and no roster", () => 
     { roster: [], reason: "Review the feature", template: "design-review" },
     { roster: [{ preset: "qa" }], reason: "", template: "design-review" },
   ]);
+});
+
+test("proposed tickets: important, or a ⭐ before the title, marks them Important and the star leaves the title", () => {
+  expect(parseNewTickets([{ key: "a", title: "⭐ Apply to OpenAI", description: "x" }, { key: "b", title: "Plain", description: "y", important: true }, { key: "c", title: "Other", description: "z" }]))
+    .toEqual([
+      { key: "a", title: "Apply to OpenAI", description: "x", important: true },
+      { key: "b", title: "Plain", description: "y", important: true },
+      { key: "c", title: "Other", description: "z" },
+    ]);
+  expect(parseProposal({ title: "⭐ Fix login", description: "d" })).toEqual({ title: "Fix login", description: "d", important: true });
+  expect(parseProposal({ title: "Fix login", description: "d" })).toEqual({ title: "Fix login", description: "d" });
 });

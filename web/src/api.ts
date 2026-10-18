@@ -322,7 +322,7 @@ export interface Plan {
   reason?: string | null;
 }
 
-export type NewTicketDraft = { title: string; description: string; key?: string; dependsOn?: string[]; needs?: string[]; tags?: string[] };
+export type NewTicketDraft = { title: string; description: string; important?: true; key?: string; dependsOn?: string[]; needs?: string[]; tags?: string[] };
 
 export interface QueuedMessage {
   id: string;
@@ -402,7 +402,7 @@ export interface SessionEntry {
   error?: true;
   agent?: AgentInfo;
   questions?: Question[];
-  proposal?: { title: string; description: string };
+  proposal?: { title: string; description: string; important?: true };
   newTickets?: NewTicketDraft[];
   /** Claude offered to branch this ticket (Branch button). */
   branch?: { reason: string };
@@ -1132,7 +1132,7 @@ export const api = {
   ticket: (slug: string, id: string) => req<Ticket>("GET", t(slug, id)),
   quickChat: (slug: string) => req<QuickChat>("GET", `/api/profiles/${encodeURIComponent(slug)}/claude/session`),
   sessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/sessions`),
-  addOnTicket: (slug: string, id: string, input: { title: string; body: string; start?: boolean }) =>
+  addOnTicket: (slug: string, id: string, input: { title: string; body: string; start?: boolean; important?: boolean }) =>
     req<Ticket>("POST", `${t(slug, id)}/add-on`, input),
   branchTicket: (slug: string, id: string) => req<{ ticket: Ticket; warning: string | null }>("POST", `${t(slug, id)}/branch`),
   /** external: the session is open in a terminal the board can't close (nothing changed). */

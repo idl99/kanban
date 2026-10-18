@@ -576,6 +576,7 @@ export function questionsError(args: any): string | null {
 
 /** Checks propose_ticket input; returns what's wrong, or null when it's fine. */
 export function proposalError(args: any): string | null {
+  if (args?.important !== undefined && typeof args.important !== "boolean") return "important must be true or false";
   return titleError(args?.title, "") ?? (isText(args?.description) ? null : "description is required");
 }
 
@@ -603,6 +604,9 @@ export function ticketsError(args: any): string | null {
     if (!Array.isArray(t.needs) || t.needs.some((n: unknown) => typeof n !== "string")) return `ticket ${i + 1}: needs must be a list of resource names, e.g. ["emulator"]`;
   }
   for (const [i, t] of ts.entries()) {
+    if (t.important !== undefined && typeof t.important !== "boolean") return `ticket ${i + 1}: important must be true or false`;
+  }
+  for (const [i, t] of ts.entries()) {
     if (t.tags === undefined) continue;
     if (!Array.isArray(t.tags) || t.tags.some((n: unknown) => typeof n !== "string")) return `ticket ${i + 1}: tags must be a list of tag names, e.g. ["post"]`;
   }
@@ -610,6 +614,11 @@ export function ticketsError(args: any): string | null {
 }
 
 const TITLE = { type: "string", description: "Short, specific title (under 80 characters)." };
+const PROPOSED_IMPORTANT = {
+  type: "boolean",
+  description: "⭐ Important: unattended runs review the work in an auto huddle before landing it. Set it when the user (or the project's rules) " +
+    "says this work is important; don't put a ⭐ in the title instead.",
+};
 
 /** Teammate (huddle role preset) fields, shared by save_huddle_preset and propose_teammate. */
 const PRESET_FIELDS = {
@@ -682,7 +691,7 @@ const PLANNING_TOOLS: Tool[] = [
       "Claude works on it later without this chat. Nothing is created or changed by the call.",
     inputSchema: {
       type: "object",
-      properties: { title: TITLE, description: { type: "string", description: "Markdown description." } },
+      properties: { title: TITLE, description: { type: "string", description: "Markdown description." }, important: PROPOSED_IMPORTANT },
       required: ["title", "description"],
     },
     annotations: { readOnlyHint: true },
@@ -781,6 +790,7 @@ const PLANNING_TOOLS: Tool[] = [
       "key is a short unique name; dependsOn lists keys that must be finished first: give one to tickets that build on each other or likely edit the same files. " +
       "needs lists exclusive resources (e.g. [\"emulator\"]): tickets that need the same one never run at the same time, in any order. " +
       "tags (e.g. [\"post\"]) label the tickets so the user can filter the board by them; give the tags the user uses for this kind of work. " +
+      "important: true marks a ticket ⭐ Important (reviewed in an auto huddle before landing); use it, not a ⭐ in the title. " +
       "Nothing is created by the call.",
     inputSchema: {
       type: "object",
@@ -796,6 +806,7 @@ const PLANNING_TOOLS: Tool[] = [
               dependsOn: { type: "array", items: { type: "string" }, description: "Keys of tickets in this list that must be finished first." },
               needs: { type: "array", items: { type: "string" }, description: "Exclusive resources its runs use, e.g. [\"emulator\"]." },
               tags: { type: "array", items: { type: "string" }, description: "Tags it gets, e.g. [\"post\"]." },
+              important: PROPOSED_IMPORTANT,
             },
             required: ["key", "title", "description"],
           },

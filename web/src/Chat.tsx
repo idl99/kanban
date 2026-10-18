@@ -387,8 +387,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   // A reply still on its way to the session file counts too, so the form doesn't offer "Send answers" again.
   const replying = pending.some((p) => !p.steer);
   const answeredAfter = (index: number) => replying || entries.slice(index + 1).some((e) => e.role === "user" && e.kind === "text" && !e.peer);
-  const isApplied = (p: { title: string; description: string }) =>
-    (!p.title || p.title === ticket.title) && (!p.description || p.description.trim() === ticket.body.trim());
+  const isApplied = (p: { title: string; description: string; important?: true }) =>
+    (!p.title || p.title === ticket.title) && (!p.description || p.description.trim() === ticket.body.trim()) && (!p.important || !!ticket.important);
 
   const empty = page !== null && !loadError && entries.length === 0 && !pending.length && !queued.length && !running;
 
@@ -398,7 +398,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       return await api.createTicket(slug, {
         title: d.title, body: d.description, status: "backlog", mode: "interview", parentId: ticket.id,
         ...(d.key ? { planKey: d.key } : {}), ...(d.dependsOn?.length ? { dependsOn: d.dependsOn } : {}),
-        ...(d.needs?.length ? { needs: d.needs } : {}), ...(d.tags?.length ? { tags: d.tags } : {}),
+        ...(d.needs?.length ? { needs: d.needs } : {}), ...(d.tags?.length ? { tags: d.tags } : {}), ...(d.important ? { important: true } : {}),
       });
     } catch (err: any) {
       onError(err.message);
@@ -409,13 +409,14 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   // Proposals applied with "Apply & start work" here, so their card says the ticket moved on.
   const [startedProposals, setStartedProposals] = useState<ReadonlySet<string>>(new Set());
   const canStart = canStartFromProposal({ status: ticket.status, working: ticket.status === "in_progress" || running });
-  const applyProposal = async (p: { title: string; description: string }, start?: { uuid: string }) => {
-    const before = { title: ticket.title, body: ticket.body };
+  const applyProposal = async (p: { title: string; description: string; important?: true }, start?: { uuid: string }) => {
+    const before = { title: ticket.title, body: ticket.body, important: !!ticket.important };
     try {
       // One update, so the ticket never sits in Ready with the old text.
       await api.updateTicket(slug, ticket.id, {
         ...(p.title ? { title: p.title } : {}),
         ...(p.description ? { body: p.description } : {}),
+        ...(p.important ? { important: true } : {}),
         ...(start ? { status: "ready" as const } : {}),
       });
       // No Undo once it starts: Claude may already be working from the new text.
@@ -454,9 +455,9 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
 
   // A ticket that already ran: proposals become linked add-on tickets, so this one keeps its title and description.
   const onState = addOnState(ticket);
-  const createAddOn = async (p: { title: string; description: string }, start: boolean) => {
+  const createAddOn = async (p: { title: string; description: string; important?: true }, start: boolean) => {
     try {
-      const f = await api.addOnTicket(slug, ticket.id, { title: p.title, body: p.description, start });
+      const f = await api.addOnTicket(slug, ticket.id, { title: p.title, body: p.description, start, ...(p.important ? { important: true } : {}) });
       toast(start ? "Add-on ticket created and moved to Ready" : "Add-on ticket created in Backlog", {
         tone: "ok", action: { label: "Open", run: () => onOpenTicket(f.id) },
       });
@@ -464,7 +465,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       onError(err.message);
     }
   };
-  const addOnOf = (p: { title: string; description: string }): AddOn | undefined => onState === undefined ? undefined : {
+  const addOnOf = (p: { title: string; description: string; important?: true }): AddOn | undefined => onState === undefined ? undefined : {
     state: onState, created: addOnFor(tickets, ticket.id, p.title), onCreate: (start) => createAddOn(p, start), onOpen: onOpenTicket,
   };
 

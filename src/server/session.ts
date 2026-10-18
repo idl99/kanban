@@ -12,6 +12,7 @@ import { normalizeTags } from "./tags";
 import { AGENT_TOOL, notifiedStatus, parseTaskNotification, SubagentCache, subagentFiles, toolLabel, withTranscript, type AgentInfo } from "./subagents";
 import { findToolDetailIn, type ToolDetail } from "./tooldetail";
 import { parseSetupBlock, type SetupResult } from "./worktree-setup";
+import { starredTitle } from "./util";
 
 /** One visible item of a Claude Code session, as shown in the ticket's Conversation tab. */
 export interface QuestionOption {
@@ -31,6 +32,8 @@ export interface Question {
 export interface TicketProposal {
   title: string;
   description: string;
+  /** ⭐ Important: the proposal asked for it (important: true, or a ⭐ before the title, which is left out of title). */
+  important?: true;
 }
 
 /** A ticket a planner's chat proposed creating; key/dependsOn order the plan. */
@@ -161,18 +164,21 @@ export function parseQuestions(v: any): Question[] | null {
 }
 
 export function parseProposal(v: any): TicketProposal | null {
-  const title = typeof v?.title === "string" ? v.title.trim() : "";
+  const star = starredTitle(typeof v?.title === "string" ? v.title.trim() : "");
   const description = typeof v?.description === "string" ? v.description.trim() : "";
-  return title || description ? { title, description } : null;
+  const title = star.title.trim();
+  return title || description ? { title, description, ...(star.important || v?.important === true ? { important: true } : {}) } : null;
 }
 
 export function parseNewTickets(v: any): NewTicketDraft[] | null {
   if (!Array.isArray(v)) return null;
   const ts = v.map((x: any) => {
+    const star = starredTitle(typeof x?.title === "string" ? x.title.trim() : "");
     const d: NewTicketDraft = {
-      title: typeof x?.title === "string" ? x.title.trim() : "",
+      title: star.title.trim(),
       description: typeof x?.description === "string" ? x.description.trim() : "",
     };
+    if (star.important || x?.important === true) d.important = true;
     const key = typeof x?.key === "string" ? x.key.trim() : "";
     if (key) d.key = key;
     const deps = Array.isArray(x?.dependsOn) ? x.dependsOn.filter((k: unknown) => typeof k === "string" && k.trim()).map((k: string) => k.trim()) : [];

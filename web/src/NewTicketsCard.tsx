@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { NewTicketDraft as Draft, Ticket } from "./api";
+import { ImportantStar } from "./StarToggle";
 import { TagChip } from "./Tags";
 import { Markdown } from "./Transcript";
 
@@ -56,7 +57,7 @@ export function NewTicketsCard({ drafts, created, onCreate, onOpen }: {
             <div className="new-ticket-head">
               <button className="link-btn new-ticket-title" aria-expanded={open.has(i)}
                 onClick={() => setOpen((o) => toggle(o, i, !o.has(i)))}>
-                {open.has(i) ? "▾" : "▸"} {d.title}
+                {open.has(i) ? "▾" : "▸"} {d.important && <ImportantStar />}{d.title}
               </button>
               {t ? (
                 <button className="link-btn small" onClick={() => onOpen(t.id)}>Created → {t.title}</button>

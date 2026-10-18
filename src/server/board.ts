@@ -36,7 +36,7 @@ import { autoHuddlesOn, runCapFor, workspaceOf, type FollowUp, type Interrupted,
 import { CLEANUP_TIMEOUT_MS, copySetupFiles, prepareWorktree, runShell, SETUP_TIMEOUT_MS, withBoardText, type SetupOutcome, type SetupResult } from "./worktree-setup";
 
 const INSTALLING = "Installing project dependencies…";
-import { nowIso, slugify } from "./util";
+import { nowIso, slugify, starredTitle } from "./util";
 
 export interface BoardOptions {
   claudeBin: string;
@@ -1468,7 +1468,11 @@ export class Board {
     },
   ): Promise<Ticket> {
     const status = input.status === "in_progress" ? "ready" : input.status;
-    const t = this.store.createTicket(slug, { ...input, status, needs: normalizeNeeds(input.needs), tags: normalizeTags(input.tags) });
+    const star = starredTitle(input.title);
+    const t = this.store.createTicket(slug, {
+      ...input, status, needs: normalizeNeeds(input.needs), tags: normalizeTags(input.tags),
+      ...(star.important && star.title.trim() ? { title: star.title, important: true } : {}),
+    });
     this.emitTicket(slug, t);
     // The planner's "Review proposal" badge depends on which of its proposed tickets exist.
     const parent = input.parentId ? this.store.getTicket(slug, input.parentId) : null;
@@ -1494,7 +1498,11 @@ export class Board {
       throw new ConflictError("description changed since you started editing (Claude may have updated it); reload and retry");
     }
     const clean: Partial<Ticket> = {};
-    if (patch.title !== undefined) clean.title = patch.title;
+    if (patch.title !== undefined) {
+      const star = starredTitle(patch.title);
+      clean.title = star.important && star.title.trim() ? star.title : patch.title;
+      if (clean.title !== patch.title) clean.important = true;
+    }
     if (patch.body !== undefined) clean.body = patch.body;
     if (patch.order !== undefined) clean.order = patch.order;
     if (patch.mode !== undefined) clean.mode = patch.mode;
@@ -2013,7 +2021,7 @@ export class Board {
    * Review builds on its work (startFrom; in the project folder it is there anyway). The original goes back to
    * Review/Done when a chat or the user had moved it to Planning/Backlog for this.
    */
-  async addOnTicket(slug: string, id: string, input: { title: string; body: string; start?: boolean }): Promise<Ticket> {
+  async addOnTicket(slug: string, id: string, input: { title: string; body: string; start?: boolean; important?: boolean }): Promise<Ticket> {
     const src = this.store.getTicket(slug, id);
     if (!src) throw new Error(`ticket ${id} not found`);
     const title = input.title.trim();
@@ -2022,7 +2030,7 @@ export class Board {
     const was = shaping && src.reopenedFrom ? src.reopenedFrom : src;
     const t = await this.createTicket(slug, {
       title, body: input.body, status: "backlog", mode: "auto",
-      ...(src.tags?.length ? { tags: src.tags } : {}), ...(src.important ? { important: true } : {}),
+      ...(src.tags?.length ? { tags: src.tags } : {}), ...(src.important || input.important ? { important: true } : {}),
     });
     const patch: Partial<Ticket> = { addOnOf: src.id };
     if (was.status === "review" && src.branch && !src.workdir) patch.startFrom = src.branch;

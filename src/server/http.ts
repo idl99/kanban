@@ -1394,7 +1394,7 @@ export function createServer(deps: ServerDeps) {
       if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "add-on tickets are created by the user's click on a proposal card; use the propose_ticket tool");
       const b = await body(req);
       try {
-        const t = await board.addOnTicket(slug, id, { title: String(b.title ?? ""), body: String(b.body ?? ""), start: !!b.start });
+        const t = await board.addOnTicket(slug, id, { title: String(b.title ?? ""), body: String(b.body ?? ""), start: !!b.start, important: b.important === true });
         return json(view(profile, t), 201);
       } catch (e) {
         throw new HttpError(400, (e as Error).message);
