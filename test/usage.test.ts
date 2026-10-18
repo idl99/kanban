@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { fetchUsage, normalizeUsage, parseCredentials, USAGE_URL } from "../src/server/usage";
-import { pillText, resetText, usageTone, worstTone } from "../web/src/usage";
+import { pillText, resetText, shortLabel, usageTone, worstTone } from "../web/src/usage";
 
 const FULL = {
   five_hour: { utilization: 42, resets_at: "2026-10-05T16:10:00+00:00" },
@@ -95,4 +95,11 @@ test("pillText and resetText", () => {
   expect(resetText("2026-10-05T14:15:00Z", now)).toMatch(/^Resets .+ \(in 2h 15m\)$/);
   expect(resetText("2026-10-09T09:00:00Z", now)).not.toContain("(in");
   expect(resetText("2026-10-05T11:00:00Z", now)).toBe("Resets now");
+});
+
+test("shortLabel names the 5h and week windows briefly, keeps other labels", () => {
+  const w = (key: string, label: string) => ({ key, label, percent: 0, resetsAt: null });
+  expect(shortLabel(w("five_hour", "Current session (5h)"))).toBe("5h");
+  expect(shortLabel(w("seven_day", "Week · all models"))).toBe("Week");
+  expect(shortLabel(w("seven_day_opus", "Week · Opus"))).toBe("Week · Opus");
 });

@@ -14,7 +14,8 @@ import { startPushClient } from "./push";
 import { PhoneAccessDialog } from "./PhoneAccessDialog";
 import { MoreSheet, PhoneNav, type PhoneTab } from "./PhoneNav";
 import { usePhone } from "./usePhone";
-import { UsagePill } from "./UsagePill";
+import { UsageBox, UsagePill } from "./UsagePill";
+import { useUsage } from "./useUsage";
 import { anyLayerOpen } from "./layers";
 import { Board } from "./Board";
 import { boardColumnOf, columnNeighbours, columnOrder } from "./columns";
@@ -170,6 +171,8 @@ export function App() {
   const [commandBar, setCommandBar] = useState(false);
   const [inboxRequest, setInboxRequest] = useState(0);
   const [usageRequest, setUsageRequest] = useState(0);
+  // Plan usage and today's spend: the header pill on computers, the More sheet on phones.
+  const usage = useUsage();
   const [boardSwitcher, setBoardSwitcher] = useState(false);
   // Command to type into the dock's terminal (e.g. "claude mcp login x"); n makes repeats count.
   const [dockCommand, setDockCommand] = useState<{ text: string; n: number } | null>(null);
@@ -745,7 +748,7 @@ export function App() {
             {running.runs}/{profile.maxParallel} running{running.agents > 0 && <> · {running.agents} huddle {running.agents === 1 ? "agent" : "agents"}</>}{queued > 0 && <> · {queued} queued</>}
           </span>
         )}
-        <UsagePill openRequest={usageRequest} />
+        <UsagePill state={usage} openRequest={usageRequest} />
         {restart.pending && (
           <span className="pill warn" title="The daemon restarts once every active run (on any board) has finished. Until then nothing new starts: queued tickets, chat replies and Planning interviews wait.">
             Restart pending{restart.waiting > 0 ? ` · waiting for ${restart.waiting} ${restart.waiting === 1 ? "run" : "runs"}` : ""}
@@ -892,7 +895,8 @@ export function App() {
         <PhoneNav tab={phoneTab} onTab={setPhoneTab} needYou={perBoard.get(profile.slug) ?? 0} scheduleAlert={scheduleFails > 0} onSchedules={() => openSchedules()}
           onMore={() => setMoreOpen(true)} moreAlert={mcpAttention > 0} />
       )}
-      {moreOpen && <MoreSheet items={menuItems.filter((i) => i.label !== "Schedules" && i.label !== "Keyboard shortcuts")} footer={menuFooter} onClose={() => setMoreOpen(false)} />}
+      {moreOpen && <MoreSheet items={menuItems.filter((i) => i.label !== "Schedules" && i.label !== "Keyboard shortcuts")} footer={menuFooter} onClose={() => setMoreOpen(false)}
+        top={<UsageBox state={usage} />} />}
       {phoneAccess && <PhoneAccessDialog onClose={() => setPhoneAccess(false)} />}
       {notifications && <NotificationsDialog profile={profile?.slug ?? null} onClose={() => setNotifications(false)} />}
 

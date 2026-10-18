@@ -32,6 +32,11 @@ export function pillText(windows: UsageWindow[]): string {
   return ["Usage", ...(parts.length ? parts : windows.slice(0, 2).map((w) => `${w.label} ${pct(w.percent)}`))].join(" · ");
 }
 
+/** "5h", "Week", or the window's own label for the others (phone usage box rows). */
+export function shortLabel(w: UsageWindow): string {
+  return ({ five_hour: "5h", seven_day: "Week" } as Record<string, string>)[w.key] ?? w.label;
+}
+
 function inWords(ms: number): string {
   const m = Math.max(1, Math.round(ms / 60_000));
   if (m < 60) return `${m}m`;
