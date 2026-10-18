@@ -111,13 +111,14 @@ export const BUILTIN_TEMPLATES: HuddleTemplate[] = [
   {
     name: AUTO_REVIEW_IMPORTANT,
     label: "Auto review (important)",
-    description: "The bigger squad for ⭐ important tickets and security, data, payments or migration changes: two reviewers (correctness and security), two QA testers and a QA lead.",
+    description: "The bigger squad for ⭐ important tickets and security, data, payments or migration changes: two reviewers (correctness and security), a blast-radius check, two QA testers and a QA lead.",
     rounds: null,
     maxCostUsd: 20,
     report: AUTO_REVIEW_REPORT,
     roster: [
       { handle: "reviewer", preset: "reviewer", prompt: AUTO_REVIEW_READ + "Review the change for correctness: bugs, edge cases, missing tests." },
       { handle: "security", preset: "security", prompt: AUTO_REVIEW_READ + "Review the change for security and data risks." },
+      { handle: "blast-radius", preset: "blast-radius", prompt: AUTO_REVIEW_READ + "Find what the change breaks outside the diff and prove the fact it is safe because of." },
       { preset: "qa", count: 2, prompt: AUTO_REVIEW_READ + "Test the change: run the tests and try the paths it touches; the QA lead splits the areas." },
       { preset: "qa-lead", prompt: AUTO_REVIEW_LEAD },
     ],

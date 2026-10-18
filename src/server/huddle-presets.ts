@@ -60,6 +60,20 @@ export const BUILTIN_PRESETS: HuddlePreset[] = [
     prompt: "Review the host ticket's changes for security problems: injection, auth and permission gaps, secrets, unsafe file or shell use. Report each with file:line and impact.",
   },
   {
+    name: "blast-radius", role: "What could this break", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared",
+    prompt: "Find what the host ticket's changes break outside the diff, where grep for callers won't show it: data formats and saved files read by older or newer versions, " +
+      "settings, timing and ordering, other code or languages reading the same data, flags and defaults. Don't edit tracked files; you may run scripts and tests " +
+      "(put scripts in your outputs folder). Name the one fact the change is safe because of and prove it by running real code (a small script or a test). " +
+      "For each claim, say how far you got: claimed, pointed at a line, walked through, ran it, or reproduced in the app. " +
+      "Report each risk with file:line, likelihood, cost if it happens and the cheapest check; list what you cleared separately.",
+  },
+  {
+    name: "breaker", role: "Tries to break it", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared",
+    prompt: "Try to break the host ticket's changes from angles a normal review misses: edge and malformed inputs, empty and huge values, error paths, " +
+      "concurrent calls, restarts and half-finished state. Then read it with a strict quality lens: needless code, duplicated logic, unclear names that will cause bugs. " +
+      "Every finding needs a concrete failing scenario (input or steps, what goes wrong) and file:line; no style nits, and drop anything you can't make fail.",
+  },
+  {
     name: "researcher", role: "Researcher", model: "sonnet", mode: "tagged", lead: false, canEdit: false, workspace: "shared",
     prompt: "Research the topic on the web and in linked repos (README, docs, source). Post facts with URLs or file:line refs, and one line on what problem each one solves. " +
       "No opinions on our product unless asked. Write long reports to your outputs folder and post the path.",

@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { callTool, type ToolContext } from "../src/mcp-server";
 import { findingTitle, POST_MAX } from "../src/server/huddle";
+import { isBuiltinPreset } from "../src/server/huddle-presets";
 import { BUILTIN_TEMPLATES, deleteTemplate, mergeTemplates, saveTemplate } from "../src/server/huddle-templates";
 import { DIGEST_CLIP, huddleDigest } from "../src/server/prompts";
 import type { Huddle } from "../src/server/types";
@@ -91,6 +92,14 @@ test("templates: built-ins merge with the board's own; overriding, resetting and
   expect(() => saveTemplate([], { name: "x", roster: [{ preset: "nope" }] }, ["qa"])).toThrow("unknown preset");
   expect(() => saveTemplate([], { name: "x", roster: [{ preset: "qa" }], rounds: 0 })).toThrow("rounds");
   expect(() => saveTemplate([], { name: "x", roster: [{ preset: "qa" }], maxCostUsd: -1 })).toThrow("maxCostUsd");
+});
+
+test("templates: the important auto review checks the blast radius; the plain one is unchanged", () => {
+  const roster = (n: string) => BUILTIN_TEMPLATES.find((t) => t.name === n)!.roster.map((e) => e.handle ?? e.preset);
+  expect(roster("auto-review-important")).toEqual(["reviewer", "security", "blast-radius", "qa", "qa-lead"]);
+  expect(roster("auto-review")).toEqual(["reviewer", "qa", "qa-lead"]);
+  // Every built-in template names only built-in presets.
+  for (const t of BUILTIN_TEMPLATES) for (const e of t.roster) if (e.preset) expect(isBuiltinPreset(e.preset)).toBe(true);
 });
 
 test("templates: saved and listed over HTTP (the user only), and listed for Claude", async () => {

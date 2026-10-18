@@ -190,7 +190,8 @@ test("the auto huddle rule: real risk only, named trigger, a roster built for th
   const rule = firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o", autoHuddles: true });
   for (const s of ["`security`", "`data`", "`payments`", "When unsure, don't huddle", "user-facing UI or text changes", "bug fixes",
     "already covered by a specific requirement in the ticket", "check each of those points yourself", "list in your result what you checked and how",
-    "build a `roster` for this change", "`list_huddle_presets`", "`qa-lead`", "Read the code without changing the checkout"]) {
+    "build a `roster` for this change", "`list_huddle_presets`", "`qa-lead`",
+    "`blast-radius` when a small diff touches shared code or a data format", "`breaker` for risky logic", "Read the code without changing the checkout"]) {
     expect(rule).toContain(s);
   }
   expect(rule).not.toContain("user-facing behaviour");

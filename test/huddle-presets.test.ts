@@ -113,6 +113,18 @@ test("propose_huddle takes a budget: checked, capped at $100 and kept for the ca
   expect(card({ maxCostUsd: -5 })).toEqual({ roster, reason: "debate" });
 });
 
+test("presets: blast-radius and breaker ship as read-only, tagged, shared built-ins", () => {
+  for (const [name, role] of [["blast-radius", "What could this break"], ["breaker", "Tries to break it"]]) {
+    expect(BUILTIN_PRESETS.find((p) => p.name === name)).toMatchObject({ role, mode: "tagged", workspace: "shared", canEdit: false, lead: false, model: null });
+  }
+  const blast = BUILTIN_PRESETS.find((p) => p.name === "blast-radius")!.prompt;
+  for (const s of ["data formats", "prove it by running real code", "claimed, pointed at a line, walked through, ran it, or reproduced in the app", "likelihood", "cheapest check", "cleared separately"]) {
+    expect(blast).toContain(s);
+  }
+  const breaker = BUILTIN_PRESETS.find((p) => p.name === "breaker")!.prompt;
+  for (const s of ["error paths", "concurrent", "restarts", "duplicated logic", "concrete failing scenario", "no style nits"]) expect(breaker).toContain(s);
+});
+
 test("presets: board presets merge with built-ins; overriding and resetting a built-in", () => {
   const added = savePreset([], { name: "A11y Tester", prompt: "Check accessibility.", mode: "monitor" });
   expect(added.preset).toMatchObject({ name: "a11y-tester", role: "A11y tester", mode: "monitor", workspace: "shared", canEdit: false, lead: false, model: null });
