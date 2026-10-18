@@ -298,10 +298,12 @@ export interface TeammateUsage {
 
 export interface TicketUsage {
   runs: { run: number; kind: RunKind; startedAt: string; model: string | null; tokens: number; costUsd: number; pct5h: number | null }[];
-  /** costUsd: the ticket's runs plus its huddle teammates; tokens and % are its runs only. */
+  /** costUsd: the ticket's runs plus its huddle teammates and side calls; tokens and % are its runs only. */
   totals: { costUsd: number; tokens: number; pctCurrentWindow: number | null; pctLifetime: number | null };
   /** Its huddles' teammates, null when they spent nothing. */
   teammates: TeammateUsage | null;
+  /** What its side calls ("Say it simpler") cost; 0 when none. */
+  sideCostUsd: number;
   /** The current 5h window, as last seen. */
   window: { utilization: number; resetsAt: string; seenAt: string } | null;
   /** Why there is no current window (usage endpoint error), if known. */
@@ -316,6 +318,8 @@ export interface UsageInputs {
   now?: number;
   windowError?: string | null;
   teammates?: TeammateUsage;
+  /** Its side calls' cost (side-call.ts). */
+  side?: number;
 }
 
 /** Windows the ticket's runs fall in (and the current one): what the machine-wide index must cover. */
@@ -369,12 +373,13 @@ export function ticketUsage(i: UsageInputs): TicketUsage {
   return {
     runs: outRuns,
     totals: {
-      costUsd: runs.reduce((s, r) => s + r.costUsd, 0) + (i.teammates?.costUsd ?? 0),
+      costUsd: runs.reduce((s, r) => s + r.costUsd, 0) + (i.teammates?.costUsd ?? 0) + (i.side ?? 0),
       tokens: runs.reduce((s, r) => s + r.tokens, 0),
       pctCurrentWindow: pctCurrent,
       pctLifetime,
     },
     teammates: i.teammates?.costUsd ? i.teammates : null,
+    sideCostUsd: i.side ?? 0,
     window: current ? { utilization: current.utilization, resetsAt: current.end, seenAt: current.seenAt } : null,
     windowError: current ? null : i.windowError ?? null,
   };

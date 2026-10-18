@@ -290,6 +290,16 @@ export class Store {
     return join(this.ticketDir(slug, id), "activity.jsonl");
   }
 
+  /** Side calls' cost (side-call.ts): counts in the ticket's spend, never in its activity log or session. */
+  sideSpendPath(slug: string, id: string): string {
+    return join(this.ticketDir(slug, id), "side-spend.jsonl");
+  }
+
+  /** Plain-words versions of the ticket's Claude replies, by message (simplify.ts). */
+  simplifiedPath(slug: string, id: string): string {
+    return join(this.ticketDir(slug, id), "simplified.json");
+  }
+
   readActivity(slug: string, id: string): ActivityEntry[] {
     return readJsonl<ActivityEntry>(this.activityPath(slug, id));
   }

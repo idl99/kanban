@@ -1,11 +1,13 @@
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { dayKey } from "./limit";
+import { readSideSpend } from "./side-call";
 import { atomicWrite, type Store } from "./store";
 
 // Dollars spent, at a glance: each ticket's API-equivalent cost (the same sum as its Usage tab, see ticketRuns) and
-// what all boards spent today. Tickets are read from their activity logs, incrementally; huddle agents have no
-// ticket log, so their result lines add to a small per-day ledger (spend-days.json).
+// what all boards spent today. Tickets are read from their activity logs, incrementally, plus their side calls'
+// ledger (side-call.ts); huddle agents have no ticket log, so their result lines add to a small per-day ledger
+// (spend-days.json).
 
 const CHUNK = 8 * 1024 * 1024;
 /** Days the huddle ledger keeps. */
@@ -35,8 +37,18 @@ export class SpendIndex {
   private files = new Map<string, FileState>();
   constructor(private store: Store, private now: () => Date = () => new Date()) {}
 
-  /** A ticket's cost so far (reads only what was appended since the last call). */
+  /** A ticket's cost so far: its runs and its side calls. */
   ticket(slug: string, id: string): TicketSpend {
+    const runs = this.runs(slug, id);
+    const side = readSideSpend(this.store.sideSpendPath(slug, id));
+    if (!side.costUsd) return runs;
+    const days = new Map(runs.days);
+    for (const [d, c] of side.days) days.set(d, (days.get(d) ?? 0) + c);
+    return { costUsd: runs.costUsd + side.costUsd, days };
+  }
+
+  /** The ticket's runs' cost (reads only what was appended to its activity log since the last call). */
+  private runs(slug: string, id: string): TicketSpend {
     const file = this.store.activityPath(slug, id);
     let st = this.files.get(file);
     let size = 0;
@@ -114,17 +126,20 @@ export class SpendIndex {
       const dir = join(this.store.root, "profiles", p.slug, "tickets");
       for (const id of existsSync(dir) ? readdirSync(dir) : []) {
         // Untouched since midnight: nothing spent today.
-        let mtime = 0;
-        try {
-          mtime = statSync(this.store.activityPath(p.slug, id)).mtimeMs;
-        } catch {
-          continue;
-        }
+        const mtime = Math.max(mtimeOf(this.store.activityPath(p.slug, id)), mtimeOf(this.store.sideSpendPath(p.slug, id)));
         if (mtime >= start) cost += this.ticket(p.slug, id).days.get(day) ?? 0;
       }
       return { slug: p.slug, name: p.name, costUsd: cost };
     });
     return { day, costUsd: boards.reduce((s, b) => s + b.costUsd, 0), boards };
+  }
+}
+
+function mtimeOf(file: string): number {
+  try {
+    return statSync(file).mtimeMs;
+  } catch {
+    return 0;
   }
 }
 

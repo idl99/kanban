@@ -77,7 +77,7 @@ function TeammateLines({ teammates: t }: { teammates: TeammateUsage }) {
 export function UsagePanel({ usage, error }: { usage: TicketUsage | null; error: string | null }) {
   if (error && !usage) return <p className="usage-error">{error}</p>;
   if (!usage) return <p className="muted small">Loading…</p>;
-  if (!usage.runs.length && !usage.teammates) {
+  if (!usage.runs.length && !usage.teammates && !usage.sideCostUsd) {
     return <p className="muted small">No finished runs yet. Cost and plan usage show up here once Claude has worked on this ticket.</p>;
   }
   const { totals, window: w } = usage;
@@ -99,10 +99,15 @@ export function UsagePanel({ usage, error }: { usage: TicketUsage | null; error:
         </div>
         <div className="usage-stat">
           <b>{costText(totals.costUsd)}</b>
-          <span>API-equivalent · {tokenText(totals.tokens)} tokens{usage.teammates ? " (runs)" : ""}</span>
+          <span>API-equivalent · {tokenText(totals.tokens)} tokens{usage.teammates || usage.sideCostUsd ? " (runs)" : ""}</span>
         </div>
       </div>
       {usage.teammates && <TeammateLines teammates={usage.teammates} />}
+      {!!usage.sideCostUsd && (
+        <div className="usage-teammates" title="Claude replies rewritten in plain words with Say it simpler, counted in the total above.">
+          <b>Plain-words rewrites: {costText(usage.sideCostUsd)}</b>
+        </div>
+      )}
       <table className="usage-table">
         <thead>
           <tr><th>Run</th><th>When</th><th>Model</th><th className="n">Tokens</th><th className="n">Cost</th><th className="n">% of 5h</th></tr>

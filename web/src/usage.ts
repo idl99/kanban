@@ -65,9 +65,11 @@ export interface TeammateUsage {
 
 export interface TicketUsage {
   runs: { run: number; kind: RunKind; startedAt: string; model: string | null; tokens: number; costUsd: number; pct5h: number | null }[];
-  /** costUsd includes the huddle teammates; tokens and % are the ticket's runs only. */
+  /** costUsd includes the huddle teammates and side calls; tokens and % are the ticket's runs only. */
   totals: { costUsd: number; tokens: number; pctCurrentWindow: number | null; pctLifetime: number | null };
   teammates?: TeammateUsage | null;
+  /** "Say it simpler" rewrites (side calls outside the ticket's session). */
+  sideCostUsd?: number;
   window: { utilization: number; resetsAt: string; seenAt: string } | null;
   windowError: string | null;
 }

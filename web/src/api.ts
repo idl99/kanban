@@ -1130,6 +1130,10 @@ export const api = {
   conversation: (slug: string, id: string, before?: number) =>
     req<{ entries: SessionEntry[]; start: number; total: number; title: string | null }>(
       "GET", `${t(slug, id)}/conversation${before !== undefined ? `?before=${before}` : ""}`),
+  /** Saved plain-words versions of the ticket's Claude replies, by message uuid. */
+  simplified: (slug: string, id: string) => req<Record<string, string>>("GET", `${t(slug, id)}/simplified`),
+  /** "Say it simpler": one reply rewritten in plain words (a side call; saved, so the second time is free). */
+  simplify: (slug: string, id: string, uuid: string) => req<{ text: string; cached: boolean }>("POST", `${t(slug, id)}/simplify`, { uuid }),
   /** One subagent of the ticket's conversation, with all of its steps. */
   agent: (slug: string, id: string, toolUseId: string) => req<AgentInfo>("GET", `${t(slug, id)}/agent/${encodeURIComponent(toolUseId)}`),
   /** A tool call's full input and output (main conversation or a subagent's). */

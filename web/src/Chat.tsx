@@ -24,6 +24,8 @@ import { ProposalCard, type FollowUp } from "./ProposalCard";
 import { QuestionsForm } from "./QuestionsForm";
 import { RecoveryBanner } from "./RecoveryBanner";
 import { SetupRow } from "./SetupRow";
+import { useSimpler } from "./Simpler";
+import { simplifiable } from "./simplifyText";
 import { useSnippetPicker } from "./SnippetPicker";
 import { useSlashCommands, useSlashPicker } from "./SlashPicker";
 import { commandNote, messageCommand, type SlashCommand } from "./slashText";
@@ -187,6 +189,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const images = useImagePaste(setDraft);
   const snippets = useSnippetPicker({ slug, ref: composer, setValue: setDraft });
   const commands = useSlashCommands(slug, ticket.id);
+  const simpler = useSimpler(slug, ticket.id);
   const slash = useSlashPicker({ commands, ref: composer, setValue: setDraft });
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   // Text Claude is writing right now (from the run's partial-message stream); not yet in the session file.
@@ -503,7 +506,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               </div>
               {e.text && (e.role === "user"
                 ? <UserText text={e.text} commands={commands} command={e.command} />
-                : <Markdown text={e.text.replace(/^.*CKANBAN_RESULT:.*$/m, "").trim()} />)}
+                : <Markdown text={simpler.textFor(e.uuid) ?? e.text.replace(/^.*CKANBAN_RESULT:.*$/m, "").trim()} />)}
+              {simplifiable(e) && simpler.link(e.uuid)}
               {e.questions && (
                 <QuestionsForm questions={e.questions} answered={answeredAfter(b.index)} disabled={running} onSubmit={send}
                   onPreview={onOpenOutput && ((m) => onOpenOutput(`mockups/${m}`))}

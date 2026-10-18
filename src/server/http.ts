@@ -37,6 +37,8 @@ import type { TerminalWatcher } from "./terminals";
 import { attachmentHeader, canCopyFile, copyFileToClipboard, markdownPage, markdownTitle, revealFile, ShareError } from "./share";
 import { UpdateChecker } from "./update";
 import { SpendIndex } from "./spend";
+import { makeSideCaller, readSideSpend, type SideCaller } from "./side-call";
+import { Simplifier, SimplifyError } from "./simplify";
 import { ClaudeLogIndex, readWindows, recordWindow, ticketRuns, ticketUsage, UsageCache, windowsNeeded } from "./ticket-usage";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
@@ -73,6 +75,8 @@ export interface ServerDeps {
   claudeLogs?: ClaudeLogIndex;
   /** Publishes output files as claude.ai pages (tests pass a fake). */
   publishArtifact?: (job: ArtifactJob) => Promise<ArtifactOutcome>;
+  /** One-shot cheap Claude answers outside any session, e.g. "Say it simpler" (tests pass a fake). */
+  sideCall?: SideCaller;
   /** Phone access over Tailscale (tests pass one with a fake tailscale runner). */
   remote?: RemoteAccess;
   /** Loopback port `tailscale serve` points at (remote.ts); 0 picks a free one; omitted: no phone access listener. */
@@ -196,6 +200,7 @@ export function createServer(deps: ServerDeps) {
   const windowsFile = join(store.root, "usage-windows.json");
   const usage = new UsageCache(deps.usage ?? fetchUsage, (r) => recordWindow(windowsFile, r));
   const spend = new SpendIndex(store);
+  const simplifier = new Simplifier(store, deps.sideCall ?? makeSideCaller({ cwd: join(store.root, "side-calls") }));
   const claudeLogs = deps.claudeLogs ?? new ClaudeLogIndex();
   const publishArtifact = deps.publishArtifact ?? ((job: ArtifactJob) => runArtifactJob(job));
   // No listener (not bound): 0, so `on` refuses instead of pointing serve at whatever holds the port.
@@ -1090,7 +1095,7 @@ export function createServer(deps: ServerDeps) {
       if (needed.length) await claudeLogs.refresh(Math.min(...needed.map((w) => Date.parse(w.start))));
       return json(ticketUsage({
         activity, windows, machineCost: (a, b) => claudeLogs.costBetween(a, b), windowError: "error" in plan ? plan.error : null,
-        teammates: huddles.ticketSpend(slug, id),
+        teammates: huddles.ticketSpend(slug, id), side: readSideSpend(store.sideSpendPath(slug, id)).costUsd,
       }));
     }
     if (action === "outputs" && m === "POST" && parts.length > 5) {
@@ -1171,6 +1176,25 @@ export function createServer(deps: ServerDeps) {
         return { ...e, agent: { ...agent, steps: agent.steps.slice(-AGENT_STEP_TAIL) } };
       });
       return json({ entries, start, total: all.length, title: parsed?.title ?? null });
+    }
+    if (action === "simplified" && m === "GET") {
+      // Saved plain-words versions of this ticket's Claude replies, by message.
+      const t = store.getTicket(slug, id)!;
+      return json(simplifier.saved(slug, id, (t.sessionId ? sessions.get(t.sessionId)?.entries : null) ?? []));
+    }
+    if (action === "simplify" && m === "POST") {
+      // "Say it simpler": a side call rewrites one reply; the ticket's session and activity log never see it.
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "Say it simpler is the user's click, not a board run's");
+      const b = await body(req);
+      const t = store.getTicket(slug, id)!;
+      const e = typeof b?.uuid === "string" ? (t.sessionId ? sessions.get(t.sessionId)?.entries : null)?.find((x) => x.uuid === b.uuid) : null;
+      if (!e) throw new HttpError(404, "no such message in this ticket's conversation");
+      try {
+        return json(await simplifier.simplify(slug, id, t.title, e));
+      } catch (err) {
+        if (err instanceof SimplifyError) throw new HttpError(err.status, err.message);
+        throw err;
+      }
     }
     if (action === "agent" && parts.length === 6 && m === "GET") {
       const t = store.getTicket(slug, id)!;
