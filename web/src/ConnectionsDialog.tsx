@@ -65,6 +65,8 @@ export function ConnectionsDialog({ state, onClose, onRunInTerminal }: {
   // Command to show with a Copy button when there is no terminal to run it in.
   const [manual, setManual] = useState<{ server: string; command: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  // Server whose command / URL was just copied (the phone Copy button says "Copied").
+  const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
   useNow();
 
   const act = async (key: string, fn: () => Promise<unknown>) => {
@@ -138,8 +140,10 @@ export function ConnectionsDialog({ state, onClose, onRunInTerminal }: {
               <div className="mcp-target-row">
                 <span className="mcp-target" title={s.target}>{s.target}</span>
                 {!s.target.includes("***") && (
-                  <button className="icon-btn tiny" aria-label={`Copy ${s.name} ${stdio ? "command" : "URL"}`} title="Copy"
-                    onClick={() => copy(s.target)}><CopyIcon size={12} /></button>
+                  <button className="icon-btn tiny mcp-copy" aria-label={`Copy ${s.name} ${stdio ? "command" : "URL"}`} title="Copy"
+                    onClick={async () => { await copy(s.target); setCopiedTarget(s.name); }}>
+                    <CopyIcon size={12} /><span className="mcp-copy-label">{copiedTarget === s.name ? "Copied" : "Copy"}</span>
+                  </button>
                 )}
               </div>
             )}
@@ -217,7 +221,7 @@ export function ConnectionsDialog({ state, onClose, onRunInTerminal }: {
             )}
             {s.scope === "user" && (
               <>
-                <button className="btn small ghost" disabled={busy === `edit:${s.name}`} onClick={() => startEdit(s)}>Edit</button>
+                <button className="btn small ghost" disabled={busy === `edit:${s.name}`} onClick={() => (editing?.name === s.name ? setEditing(null) : startEdit(s))}>Edit</button>
                 <button className="btn small ghost danger" onClick={() => setConfirm({ kind: "remove", server: s })}>Remove</button>
               </>
             )}
@@ -244,7 +248,7 @@ export function ConnectionsDialog({ state, onClose, onRunInTerminal }: {
     <Modal title="Connections" onClose={onClose} wide>
       <div className="form mcp">
         <div className="mcp-toolbar">
-          <span className="muted small">
+          <span className="muted small mcp-toolbar-text">
             Claude Code MCP servers, as <code>claude mcp list</code> sees them from your home folder.{" "}
             {state?.checking ? <><span className="spinner" /> Checking…</> : state?.checkedAt ? `Checked ${timeAgo(state.checkedAt)}.` : ""}
           </span>
@@ -377,6 +381,8 @@ function AddServerForm({ onAdded, initial, onCancel }: { onAdded: () => void; in
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const stdio = transport === "stdio";
+  // An error is about what was submitted: drop it once the form changes.
+  useEffect(() => setErr(null), [name, transport, command, args, url, pairs]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();

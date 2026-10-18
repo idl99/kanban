@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // Fake `claude mcp …` for tests. State lives in FAKE_MCP_STATE (JSON: name → status line), argv log in FAKE_ARGS_FILE.
 // FAKE_LOGIN=fail makes `login` exit 1, FAKE_ADD=fail makes `add` exit 1.
+// FAKE_LIST_MS makes `list` print the state it read at start only after that many ms (a slow health check).
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
@@ -11,6 +12,7 @@ const save = () => writeFileSync(file, JSON.stringify(state));
 const [, cmd, name] = args;
 
 if (cmd === "list") {
+  if (process.env.FAKE_LIST_MS) await Bun.sleep(Number(process.env.FAKE_LIST_MS));
   console.log("Checking MCP server health…\n");
   for (const [n, s] of Object.entries(state)) console.log(`${n}: ${s.target} - ${s.status}`);
 } else if (cmd === "get") {

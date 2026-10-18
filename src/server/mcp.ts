@@ -252,6 +252,8 @@ export class McpManager {
   private checkedAt: string | null = null;
   private error: string | null = null;
   private inflight: Promise<void> | null = null;
+  /** Servers added, edited or removed while the current `claude mcp list` ran: its older output doesn't overwrite them. */
+  private touched = new Set<string>();
   private again = false;
   private logins = new Map<string, McpLogin>();
   private seen: Set<string>;
@@ -314,6 +316,7 @@ export class McpManager {
   }
 
   private async doRefresh(): Promise<void> {
+    const touched = (this.touched = new Set());
     const r = await this.run(["mcp", "list"], this.opts.listTimeoutMs);
     if (r.code !== 0) {
       this.error = errorText(r, "claude mcp list");
@@ -321,7 +324,13 @@ export class McpManager {
     }
     const { servers, unparsed } = parseMcpList(r.stdout);
     const scopes = configScopes(this.cwd, this.configFile);
-    this.servers = servers.map((s) => this.decorate({ ...s, scope: scopeOf(s.name, scopes), attention: false, login: null }));
+    let next = servers.map((s) => this.decorate({ ...s, scope: scopeOf(s.name, scopes), attention: false, login: null }));
+    for (const name of touched) {
+      const now = this.servers.find((x) => x.name === name);
+      next = next.filter((x) => x.name !== name);
+      if (now) next.push(now);
+    }
+    this.servers = next;
     this.unparsed = unparsed;
     this.checkedAt = new Date().toISOString();
     this.error = null;
@@ -384,7 +393,35 @@ export class McpManager {
       throw new McpError(502, errorText(r, "claude mcp add"));
     }
     this.logins.delete(name);
+    if (next !== name) {
+      this.servers = this.servers.filter((x) => x.name !== name);
+      this.touched.add(name);
+    }
+    await this.show(input);
     this.refresh();
+  }
+
+  /**
+   * Puts a server just added or edited in the list with a quick `claude mcp get`,
+   * so the panel shows it now instead of after the full `claude mcp list` (which can take a while).
+   */
+  private async show(input: McpAddInput): Promise<void> {
+    const name = String(input.name).trim();
+    const r = await this.run(["mcp", "get", name], 30_000);
+    const parsed = r.code === 0 ? parseMcpGet(r.stdout) : null;
+    const target = input.transport === "stdio"
+      ? [String(input.command ?? "").trim(), ...(input.args ?? [])].join(" ")
+      : String(input.url ?? "").trim();
+    const server = this.decorate({
+      name, target: maskSecrets(target), transport: input.transport, scope: "user",
+      status: parsed?.status ?? "unknown", message: parsed?.message ?? null, attention: false, login: null,
+    });
+    const i = this.servers.findIndex((x) => x.name === name);
+    if (i >= 0) this.servers[i] = server;
+    else this.servers.push(server);
+    this.touched.add(name);
+    this.saveSeen();
+    this.emit();
   }
 
   /**
@@ -446,6 +483,7 @@ export class McpManager {
     if (this.servers.some((s) => s.name === name)) throw new McpError(409, `a server named "${name}" already exists`);
     const r = await this.run(args, 60_000);
     if (r.code !== 0) throw new McpError(502, errorText(r, "claude mcp add"));
+    await this.show(input);
     this.refresh();
   }
 
@@ -455,6 +493,7 @@ export class McpManager {
     const r = await this.run(["mcp", "remove", name, "--scope", "user"], 60_000);
     if (r.code !== 0) throw new McpError(502, errorText(r, "claude mcp remove"));
     this.servers = this.servers.filter((x) => x.name !== name);
+    this.touched.add(name);
     this.logins.delete(name);
     this.emit();
     this.refresh();

@@ -80,6 +80,7 @@ function setup(servers: Record<string, { target: string; status: string }>, user
   process.env.FAKE_ARGS_FILE = argsFile;
   delete process.env.FAKE_LOGIN;
   delete process.env.FAKE_ADD;
+  delete process.env.FAKE_LIST_MS;
   const bus = new Bus();
   events = [];
   bus.on((e) => events.push(e));
@@ -162,6 +163,34 @@ test("add and remove", async () => {
   await mgr.remove("fs");
   expect(mgr.state().servers.some((s) => s.name === "fs")).toBe(false);
   expect(calls().some((c) => c.join(" ") === "mcp remove fs --scope user")).toBe(true);
+});
+
+test("added and edited servers show at once, before the full list runs", async () => {
+  await mgr.refresh();
+  process.env.FAKE_LIST_MS = "300";
+  await mgr.add({ name: "fs", transport: "stdio", command: "npx", args: ["-y", "fs"], env: [{ key: "API_KEY", value: "s3cret" }] });
+  expect(mgr.state().servers.find((s) => s.name === "fs")).toMatchObject({ target: "npx -y fs", scope: "user", status: "connected" });
+  await mgr.update("fs", { name: "fs2", transport: "stdio", command: "npx", args: ["-y", "fs2"] });
+  expect(mgr.state().servers.map((s) => [s.name, s.target])).toEqual([["fs2", "npx -y fs2"]]);
+});
+
+test("a list that started before an add, edit or remove doesn't undo it", async () => {
+  setup({ old: { target: "npx old", status: "✔ Connected" } }, ["old"]);
+  await mgr.refresh();
+  process.env.FAKE_LIST_MS = "400";
+  const slow = mgr.refresh(); // reads the state before the changes below
+  await Bun.sleep(100);
+  delete process.env.FAKE_LIST_MS;
+  await mgr.add({ name: "fs", transport: "stdio", command: "npx", args: ["fs"] });
+  await mgr.remove("old");
+  await slow;
+  const names = () => mgr.state().servers.map((s) => s.name);
+  expect(names()).toEqual(["fs"]);
+  const seen: string[][] = [];
+  events.length = 0;
+  await until(() => !mgr.state().checking);
+  for (const e of events) if (e.type === "mcp.updated") seen.push(e.state.servers.map((s) => s.name));
+  expect(seen.every((n) => n.includes("fs") && !n.includes("old"))).toBe(true);
 });
 
 test("missing claude binary is reported, not thrown", async () => {
