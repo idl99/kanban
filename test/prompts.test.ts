@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { extractFinalText, summarizeEvent } from "../src/server/activity";
-import { chatPrompt, firstRunPrompt, freshSessionPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumeCommand, resumePrompt } from "../src/server/prompts";
+import { chatPrompt, firstRunPrompt, freshSessionPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumeCommand, resumePrompt, WRITING_RULE } from "../src/server/prompts";
 import { parseResult } from "../src/server/result";
 import type { Ticket } from "../src/server/types";
 
@@ -140,6 +140,22 @@ test("planning chats reach artifacts through the MCP tools, not the Bash helper 
   expect(p).toContain("`publish_artifact` with the full edited page and the same url");
   expect(p).toContain("Publishing artifacts is allowed while planning");
   expect(chatPrompt({ ...ticket, mode: "auto" } as Ticket, "", "refine", "/o")).not.toContain("read_artifact");
+});
+
+test("run prompts and planning chats ask for plain, filler-free user-facing text", () => {
+  expect(WRITING_RULE).toContain("No AI filler (crucial, leverage, ensure, seamless), no em dashes, arrows or made-up abbreviations");
+  const fresh = { repo: "remote" as const, linked: false, baseBranch: "main", lastResult: null, comments: [], outputDir: "/o" };
+  for (const p of [firstRunPrompt(ticket, { repo: "remote" as const, outputDir: "/o" }), resumePrompt(ticket, [], "/o"), chatPrompt(ticket, "hi", "act", "/o"), freshSessionPrompt(ticket, fresh), chatPrompt(ticket, "hi", "refine", "/o")]) {
+    expect(p).toContain(WRITING_RULE);
+  }
+});
+
+test("planning chats play back the goal and shape tickets like an expert", () => {
+  const p = chatPrompt({ ...ticket, mode: "auto" } as Ticket, "", "refine", "/o");
+  expect(p).toContain("Before your first questions or proposal, restate in 1-2 sentences what the user is really after");
+  expect(p).toContain("drop constraints that don't serve the goal, leave the user's choices open");
+  expect(p).toContain("one outside check that the result is right in Acceptance criteria");
+  expect(p).toContain("Don't narrate this framing");
 });
 
 test("planning chats act outside the project when the user asks, but don't change its files", () => {

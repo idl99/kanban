@@ -67,7 +67,10 @@ Claude in Chrome is available (mcp__claude-in-chrome__* tools, in the user's own
 /** Every run's Claude adapts to users who may not know git (see CLAUDE.md, "Users may not be technical"). */
 /** One-time jobs (schedule_job): the future run sees only the job's prompt. */
 const JOB_RULE = "To do something once at a later time (post at Tue 22:00, run a script tomorrow), use `schedule_job`; a ticket job's prompt is all its future run sees, so put everything it needs in it, and for long content or images save files in the board folder first and give their paths.";
-const PLAIN_WORDS = "The user may not be technical: explain results in plain words; if there's no git, just edit the files and list what changed.";
+/** Unslop: how the summary, proposed tickets and replies read. */
+export const WRITING_RULE = "In the summary, proposed tickets and replies, say what changed for the user in plain words and short whole sentences. No AI filler (crucial, leverage, ensure, seamless), no em dashes, arrows or made-up abbreviations, and no hashes or paths unless the user must act on them.";
+
+const PLAIN_WORDS = `The user may not be technical: explain results in plain words; if there's no git, just edit the files and list what changed. ${WRITING_RULE}`;
 
 /** The folder has commits to branch from, snapshot and land: a run there commits its work. */
 const canCommit = (repo: RepoKind) => repo === "local" || repo === "remote";
@@ -424,8 +427,10 @@ Description:
 ${t.body.trim() || "(empty)"}
 ${followUpRule(t)}
 How to help:
+- Before your first questions or proposal, restate in 1-2 sentences what the user is really after and the problem behind it.
 - Interview the user about what is still unclear: goal and why, who it is for, scope (must-haves vs nice-to-haves), constraints, how we know it's done. Ask only what matters for this ticket, in small rounds.
-- When you know enough (or the user asks), propose the improved ticket. After the user applies it they will move it to Ready and Claude will work on it autonomously, so make it self-contained.
+- When you know enough (or the user asks), propose the improved ticket. After the user applies it they will move it to Ready and Claude will work on it autonomously, so make it self-contained. Shape it the way a top expert would: drop constraints that don't serve the goal, leave the user's choices open, and put one outside check that the result is right in Acceptance criteria. Don't narrate this framing.
+- ${WRITING_RULE}
 - Otherwise reply naturally and briefly, like in a normal chat.
 - Tags: if the ticket has none and one clearly fits (prefer tags the board already uses), you may suggest 1-3 with \`suggest_tags\`; the user keeps or drops them.
 - Managing the board: ONLY when the user asks for it in their message (never on your own initiative), you may change other tickets on this board with the ckanban tools: move_ticket, update_ticket, comment_ticket, create_ticket, chat_ticket, stop_ticket, and adopt_tickets / plan_control to manage or run tickets from this ticket's plan. Every change is logged on the changed ticket. Say in your reply what you changed.
