@@ -667,13 +667,13 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           const first = b.kind === "entry" ? b.e : b.items[0];
           return (
             <Fragment key={first.uuid}>
-              {helpAt.get(i)?.map((c) => <HelpCardView key={c.id} card={c} />)}
+              {helpAt.get(i)?.map((c) => <HelpCardView key={c.id} card={c} help={help} onOpenTicket={onOpenTicket} />)}
               {i === dividerAt && divider}{renderBlock(b, before(first, bp?.at))}
             </Fragment>
           );
         })}
         {dividerAt === blocks.length && divider}
-        {helpAt.get(blocks.length)?.map((c) => <HelpCardView key={c.id} card={c} />)}
+        {helpAt.get(blocks.length)?.map((c) => <HelpCardView key={c.id} card={c} help={help} onOpenTicket={onOpenTicket} />)}
         {help && <HelpPending help={help} />}
         {/* Replies sent while Claude wasn't working are part of the timeline: plain bubbles, before Claude's reply. */}
         {pending.filter((p) => !p.steer).map((p, i) => (

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type HelpCard, type HelpKind, type Ticket } from "./api";
+import { api, type HelpCard, type HelpKind, type Lesson, type LessonAction, type Ticket } from "./api";
 import { useLayer } from "./layers";
 import { Markdown } from "./Transcript";
 import { costText } from "./usage";
@@ -9,6 +9,7 @@ import { fullTime, timeAgo } from "./time";
 export const HELP_ITEMS: { kind: HelpKind; question: string; hint: string; heading: string }[] = [
   { kind: "recap", question: "What happened while I was away?", hint: "Short summary since your last message, and what Claude needs from you", heading: "While you were away" },
   { kind: "changes", question: "Explain the changes", hint: "What changed and why, in plain words with a small picture", heading: "The change, explained" },
+  { kind: "lessons", question: "Learn from this ticket", hint: "Suggest one rule so the same mistake doesn't happen again", heading: "Learn from this ticket" },
 ];
 
 const heading = (k: HelpKind) => HELP_ITEMS.find((i) => i.kind === k)!.heading;
@@ -20,6 +21,7 @@ const heading = (k: HelpKind) => HELP_ITEMS.find((i) => i.kind === k)!.heading;
 export function useHelp(slug: string, ticket: Ticket, hasChanges: boolean) {
   const [cards, setCards] = useState<HelpCard[]>([]);
   const [recap, setRecap] = useState(false);
+  const [lessons, setLessons] = useState(false);
   // Answers being worked out (asked here, or by another device / before a reload), and ones whose last try failed.
   const [busy, setBusy] = useState<HelpKind[]>([]);
   const [failed, setFailed] = useState<Partial<Record<HelpKind, string>>>({});
@@ -30,6 +32,7 @@ export function useHelp(slug: string, ticket: Ticket, hasChanges: boolean) {
   useEffect(() => {
     setCards([]);
     setRecap(false);
+    setLessons(false);
     setBusy([]);
     setFailed({});
   }, [slug, ticket.id]);
@@ -40,6 +43,7 @@ export function useHelp(slug: string, ticket: Ticket, hasChanges: boolean) {
       if (!live) return;
       setCards(h.cards);
       setRecap(h.recap);
+      setLessons(h.lessons);
       setBusy((b) => [...new Set([...b.filter((k) => h.busy.includes(k) || asked.current.has(k)), ...h.busy])]);
     }, () => {});
     return () => {
@@ -69,8 +73,14 @@ export function useHelp(slug: string, ticket: Ticket, hasChanges: boolean) {
     }
   }, [slug, ticket.id]);
 
-  const available: Record<HelpKind, boolean> = { recap, changes: hasChanges };
-  return { cards, busy, failed, available, ask, dismiss: (kind: HelpKind) => setFailed(({ [kind]: _, ...rest }) => rest) };
+  /** Acts on a suggested lesson; throws on failure (the lesson card shows it). */
+  const act = useCallback(async (card: string, lesson: string, action: LessonAction) => {
+    const next = await api.lesson(slug, ticket.id, card, lesson, action);
+    setCards((cs) => cs.map((c) => (c.id === next.id ? next : c)));
+  }, [slug, ticket.id]);
+
+  const available: Record<HelpKind, boolean> = { recap, changes: hasChanges, lessons };
+  return { cards, busy, failed, available, ask, act, dismiss: (kind: HelpKind) => setFailed(({ [kind]: _, ...rest }) => rest) };
 }
 
 export type HelpState = ReturnType<typeof useHelp>;
@@ -133,15 +143,86 @@ export function HelpMenu({ help, phone, onAsk }: { help: HelpState; phone: boole
   );
 }
 
+const cardMeta = (card: HelpCard) => (
+  <div className="help-meta muted small">
+    <time dateTime={card.at} title={fullTime(card.at)}>{timeAgo(card.at)}</time> · {costText(card.costUsd)} · not part of Claude's conversation
+  </div>
+);
+
 /** One answer in the chat: blue left border, heading, the answer, and its cost in small grey text. */
-export function HelpCardView({ card }: { card: HelpCard }) {
+export function HelpCardView({ card, help, onOpenTicket }: { card: HelpCard; help?: HelpState; onOpenTicket?: (id: string) => void }) {
+  if (card.kind === "lessons" && card.lessons?.length) {
+    const shown = card.lessons.filter((l) => l.done?.action !== "dismiss");
+    if (!shown.length) return null;
+    return (
+      <>
+        {shown.map((l, i) => (
+          <LessonCard key={l.id} lesson={l} meta={i === shown.length - 1 ? cardMeta(card) : null}
+            onAct={help ? (a) => help.act(card.id, l.id, a) : undefined} onOpenTicket={onOpenTicket} />
+        ))}
+      </>
+    );
+  }
   return (
     <div className="help-card">
       <h5>{heading(card.kind)}</h5>
       <Markdown text={card.text} />
-      <div className="help-meta muted small">
-        <time dateTime={card.at} title={fullTime(card.at)}>{timeAgo(card.at)}</time> · {costText(card.costUsd)} · not part of Claude's conversation
-      </div>
+      {cardMeta(card)}
+    </div>
+  );
+}
+
+/** How a lesson would stop the mistake, in plain words (/correct's order: structure, check, rule). */
+const LEVEL_TEXT: Record<Lesson["level"], string> = {
+  structure: "Best fix: change how the code is built so this can't happen",
+  check: "Best fix: an automatic check that catches it",
+  rule: "Best fix: a written rule Claude reads before each task",
+};
+
+/** "Suggested lesson": the mistake, the user's words, the fix, and its buttons (or what was done with it). */
+function LessonCard({ lesson: l, meta, onAct, onOpenTicket }: {
+  lesson: Lesson;
+  meta: React.ReactNode;
+  onAct?: (a: LessonAction) => Promise<void>;
+  onOpenTicket?: (id: string) => void;
+}) {
+  const [busy, setBusy] = useState<LessonAction | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async (a: LessonAction) => {
+    if (!onAct) return;
+    setBusy(a);
+    setErr(null);
+    try {
+      await onAct(a);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const rule = l.level === "rule";
+  return (
+    <div className="help-card lesson-card">
+      <h5>Suggested lesson</h5>
+      <p className="lesson-mistake">{l.mistake}</p>
+      {l.evidence && <blockquote className="lesson-quote">You said: “{l.evidence}”</blockquote>}
+      <div className="lesson-level muted small">{LEVEL_TEXT[l.level]}</div>
+      <p className="lesson-rule">{rule ? <i>“{l.rule}”</i> : l.rule}</p>
+      {l.done ? (
+        <div className="lesson-done" role="status">
+          {l.done.action === "rule" ? "✓ Added to the project's rules (the Lessons part of CLAUDE.md). Claude reads it on every new task."
+            : <>✓ Made a ticket in Backlog{l.done.ticketId && onOpenTicket && <>: <button className="link-btn" onClick={() => onOpenTicket(l.done!.ticketId!)}>open it</button></>}</>}
+        </div>
+      ) : onAct && (
+        <div className="help-actions">
+          {rule
+            ? <button className="btn small primary" disabled={!!busy} onClick={() => void run("rule")}>{busy === "rule" ? "Adding…" : "Add to project rules"}</button>
+            : <button className="btn small primary" disabled={!!busy} onClick={() => void run("ticket")}>{busy === "ticket" ? "Making it…" : "Make it a ticket"}</button>}
+          <button className="btn ghost small" disabled={!!busy} onClick={() => void run("dismiss")}>Dismiss</button>
+        </div>
+      )}
+      {err && <div className="lesson-err" role="alert">Couldn't do that: {err}</div>}
+      {meta}
     </div>
   );
 }
@@ -153,7 +234,7 @@ export function HelpPending({ help }: { help: HelpState }) {
       {help.busy.map((k) => (
         <div key={k} className="help-card" role="status">
           <h5>{heading(k)}</h5>
-          <div className="muted"><span className="spinner" /> {k === "recap" ? "Reading what happened…" : "Reading the changes…"}</div>
+          <div className="muted"><span className="spinner" /> {k === "recap" ? "Reading what happened…" : k === "lessons" ? "Looking at what you corrected…" : "Reading the changes…"}</div>
         </div>
       ))}
       {(Object.keys(help.failed) as HelpKind[]).filter((k) => !help.busy.includes(k)).map((k) => (

@@ -13,6 +13,7 @@ import { macBanner } from "./notify";
 import { type HostHuddle, ticketAttention, userWaitReason } from "./attention";
 import type { SessionSummary } from "./session";
 import { recallBlock } from "./recall";
+import { lessonsBlock } from "./lessons";
 import { chatPrompt, firstRunPrompt, freshSessionPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, setupNote, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
 import {
   childrenOf, DEFAULT_MAX_CONCURRENT, findCycle, isComplete, normalizeNeeds, planActive, planProblem, planStep, planTable, resolveDeps, wakeupCap,
@@ -1917,13 +1918,19 @@ export class Board {
     });
   }
 
-  /** "What we did before on this board": related past tickets for t's first prompt (see recall.ts), "" for none. */
+  /**
+   * "What we did before on this board": related past tickets for t's first prompt (see recall.ts), plus the project's
+   * saved lessons a run in a worktree can't see yet (lessons.ts); "" for none.
+   */
   private recall(slug: string, t: Ticket): string {
     const rows = this.store.listTickets(slug).map((o) => ({
       ticket: o,
       summary: this.store.aiComments(slug, o.id).findLast((c) => !BOARD_NOTE_RE.test(c.text))?.text ?? null,
     }));
-    return recallBlock(t, rows);
+    const profile = this.store.getProfile(slug);
+    const now = this.store.getTicket(slug, t.id) ?? t;
+    const lessons = profile ? lessonsBlock(profile.path, now.worktree ?? now.workdir ?? null) : "";
+    return [recallBlock(t, rows), lessons].filter(Boolean).join("\n\n");
   }
 
   /** Queues the ticket's work run: it starts now if a slot is free (dispatch), otherwise when one frees up. */

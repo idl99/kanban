@@ -63,7 +63,21 @@ export interface DiffFile {
 export type Workspace = "worktree" | "folder";
 
 /** "Help me understand" questions (src/server/explain.ts). */
-export type HelpKind = "recap" | "changes";
+export type HelpKind = "recap" | "changes" | "lessons";
+
+/** What the user did with a suggested lesson: added it to the project's rules, made it a ticket, or dismissed it. */
+export type LessonAction = "rule" | "ticket" | "dismiss";
+
+/** A "Learn from this ticket" lesson (src/server/lessons.ts), at the highest level that would stop the mistake. */
+export interface Lesson {
+  id: string;
+  mistake: string;
+  evidence: string;
+  level: "structure" | "check" | "rule";
+  rule: string;
+  title: string;
+  done?: { action: LessonAction; at: string; ticketId?: string };
+}
 
 /** One "Help me understand" answer, shown as a card in the ticket's chat. */
 export interface HelpCard {
@@ -73,6 +87,8 @@ export interface HelpCard {
   text: string;
   costUsd: number;
   model: string;
+  /** lessons: the suggested lessons (text then is a note, e.g. why there are none). */
+  lessons?: Lesson[];
 }
 
 export interface TicketDiff {
@@ -1148,9 +1164,12 @@ export const api = {
   /** "Say it simpler": one reply rewritten in plain words (a side call; saved, so the second time is free). */
   simplify: (slug: string, id: string, uuid: string) => req<{ text: string; cached: boolean }>("POST", `${t(slug, id)}/simplify`, { uuid }),
   /** "Help me understand": saved answer cards, the kinds being answered, and whether a recap has anything to tell. */
-  help: (slug: string, id: string) => req<{ cards: HelpCard[]; busy: HelpKind[]; recap: boolean }>("GET", `${t(slug, id)}/help`),
+  help: (slug: string, id: string) => req<{ cards: HelpCard[]; busy: HelpKind[]; recap: boolean; lessons: boolean }>("GET", `${t(slug, id)}/help`),
   /** A new "Help me understand" answer (a side call reading the ticket; its cost goes on the ticket). */
   askHelp: (slug: string, id: string, kind: HelpKind) => req<HelpCard>("POST", `${t(slug, id)}/help`, { kind }),
+  /** A suggested lesson: add it to the project's rules, make it a linked Backlog ticket, or dismiss it; the updated card. */
+  lesson: (slug: string, id: string, card: string, lesson: string, action: LessonAction) =>
+    req<HelpCard>("POST", `${t(slug, id)}/lesson`, { card, lesson, action }),
   /** One subagent of the ticket's conversation, with all of its steps. */
   agent: (slug: string, id: string, toolUseId: string) => req<AgentInfo>("GET", `${t(slug, id)}/agent/${encodeURIComponent(toolUseId)}`),
   /** A tool call's full input and output (main conversation or a subagent's). */

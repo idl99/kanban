@@ -39,7 +39,8 @@ import { UpdateChecker } from "./update";
 import { SpendIndex } from "./spend";
 import { makeSideCaller, readSideSpend, type SideCaller } from "./side-call";
 import { Simplifier, SimplifyError } from "./simplify";
-import { changesPrompt, HELP_KINDS, Helper, HelpError, recapAvailable, recapPrompt, type HelpKind } from "./explain";
+import { changesPrompt, HELP_KINDS, Helper, HelpError, newId, recapAvailable, recapPrompt, type HelpKind } from "./explain";
+import { addProjectRule, corrections, hasCorrections, LESSON_ACTIONS, lessonsAvailable, lessonsPrompt, LESSONS_SYSTEM, parseLessons, projectRules, type LessonAction } from "./lessons";
 import { ClaudeLogIndex, readWindows, recordWindow, ticketRuns, ticketUsage, UsageCache, windowsNeeded } from "./ticket-usage";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
@@ -1194,7 +1195,10 @@ export function createServer(deps: ServerDeps) {
       // "Help me understand": the saved answer cards, the ones being worked out, and whether a recap has anything to tell.
       const t = store.getTicket(slug, id)!;
       const entries = (t.sessionId ? sessions.get(t.sessionId)?.entries : null) ?? [];
-      return json({ cards: helper.cards(slug, id), busy: helper.busy(slug, id), recap: recapAvailable(entries) });
+      return json({
+        cards: helper.cards(slug, id), busy: helper.busy(slug, id), recap: recapAvailable(entries),
+        lessons: lessonsAvailable(t, entries, store.listTickets(slug)),
+      });
     }
     if (action === "help" && m === "POST") {
       // A side call answers from the conversation and the changes, reading the ticket's folder; the session never sees it.
@@ -1204,7 +1208,21 @@ export function createServer(deps: ServerDeps) {
       const t = store.getTicket(slug, id)!;
       const entries = (t.sessionId ? sessions.get(t.sessionId)?.entries : null) ?? [];
       let prompt: string;
-      if (kind === "recap") {
+      let opts = {};
+      if (kind === "lessons") {
+        if (t.status !== "review" && t.status !== "done") throw new HttpError(400, "lessons come once the ticket is in Review or Done");
+        const c = corrections(t, entries, store.listTickets(slug));
+        if (!hasCorrections(c)) throw new HttpError(400, "you haven't corrected anything on this ticket");
+        prompt = lessonsPrompt({ ticket: t, entries, corrections: c, existing: projectRules(profile.path) });
+        opts = {
+          system: LESSONS_SYSTEM,
+          finish: (text: string) => {
+            const r = parseLessons(text, newId);
+            if (!r) throw new HelpError(502, "Claude's answer wasn't a list of lessons; try again");
+            return { text: r.lessons.length ? "" : r.note ? `Nothing worth a rule. ${r.note}` : "Nothing worth a rule.", lessons: r.lessons };
+          },
+        };
+      } else if (kind === "recap") {
         if (!recapAvailable(entries)) throw new HttpError(400, "nothing happened since your last message");
         const findings = huddles.list(slug, id).flatMap((h) => h.findings);
         prompt = recapPrompt({ ticket: t, entries, findings, running: board.isRunning(slug, id) });
@@ -1215,10 +1233,37 @@ export function createServer(deps: ServerDeps) {
       }
       const cwd = t.worktree ?? t.workdir ?? (t.baseSha ? profile.path : null);
       try {
-        return json(await helper.ask(slug, id, kind, prompt, cwd));
+        return json(await helper.ask(slug, id, kind, prompt, cwd, opts));
       } catch (err) {
         if (err instanceof HelpError) throw new HttpError(err.status, err.message);
         throw err;
+      }
+    }
+    if (action === "lesson" && m === "POST") {
+      // A suggested lesson: add it to the project's rules (its CLAUDE.md, in the board's folder), make it a Backlog
+      // ticket linked to this one, or dismiss it. The text comes from the saved card, never from the request.
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "lessons are the user's click, not a board run's");
+      const b = (await body(req)) ?? {};
+      const what = b.action as LessonAction;
+      if (!LESSON_ACTIONS.includes(what)) throw new HttpError(400, `action must be one of: ${LESSON_ACTIONS.join(", ")}`);
+      try {
+        const card = await helper.lesson(slug, id, String(b.card ?? ""), String(b.lesson ?? ""), async (l) => {
+          const at = new Date().toISOString();
+          if (what === "rule") {
+            addProjectRule(profile.path, l.rule);
+            return { action: what, at };
+          }
+          if (what === "ticket") {
+            const body = `${l.rule}\n\n**Why:** ${l.mistake}${l.evidence ? `\n\n**What the user said:** "${l.evidence}"` : ""}`;
+            const nt = await board.followUpTicket(slug, id, { title: l.title, body });
+            return { action: what, at, ticketId: nt.id };
+          }
+          return { action: what, at };
+        });
+        return json(card);
+      } catch (err) {
+        if (err instanceof HelpError) throw new HttpError(err.status, err.message);
+        throw new HttpError(400, (err as Error).message);
       }
     }
     if (action === "agent" && parts.length === 6 && m === "GET") {
