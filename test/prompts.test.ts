@@ -150,6 +150,17 @@ test("run prompts and planning chats ask for plain, filler-free user-facing text
   }
 });
 
+test("runs copy files they ask the user to review into Outputs; every prompt asks for paths in backticks", () => {
+  const fresh = { repo: "remote" as const, linked: false, baseBranch: "main", lastResult: null, comments: [], outputDir: "/o" };
+  for (const p of [firstRunPrompt(ticket, { repo: "remote" as const, outputDir: "/o" }), resumePrompt(ticket, [], "/o"), chatPrompt(ticket, "hi", "act", "/o"), freshSessionPrompt(ticket, fresh)]) {
+    expect(p).toContain("When you ask the user to read or review a file, also copy it into /o");
+    expect(p).toContain("write its path in backticks");
+  }
+  const planning = chatPrompt(ticket, "hi", "refine", "/o");
+  expect(planning).toContain("write its path in backticks");
+  expect(planning).not.toContain("also copy it into");
+});
+
 test("planning chats play back the goal and shape tickets like an expert", () => {
   const p = chatPrompt({ ...ticket, mode: "auto" } as Ticket, "", "refine", "/o");
   expect(p).toContain("Before your first questions or proposal, restate in 1-2 sentences what the user is really after");

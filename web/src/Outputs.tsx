@@ -83,7 +83,7 @@ if(on)d.style.zoom=String(Math.max(vw/w,0.6))}
 var t;function later(){clearTimeout(t);t=setTimeout(fit,60)}
 addEventListener("load",fit);addEventListener("resize",later);addEventListener("click",later,true);fit()})()</script>`;
 
-const withFit = (html: string) => html + FIT_SCRIPT;
+export const withFit = (html: string) => html + FIT_SCRIPT;
 
 /**
  * Claude-written HTML only ever runs in an opaque-origin frame (sandbox without allow-same-origin), so it can't

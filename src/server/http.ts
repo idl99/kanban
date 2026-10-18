@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, isAbsolute, join, normalize } from "node:path";
+import { basename, isAbsolute, join, normalize, resolve } from "node:path";
 import { runArtifactJob, type ArtifactJob, type ArtifactOutcome } from "./artifact";
 import { ConflictError, recoveryFor, type Board } from "./board";
 import { FollowUpError } from "./followup";
@@ -24,7 +24,7 @@ import { BugReportError, draftReport, submitReport, type BugBlockId, type BugSou
 import {
   AttachmentError, attachmentFile, attachmentType, cleanFileName, IMAGE_TYPES, opensInline, saveAttachment, UNSUPPORTED, uploadExt,
 } from "./attachments";
-import { FileError, listDir, openWithSystem, readFileForView } from "./files";
+import { FileError, findInRoots, listDir, openWithSystem, readFileForView, type FileRoot } from "./files";
 import { McpError, McpManager } from "./mcp";
 import { Notifier } from "./notify";
 import { PushService } from "./push";
@@ -135,6 +135,31 @@ const OUTPUT_IMAGE_TYPES: Record<string, string> = {
   ...Object.fromEntries(Object.entries(IMAGE_TYPES).map(([t, e]) => [e, t])),
   jpeg: "image/jpeg",
 };
+
+/** Plain text + sandbox: files are written by Claude and must never run as HTML on this origin.
+ * Only raster images get their real type so a viewer can preview them; SVG stays text (it can carry scripts). */
+function rawFile(file: string, download: boolean): Response {
+  const image = OUTPUT_IMAGE_TYPES[file.slice(file.lastIndexOf(".") + 1).toLowerCase()];
+  return new Response(Bun.file(file), {
+    headers: {
+      "content-type": image ?? "text/plain; charset=utf-8",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "sandbox",
+      ...(download ? { "content-disposition": attachmentHeader(basename(file)) } : {}),
+    },
+  });
+}
+
+/** Folders a ticket's chat may point at files in, in lookup order: its own copy of the project first. */
+function fileRoots(profile: Profile, t: Ticket, outputs: string): FileRoot[] {
+  const own = t.worktree ?? t.workdir;
+  return [
+    // A ticket working in the project folder itself has no copy of its own.
+    ...(own && resolve(own) !== resolve(profile.path) ? [{ name: "ticket" as const, dir: own }] : []),
+    { name: "project", dir: profile.path },
+    { name: "outputs", dir: outputs },
+  ];
+}
 
 /**
  * Which listener a request came in on. local: the board's own port, for this Mac. remote: a second loopback port that
@@ -1158,18 +1183,31 @@ export function createServer(deps: ServerDeps) {
       if (parts.length === 5) return json(store.listOutputs(slug, id));
       const file = store.outputPath(slug, id, parts.slice(5).join("/"));
       if (!file) throw new HttpError(404, "output not found");
-      const download = url.searchParams.get("download") === "1" ? { "content-disposition": attachmentHeader(basename(file)) } : {};
-      // Plain text + sandbox: files are written by Claude and must never run as HTML on this origin.
-      // Only raster images get their real type so the viewer can preview them; SVG stays text (it can carry scripts).
-      const image = OUTPUT_IMAGE_TYPES[file.slice(file.lastIndexOf(".") + 1).toLowerCase()];
-      return new Response(Bun.file(file), {
-        headers: {
-          "content-type": image ?? "text/plain; charset=utf-8",
-          "x-content-type-options": "nosniff",
-          "content-security-policy": "sandbox",
-          ...download,
-        },
-      });
+      return rawFile(file, url.searchParams.get("download") === "1");
+    }
+    // /tickets/:id/find-files { paths } — which file paths a chat message mentions exist, so they can be opened.
+    // /tickets/:id/file?path= — one of them, read only (?raw=1 the bytes, for images and PDFs). Looked for in the
+    // ticket's copy of the folder, then the project folder, then the ticket's outputs; nothing outside them.
+    if (action === "find-files" && m === "POST") {
+      const roots = fileRoots(profile, store.getTicket(slug, id)!, store.outputsPath(slug, id));
+      const paths = strings((await body(req)).paths)?.slice(0, 200) ?? [];
+      const found: Record<string, { root: string; rel: string }> = {};
+      for (const p of paths) {
+        const f = findInRoots(roots, p);
+        if (f) found[p] = { root: f.root, rel: f.rel };
+      }
+      return json({ found });
+    }
+    if (action === "file" && m === "GET") {
+      const f = findInRoots(fileRoots(profile, store.getTicket(slug, id)!, store.outputsPath(slug, id)), url.searchParams.get("path") ?? "");
+      if (!f) throw new HttpError(404, "file not found in this ticket's folders");
+      if (url.searchParams.get("raw") === "1") return rawFile(f.file, url.searchParams.get("download") === "1");
+      try {
+        return json({ ...readFileForView(f.dir, f.rel), root: f.root, dir: f.dir });
+      } catch (e) {
+        if (e instanceof FileError) throw new HttpError(e.status, e.message);
+        throw e;
+      }
     }
     // The Changes tab: the worktree (committed, uncommitted and untracked) against its merge-base with the base branch;
     // a ticket working in the board's folder itself, that folder against its HEAD at the ticket's first run.

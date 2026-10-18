@@ -1,5 +1,6 @@
 import { closeSync, openSync, readdirSync, readSync, realpathSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, sep } from "node:path";
 
 export class FileError extends Error {
   constructor(public status: number, message: string) {
@@ -115,4 +116,51 @@ export function readFileForView(root: string, rel: string): FileContent {
   }
   out.content = buf.toString("utf8");
   return out;
+}
+
+/** A folder a chat message's file paths may point into, e.g. the ticket's copy of the project. */
+export interface FileRoot {
+  name: "ticket" | "project" | "outputs";
+  dir: string;
+}
+
+export interface FoundFile {
+  root: FileRoot["name"];
+  /** Absolute folder the file is in the root of. */
+  dir: string;
+  /** Relative to `dir`, "/"-separated. */
+  rel: string;
+  /** Absolute real path. */
+  file: string;
+}
+
+/**
+ * Finds a file a message mentions: an absolute path (or `~/...`) inside one of the roots, or a path relative to the
+ * first root that holds it. null when it is missing, a folder, has `..` or escapes every root (symlinks included).
+ */
+export function findInRoots(roots: FileRoot[], written: string, home = homedir()): FoundFile | null {
+  let p = written.trim();
+  if (!p || p.includes("\0") || p.split(/[/\\]/).includes("..")) return null;
+  if (p.startsWith("~/")) p = join(home, p.slice(2));
+  const seen = new Set<string>();
+  for (const root of roots) {
+    let realRoot: string;
+    try {
+      realRoot = realpathSync(root.dir);
+    } catch {
+      continue;
+    }
+    if (seen.has(realRoot)) continue;
+    seen.add(realRoot);
+    let file: string;
+    try {
+      file = isAbsolute(p) ? realpathSync(p) : resolveInside(realRoot, p.replace(/^\.\//, ""));
+      if (file !== realRoot && !file.startsWith(realRoot + sep)) continue;
+      if (!statSync(file).isFile()) continue;
+    } catch {
+      continue;
+    }
+    return { root: root.name, dir: realRoot, rel: relative(realRoot, file).split(sep).join("/"), file };
+  }
+  return null;
 }

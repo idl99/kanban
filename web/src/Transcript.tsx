@@ -1,8 +1,10 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { useEffect, useMemo, useRef } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, copy, type ActivityEntry } from "./api";
 import { ATTACHMENT_SRC, fileHref, fileKind, formatSize, opensInline } from "./attachText";
+import { FileLinkContext } from "./fileLinkContext";
+import { codePath, textPaths } from "./filePaths";
 import { opensNewTab } from "./links";
 import { sourceLabel, splitCommandMentions, type SlashCommand } from "./slashText";
 
@@ -27,7 +29,7 @@ const PURIFY = {
 
 const IMAGE_NAME = /\.(?:png|jpg|gif|webp)$/;
 
-function thumbnails(html: string, commands?: SlashCommand[] | null, handles?: string[]): string {
+function thumbnails(html: string, commands?: SlashCommand[] | null, handles?: string[], files?: Set<string>): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
   if (commands?.length) mentionChips(doc, commands);
   if (handles?.length) handleChips(doc, handles);
@@ -45,8 +47,71 @@ function thumbnails(html: string, commands?: SlashCommand[] | null, handles?: st
     a.setAttribute("rel", "noopener noreferrer");
   });
   fileCards(doc);
+  if (files?.size) fileChips(doc, files);
   copyBars(doc);
   return doc.body.innerHTML;
+}
+
+/** Inline code (not code blocks) and prose outside links, where file paths are looked for. */
+function pathSpots(doc: Document) {
+  const codes = [...doc.querySelectorAll("code")].filter((c) => !c.closest("pre, a"));
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  const texts: Text[] = [];
+  while (walker.nextNode()) {
+    const n = walker.currentNode as Text;
+    if (n.nodeValue?.includes("/") && !n.parentElement?.closest("code, pre, a")) texts.push(n);
+  }
+  return { codes, texts };
+}
+
+/** File paths a rendered message mentions, as written. */
+function pathsIn(html: string): string[] {
+  const { codes, texts } = pathSpots(new DOMParser().parseFromString(html, "text/html"));
+  const out = new Set<string>();
+  for (const c of codes) {
+    const p = codePath(c.textContent ?? "");
+    if (p) out.add(p);
+  }
+  for (const n of texts) for (const m of textPaths(n.nodeValue ?? "")) out.add(m.path);
+  return [...out];
+}
+
+/** Paths of files that exist become chips that open the file (FileViewer.tsx). */
+function fileChips(doc: Document, files: Set<string>) {
+  const chip = (path: string, content: Node) => {
+    const a = doc.createElement("a");
+    a.className = "path-chip";
+    a.href = "#";
+    a.dataset.path = path;
+    a.title = `Open ${path}`;
+    const icon = doc.createElement("span");
+    icon.className = "path-chip-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "📄";
+    a.append(icon, content);
+    return a;
+  };
+  const { codes, texts } = pathSpots(doc);
+  for (const c of codes) {
+    const p = codePath(c.textContent ?? "");
+    if (!p || !files.has(p)) continue;
+    const a = chip(p, doc.createTextNode(""));
+    c.replaceWith(a);
+    a.append(c);
+  }
+  for (const node of texts) {
+    const text = node.nodeValue ?? "";
+    const hits = textPaths(text).filter((m) => files.has(m.path));
+    if (!hits.length) continue;
+    const frag = doc.createDocumentFragment();
+    let last = 0;
+    for (const m of hits) {
+      frag.append(text.slice(last, m.at), chip(m.path, doc.createTextNode(m.path)));
+      last = m.at + m.path.length;
+    }
+    frag.append(text.slice(last));
+    node.replaceWith(frag);
+  }
 }
 
 /** Code blocks get a "Copy text" bar underneath. Added after sanitizing, so PURIFY's button ban doesn't strip it. */
@@ -194,20 +259,35 @@ function handleChips(doc: Document, handles: string[]) {
 
 /** `commands`: `/name` mentions of these render as chips (ticket descriptions). `handles`: `@handle` mentions (huddles). */
 export function Markdown({ text, commands, handles }: { text: string; commands?: SlashCommand[] | null; handles?: string[] }) {
-  const html = useMemo(
-    () => thumbnails(DOMPurify.sanitize(marked.parse(text, { async: false, breaks: true }) as string, PURIFY), commands, handles),
-    [text, commands, handles?.join(" ")],
-  );
+  const links = useContext(FileLinkContext);
+  const clean = useMemo(() => DOMPurify.sanitize(marked.parse(text, { async: false, breaks: true }) as string, PURIFY), [text]);
+  // Inside a ticket, paths of files that exist become chips; they show once the board says which exist.
+  const wanted = useMemo(() => (links ? pathsIn(clean) : []), [clean, links]);
+  const [files, setFiles] = useState<Set<string> | undefined>();
+  useEffect(() => {
+    if (!links || !wanted.length) return setFiles(undefined);
+    let live = true;
+    void links.find(wanted).then((s) => { if (live) setFiles(s.size ? s : undefined); });
+    return () => { live = false; };
+  }, [links, wanted.join("\n")]);
+  const html = useMemo(() => thumbnails(clean, commands, handles, files), [clean, commands, handles?.join(" "), files]);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => fillSizes(ref.current), [html]);
   return (
     <div ref={ref} className="md" dangerouslySetInnerHTML={{ __html: html }}
-      onDoubleClick={(e) => { if ((e.target as HTMLElement).closest(".code-copy")) e.stopPropagation(); }}
+      onDoubleClick={(e) => { if ((e.target as HTMLElement).closest(".code-copy, .path-chip")) e.stopPropagation(); }}
       onClick={(e) => {
         const bar = (e.target as HTMLElement).closest<HTMLButtonElement>(".code-copy");
         if (bar) {
           e.stopPropagation(); // e.g. a click on the ticket description opens its editor
           void copyCode(bar);
+          return;
+        }
+        const chip = (e.target as HTMLElement).closest<HTMLElement>(".path-chip");
+        if (chip && links) {
+          e.preventDefault();
+          e.stopPropagation();
+          links.open(chip.dataset.path!);
           return;
         }
         const img = e.target as HTMLElement;

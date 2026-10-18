@@ -2553,3 +2553,19 @@ button.tag-chip:hover { border-color: currentColor; }
   .help-sheet .help-item b { font-size: 15px; }
   .help-sheet .help-item span { font-size: 13px; }
 }
+
+/* File paths in chat that exist in the ticket's folders: tap to open (FileViewer.tsx). */
+.md a.path-chip {
+  display: inline; padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 6px;
+  background: var(--accent-soft); color: var(--accent); text-decoration: none; overflow-wrap: anywhere; cursor: pointer;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+}
+.md a.path-chip:hover { border-color: var(--accent); }
+.md a.path-chip code { background: none; padding: 0; color: inherit; font-size: 0.92em; }
+.md a.path-chip:not(:has(code)) { font-family: var(--mono); font-size: 0.88em; }
+.path-chip-icon { margin-right: 3px; font-size: 0.9em; }
+.file-viewer .output-back { padding: 0 10px; }
+.file-viewer-where {
+  flex: none; padding: 8px 14px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

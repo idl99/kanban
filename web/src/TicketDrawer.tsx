@@ -40,6 +40,7 @@ import { StarToggle } from "./StarToggle";
 import { usePhone } from "./usePhone";
 import { toast } from "./toast";
 import { FollowUpChip } from "./FollowUpChip";
+import { FileLinksProvider } from "./FileViewer";
 
 // v2: widths saved under the old 80% default are dropped once so the new default shows.
 const WIDTH_KEY = "ckanban.panelWidth.v2";
@@ -684,6 +685,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
     </div>
   );
   return (
+    <FileLinksProvider slug={slug} ticketId={ticket.id} panel={panelRef}>
     <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <aside ref={panelRef} className={`panel ${dragging ? "resizing" : ""} ${slideIn ? "" : "no-slide"}`} role="dialog" aria-modal="true" aria-label={ticket.title} style={{ width }} tabIndex={-1}>
         <div className="drawer-resize" role="separator" aria-orientation="vertical" aria-label="Resize panel" tabIndex={0}
@@ -890,5 +892,6 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
         )}
       </aside>
     </div>
+    </FileLinksProvider>
   );
 }

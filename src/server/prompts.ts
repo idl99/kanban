@@ -184,6 +184,13 @@ const AFTER_ANSWERS = `If you were interviewing the user and have not started th
 
 ${QUESTIONS_FORMAT}`;
 
+/** Paths in backticks become tap-to-open links in the chat (FileViewer.tsx), but phones only see what's in Outputs easily. */
+const FILE_LINK_RULE = "When you point the user to a file, write its path in backticks: the board turns paths of files that exist into a link that opens the file, also on a phone.";
+
+function reviewFileRule(outputDir: string): string {
+  return `When you ask the user to read or review a file, also copy it into ${outputDir} (keep the original where it is) and say it is in the Outputs tab. ${FILE_LINK_RULE}`;
+}
+
 function deliverableRule(outputDir: string): string {
   return `# Deliverables
 - Outputs folder for this ticket: ${outputDir}
@@ -191,6 +198,7 @@ function deliverableRule(outputDir: string): string {
 - Quantify when you can reach real data (code, logs, analytics, cost dashboards, docs). Say where each number comes from and label estimates as estimates.
 - Judge options against explicit criteria (e.g. value, cost, effort, risk) and end with concrete next steps.
 - If you also publish the deliverable somewhere (e.g. as an artifact or doc), include the link in your summary.
+- ${reviewFileRule(outputDir)}
 - Code changes still belong in the repository, not in the outputs folder. Never put copies of the project, installed dependencies or build output there; use a temporary folder for those.`;
 }
 
@@ -322,7 +330,7 @@ export function resumePrompt(t: Ticket, newComments: Comment[], outputDir: strin
 # User feedback since last run
 ${feedback}
 
-${t.mode === "interview" ? `${t.interviewed ? AFTER_ANSWERS : INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}Continue working on the ticket, addressing the feedback. ${repo === "remote" && !inPlace ? "If a pull request already exists, push new commits to the same branch to update it." : landRule(repo, inPlace || !canCommit(repo), false, home)} Update deliverables in ${outputDir} rather than creating duplicates. ${FOLLOW_UP_RULE} ${PLAIN_WORDS}${autoSection(t, autoHuddles, repo)}
+${t.mode === "interview" ? `${t.interviewed ? AFTER_ANSWERS : INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}Continue working on the ticket, addressing the feedback. ${repo === "remote" && !inPlace ? "If a pull request already exists, push new commits to the same branch to update it." : landRule(repo, inPlace || !canCommit(repo), false, home)} Update deliverables in ${outputDir} rather than creating duplicates. ${reviewFileRule(outputDir)} ${FOLLOW_UP_RULE} ${PLAIN_WORDS}${autoSection(t, autoHuddles, repo)}
 
 ${targetDesignRule(outputDir)}${CHROME_RULE}${artifactRule(artifacts)}
 
@@ -444,6 +452,7 @@ How to help:
 - Interview the user about what is still unclear: goal and why, who it is for, scope (must-haves vs nice-to-haves), constraints, how we know it's done. Ask only what matters for this ticket, in small rounds.
 - When you know enough (or the user asks), propose the improved ticket. After the user applies it they will move it to Ready and Claude will work on it autonomously, so make it self-contained. Shape it the way a top expert would: drop constraints that don't serve the goal, leave the user's choices open, and put one outside check that the result is right in Acceptance criteria. Don't narrate this framing.
 - ${WRITING_RULE}
+- ${FILE_LINK_RULE}
 - Otherwise reply naturally and briefly, like in a normal chat.
 - Tags: if the ticket has none and one clearly fits (prefer tags the board already uses), you may suggest 1-3 with \`suggest_tags\`; the user keeps or drops them.
 - Managing the board: ONLY when the user asks for it in their message (never on your own initiative), you may change other tickets on this board with the ckanban tools: move_ticket, update_ticket, comment_ticket, create_ticket, chat_ticket, stop_ticket, and adopt_tickets / plan_control to manage or run tickets from this ticket's plan. Every change is logged on the changed ticket. Say in your reply what you changed.
@@ -470,7 +479,7 @@ ${TEAMMATE_FORMAT}`)}`;
   return `${typed}
 
 ${context("", `(Sent from the kanban board's ticket chat for "${t.title}". The user reads your reply there, not in a terminal.)
-Act on the message as you would in an interactive session. ${inPlace && canCommit(repo) ? "You work in the project folder on its current branch: don't create or switch branches, commit only the files you change with a clear message, leave uncommitted changes you didn't make alone, and don't push unless the project's CLAUDE.md says to." : repo === "remote" ? "If a pull request already exists, push new commits to the same branch." : canCommit(repo) ? "This repo has no remote: commit locally and don't push; then merge this branch into the base branch in the project folder when that folder is clean and on it (as in your earlier instructions)." : "This folder has no version history yet: edit files in place and say which ones you changed."} Save research/writing deliverables in ${outputDir}. ${PLAIN_WORDS}
+Act on the message as you would in an interactive session. ${inPlace && canCommit(repo) ? "You work in the project folder on its current branch: don't create or switch branches, commit only the files you change with a clear message, leave uncommitted changes you didn't make alone, and don't push unless the project's CLAUDE.md says to." : repo === "remote" ? "If a pull request already exists, push new commits to the same branch." : canCommit(repo) ? "This repo has no remote: commit locally and don't push; then merge this branch into the base branch in the project folder when that folder is clean and on it (as in your earlier instructions)." : "This folder has no version history yet: edit files in place and say which ones you changed."} Save research/writing deliverables in ${outputDir}. ${reviewFileRule(outputDir)} ${PLAIN_WORDS}
 ${FOLLOW_UP_RULE}
 If the message only asks you to plan, audit, review, list ideas, propose or discuss, and no changes are wanted yet (e.g. "don't change anything yet"): do not modify any files, answer, and end your reply with <ckanban-move to="planning"/> on its own line. The board then moves the ticket to Planning, where the next steps get shaped before any work.
 If you need decisions from the user, ask with the ask_questions tool.

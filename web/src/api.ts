@@ -995,6 +995,21 @@ export class NotStarted extends Error {
 /** ParallelConfirm registers the dialog that answers ServerConfirm questions (null: unregister). */
 export function setServerConfirm(fn: typeof askConfirm) { askConfirm = fn; }
 
+/** Where a file mentioned in a chat was found: the ticket's copy of the folder, the project folder or Outputs. */
+export type FileRootName = "ticket" | "project" | "outputs";
+
+export interface TicketFile {
+  /** Relative to `dir`. */
+  path: string;
+  size: number;
+  /** null when the file is binary or too large to show. */
+  content: string | null;
+  binary: boolean;
+  tooLarge: boolean;
+  root: FileRootName;
+  dir: string;
+}
+
 async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
   const hasBody = method === "POST" || method === "PATCH" || method === "PUT";
   const r = await fetch(url, {
@@ -1151,6 +1166,13 @@ export const api = {
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
     return r.text();
   },
+  /** Which of these file paths (as written in a chat message) exist in the ticket's folders. */
+  findFiles: (slug: string, id: string, paths: string[]) =>
+    req<{ found: Record<string, { root: FileRootName; rel: string }> }>("POST", `${t(slug, id)}/find-files`, { paths }),
+  ticketFile: (slug: string, id: string, path: string) =>
+    req<TicketFile>("GET", `${t(slug, id)}/file?path=${encodeURIComponent(path)}`),
+  ticketFileUrl: (slug: string, id: string, path: string, download = false) =>
+    `${t(slug, id)}/file?raw=1${download ? "&download=1" : ""}&path=${encodeURIComponent(path)}`,
   createTicket: (slug: string, input: {
     title: string; body: string; status: Status; sessionId?: string; mode?: TicketMode; parentId?: string; planKey?: string; dependsOn?: string[];
     needs?: string[]; tags?: string[]; important?: boolean;

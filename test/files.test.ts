@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FileError, listDir, MAX_VIEW_BYTES, openWithSystem, readFileForView, resolveInside } from "../src/server/files";
+import { FileError, findInRoots, listDir, MAX_VIEW_BYTES, openWithSystem, readFileForView, resolveInside } from "../src/server/files";
 import { makeRepo, tempDir } from "./helpers";
 
 const status = (fn: () => unknown) => {
@@ -74,4 +74,39 @@ test("openWithSystem passes the real path as one argument and refuses paths outs
   expect(readFileSync(log, "utf8")).toBe(`${file}\n`);
   expect(status(() => openWithSystem(root, "../x", opener))).toBe(400);
   expect(status(() => openWithSystem(root, "missing", opener))).toBe(404);
+});
+
+test("findInRoots looks in the ticket's copy first, then the project, and never outside", () => {
+  const ticket = tempDir();
+  const project = tempDir();
+  const outside = tempDir();
+  const home = tempDir();
+  mkdirSync(join(ticket, "docs"));
+  writeFileSync(join(ticket, "docs", "review.md"), "# new");
+  mkdirSync(join(project, "docs"));
+  writeFileSync(join(project, "docs", "review.md"), "# old");
+  writeFileSync(join(project, "only.md"), "x");
+  writeFileSync(join(outside, "secret.md"), "x");
+  symlinkSync(outside, join(project, "link"));
+  mkdirSync(join(home, "notes"));
+  writeFileSync(join(home, "notes", "a.md"), "x");
+  const roots = [{ name: "ticket" as const, dir: ticket }, { name: "project" as const, dir: project }];
+  const real = (p: string) => readFileSync(p, "utf8");
+
+  const f = findInRoots(roots, "docs/review.md")!;
+  expect(f).toMatchObject({ root: "ticket", rel: "docs/review.md" });
+  expect(real(f.file)).toBe("# new");
+  expect(findInRoots(roots, "./only.md")).toMatchObject({ root: "project", rel: "only.md" });
+  expect(findInRoots(roots, join(project, "docs", "review.md"))).toMatchObject({ root: "project", rel: "docs/review.md" });
+  // Missing, folders, .., absolute paths and symlinks out of every root.
+  expect(findInRoots(roots, "docs/missing.md")).toBeNull();
+  expect(findInRoots(roots, "docs")).toBeNull();
+  expect(findInRoots(roots, "../../etc/passwd")).toBeNull();
+  expect(findInRoots(roots, "docs/../only.md")).toBeNull();
+  expect(findInRoots(roots, join(outside, "secret.md"))).toBeNull();
+  expect(findInRoots(roots, "link/secret.md")).toBeNull();
+  expect(findInRoots(roots, "/etc/hosts")).toBeNull();
+  // ~/ is the home folder, still only inside a root.
+  expect(findInRoots(roots, "~/notes/a.md", home)).toBeNull();
+  expect(findInRoots([...roots, { name: "outputs", dir: home }], "~/notes/a.md", home)).toMatchObject({ root: "outputs", rel: "notes/a.md" });
 });

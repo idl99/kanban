@@ -184,6 +184,46 @@ test("new tickets default to interview mode; outputs are served as sandboxed tex
   }
 });
 
+test("chat file paths: find-files says which exist, file reads them, nothing outside the folders", async () => {
+  const path = tempDir("ck-plain-");
+  mkdirSync(join(path, "docs"));
+  writeFileSync(join(path, "docs", "review.md"), "# Review\n- a\n");
+  writeFileSync(join(path, "page.html"), "<script>alert(1)</script>");
+  writeFileSync(join(path, "pic.png"), "png");
+  await fetch(`${base}/api/profiles`, json("POST", { name: "Paths", path }));
+  const t = (await (await fetch(`${base}/api/profiles/paths/tickets`, json("POST", { title: "t" }))).json()) as any;
+  writeFileSync(join(store.outputsDir("paths", t.id), "report.md"), "r");
+  const tk = `${base}/api/profiles/paths/tickets/${t.id}`;
+  const outside = join(tempDir(), "secret.md");
+  writeFileSync(outside, "s");
+  const r = await fetch(`${tk}/find-files`, json("POST", { paths: ["docs/review.md", "docs/missing.md", "../../etc/passwd", outside, "report.md", "docs"] }));
+  expect(((await r.json()) as any).found).toEqual({
+    "docs/review.md": { root: "project", rel: "docs/review.md" },
+    "report.md": { root: "outputs", rel: "report.md" },
+  });
+  const f = (await (await fetch(`${tk}/file?path=${encodeURIComponent("docs/review.md")}`)).json()) as any;
+  expect(f).toMatchObject({ path: "docs/review.md", content: "# Review\n- a\n", binary: false, tooLarge: false, root: "project" });
+  for (const bad of ["../../etc/passwd", outside, "/etc/hosts", "docs/missing.md"]) {
+    expect((await fetch(`${tk}/file?path=${encodeURIComponent(bad)}`)).status).toBe(404);
+    expect((await fetch(`${tk}/file?raw=1&path=${encodeURIComponent(bad)}`)).status).toBe(404);
+  }
+  for (const [name, type] of [["pic.png", "image/png"], ["page.html", "text/plain; charset=utf-8"]]) {
+    const res = await fetch(`${tk}/file?raw=1&path=${name}`);
+    expect(res.headers.get("content-type")).toBe(type);
+    expect(res.headers.get("content-security-policy")).toBe("sandbox");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  }
+  expect((await fetch(`${tk}/file?raw=1&download=1&path=pic.png`)).headers.get("content-disposition")).toContain("pic.png");
+  // A ticket working in the project folder has no copy of its own; one with a copy is read from there first.
+  store.updateTicket("paths", t.id, { workdir: path });
+  expect(((await (await fetch(`${tk}/file?path=docs/review.md`)).json()) as any).root).toBe("project");
+  const copyDir = tempDir();
+  mkdirSync(join(copyDir, "docs"));
+  writeFileSync(join(copyDir, "docs", "review.md"), "# Newer");
+  store.updateTicket("paths", t.id, { worktree: copyDir });
+  expect((await (await fetch(`${tk}/file?path=docs/review.md`)).json()) as any).toMatchObject({ root: "ticket", content: "# Newer" });
+});
+
 test("mockups can't be approved through the API any more", async () => {
   const path = tempDir("ck-plain-");
   await fetch(`${base}/api/profiles`, json("POST", { name: "Mocks", path }));
