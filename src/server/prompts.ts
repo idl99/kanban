@@ -259,7 +259,12 @@ export interface PromptContext {
   autoHuddles?: boolean;
   /** The board has "claude.ai artifacts" on: teach the artifact helper. */
   artifacts?: boolean;
+  /** Related past tickets of the board (recallBlock), "" or missing for none. */
+  recall?: string;
 }
+
+/** The recall block with the blank line that follows it, or nothing. */
+const recallSection = (recall?: string) => (recall ? `${recall}\n\n` : "");
 
 /** Tells a scheduled run where it came from, so it can read or refine its own schedule. */
 function scheduleNote(s: PromptContext["schedule"]): string {
@@ -284,7 +289,7 @@ export function firstRunPrompt(t: Ticket, ctx: PromptContext): string {
 
 ${t.body.trim() || "(no description)"}
 ${scheduleNote(ctx.schedule)}${comments.length ? `\n# User notes\n${comments.map((c) => `- ${c.text}`).join("\n")}\n` : ""}
-${interview ? `${INTERVIEW}\n\n` : ""}# Rules
+${recallSection(ctx.recall)}${interview ? `${INTERVIEW}\n\n` : ""}# Rules
 - ${whereRule(t, ctx.repo, !!ctx.linked, inPlace)}${t.parentId && ctx.repo === "remote" && !inPlace && !ctx.linked ? `
 - This ticket is part of a plan (planner ticket ${t.parentId}): earlier tickets of the plan may have landed on the remote base branch after this worktree was created. Before you start, \`git fetch\` and rebase this branch onto the remote base branch.` : t.parentId && ctx.repo === "local" && !inPlace && !ctx.linked ? `
 - This ticket is part of a plan (planner ticket ${t.parentId}): earlier tickets of the plan may have been merged into the local base branch after this worktree was created. Before you start, rebase this branch onto the local base branch (there is no remote to fetch from).` : ""}
@@ -334,6 +339,8 @@ export interface FreshContext {
   outputDir: string;
   autoHuddles?: boolean;
   artifacts?: boolean;
+  /** Related past tickets of the board (recallBlock), "" or missing for none. */
+  recall?: string;
 }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
@@ -362,7 +369,7 @@ ${comments}
 # Where things stand
 ${state}
 
-${t.mode === "interview" && !t.interviewed ? `${INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}# Rules
+${recallSection(ctx.recall)}${t.mode === "interview" && !t.interviewed ? `${INTERVIEW.replace("In this first run:", "Before continuing, in this run:")}\n\n` : ""}# Rules
 - ${landRule(ctx.repo, inPlace, true, ctx.home)}${ctx.linked && canCommit(ctx.repo) ? `
 - You are working in the main checkout of this project (not an isolated worktree): use a feature branch, never commit directly to the default branch.` : ""}
 - A missing git repository, remote or \`gh\` is never a reason to stop or report "blocked": work with what the folder has.
@@ -409,7 +416,7 @@ This ticket ${state}. Treat a new requirement as a follow-up: unless the user as
 `;
 }
 
-export function chatPrompt(t: Ticket, text: string, mode: ChatMode, outputDir: string, artifacts = false, repo: RepoKind = "remote", inPlace = false): string {
+export function chatPrompt(t: Ticket, text: string, mode: ChatMode, outputDir: string, artifacts = false, repo: RepoKind = "remote", inPlace = false, recall = ""): string {
   const typed = text.trim();
   if (mode === "refine") {
     const start = typed ? "" : `The user just moved this ticket to Planning and is waiting for you in the ticket chat. Start now:
@@ -425,7 +432,7 @@ Current ticket
 Title: ${t.title}${t.tags?.length ? `\nTags: ${t.tags.join(", ")}` : ""}
 Description:
 ${t.body.trim() || "(empty)"}
-${followUpRule(t)}
+${followUpRule(t)}${recall ? `\n${recall}\n` : ""}
 How to help:
 - Before your first questions or proposal, restate in 1-2 sentences what the user is really after and the problem behind it.
 - Interview the user about what is still unclear: goal and why, who it is for, scope (must-haves vs nice-to-haves), constraints, how we know it's done. Ask only what matters for this ticket, in small rounds.

@@ -12,6 +12,7 @@ import { saveMockups } from "./mockups";
 import { macBanner } from "./notify";
 import { type HostHuddle, ticketAttention, userWaitReason } from "./attention";
 import type { SessionSummary } from "./session";
+import { recallBlock } from "./recall";
 import { chatPrompt, firstRunPrompt, freshSessionPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, setupNote, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
 import {
   childrenOf, DEFAULT_MAX_CONCURRENT, findCycle, isComplete, normalizeNeeds, planActive, planProblem, planStep, planTable, resolveDeps, wakeupCap,
@@ -717,14 +718,14 @@ export class Board {
     let prompt = resume ?? this.withSetupNote(slug, t, profile, session, refine, localizeAttachments(run.chat?.raw
       ? run.chat.text
       : run.chat
-      ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir, !!profile.artifacts, session.repo, session.inPlace)
+      ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir, !!profile.artifacts, session.repo, session.inPlace, refine && !session.existed ? this.recall(slug, t) : "")
       : fresh
       ? this.freshPrompt(slug, t, session, outputDir)
       : t.runCount === 0 || !session.existed
       ? firstRunPrompt(t, {
         repo: session.repo, inPlace: session.inPlace, home: { folder: profile.path, baseBranch: profile.baseBranch }, linked: !!t.workdir, comments: t.workdir || t.runCount > 0 ? newComments : [], outputDir,
         schedule: t.scheduleId ? { id: t.scheduleId, name: this.store.getSchedule(slug, t.scheduleId)?.name ?? null, board: slug } : undefined,
-        autoHuddles: autoHuddlesOn(profile), artifacts: !!profile.artifacts,
+        autoHuddles: autoHuddlesOn(profile), artifacts: !!profile.artifacts, recall: this.recall(slug, t),
       })
       : resumePrompt(t, newComments, outputDir, autoHuddlesOn(profile), !!profile.artifacts, session.repo, session.inPlace, { folder: profile.path, baseBranch: profile.baseBranch }), this.store.attachmentsDir));
     // A slash command only runs when it is the whole message: Claude Code passes everything after the name to
@@ -1912,7 +1913,17 @@ export class Board {
     return freshSessionPrompt(t, {
       repo: session.repo, inPlace: session.inPlace, home: profile ? { folder: profile.path, baseBranch: profile.baseBranch } : undefined, linked: !!t.workdir, baseBranch: profile?.baseBranch || "main",
       lastResult: last?.text ?? null, comments: recent, outputDir, autoHuddles: autoHuddlesOn(profile), artifacts: !!profile?.artifacts,
+      recall: this.recall(slug, t),
     });
+  }
+
+  /** "What we did before on this board": related past tickets for t's first prompt (see recall.ts), "" for none. */
+  private recall(slug: string, t: Ticket): string {
+    const rows = this.store.listTickets(slug).map((o) => ({
+      ticket: o,
+      summary: this.store.aiComments(slug, o.id).findLast((c) => !BOARD_NOTE_RE.test(c.text))?.text ?? null,
+    }));
+    return recallBlock(t, rows);
   }
 
   /** Queues the ticket's work run: it starts now if a slot is free (dispatch), otherwise when one frees up. */
