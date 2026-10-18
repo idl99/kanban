@@ -111,6 +111,14 @@ export function isStopKey(e: Keys): boolean {
   return (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && !e.isComposing && e.key === ".";
 }
 
+export type DrawerTab = "ticket" | "chat" | "plan" | "huddle" | "changes" | "outputs" | "usage";
+
+/** The ticket panel's tabs, in order. Phones get a Ticket tab first (details and description), which the sidebar shows elsewhere. */
+export function drawerTabs({ phone, plan, changes }: { phone: boolean; plan: boolean; changes: boolean }): DrawerTab[] {
+  return (["ticket", "chat", "plan", "huddle", "changes", "outputs", "usage"] as const)
+    .filter((t) => (t === "ticket" ? phone : t === "plan" ? plan : t === "changes" ? changes : true));
+}
+
 /** [ / ] in the ticket panel: the visible tab `delta` steps away from the current one, wrapping around. */
 export function stepTab<T>(tabs: T[], current: T, delta: number): T | null {
   const at = stepBoard(tabs.length, tabs.indexOf(current), delta);

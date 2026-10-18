@@ -14,6 +14,9 @@ export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 /** The file picker's `accept`: images plus the file extensions. */
 export const ACCEPT = ["image/png", "image/jpeg", "image/gif", "image/webp", ...FILE_EXTS.map((e) => `.${e}`)].join(",");
 
+/** The phone's Photo button: images only, so phones open the photo gallery straight away instead of a Camera / Files sheet. */
+export const PHOTO_ACCEPT = "image/*";
+
 export const extOf = (name: string) => (name.includes(".") ? name.split(".").pop()!.toLowerCase() : "");
 
 export const isImageFile = (f: { name: string; type: string }) => IMAGE_TYPES.includes(f.type);

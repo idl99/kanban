@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { boardDigit, canStartFromProposal, cardDir, hintStep, isStopKey, isTyping, newTicketKey, nextStep, panelStep, stepBoard, stepCard, stepTab } from "../web/src/keynav";
+import { boardDigit, canStartFromProposal, cardDir, drawerTabs, hintStep, isStopKey, isTyping, newTicketKey, nextStep, panelStep, stepBoard, stepCard, stepTab } from "../web/src/keynav";
 
 test("cardDir maps J/K/H/L and arrows, ignores other keys", () => {
   expect(cardDir("j")).toBe("down");
@@ -151,4 +151,10 @@ test("stepTab cycles through the visible tabs and wraps", () => {
   // A tab that isn't shown (e.g. Plan after its children went away) starts from the first.
   expect(stepTab(tabs, "plan", 1)).toBe("chat");
   expect(stepTab([], "chat", 1)).toBeNull();
+});
+
+test("drawerTabs puts a Ticket tab first on phones only, and Plan / Changes only when they apply", () => {
+  expect(drawerTabs({ phone: false, plan: false, changes: false })).toEqual(["chat", "huddle", "outputs", "usage"]);
+  expect(drawerTabs({ phone: true, plan: false, changes: false })).toEqual(["ticket", "chat", "huddle", "outputs", "usage"]);
+  expect(drawerTabs({ phone: true, plan: true, changes: true })).toEqual(["ticket", "chat", "plan", "huddle", "changes", "outputs", "usage"]);
 });

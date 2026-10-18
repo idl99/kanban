@@ -800,7 +800,7 @@ body > .output-view.reader { position: fixed; }
 .desc-edit { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 2px 18px 14px; }
 .desc-edit .form-actions { flex: none; }
 .panel-body.details-closed { grid-template-columns: 0px minmax(0, 1fr); }
-.panel-body.details-closed .panel-details { border-right: 0; visibility: hidden; }
+.panel-body.details-closed > .panel-details { border-right: 0; visibility: hidden; }
 .sidebar-resize {
   position: absolute; top: 0; bottom: 0; left: var(--side-w, 340px); width: 10px; margin-left: -5px; cursor: col-resize; z-index: 3; touch-action: none;
 }
@@ -1737,6 +1737,8 @@ button.pill:hover { color: var(--text); }
 .desc-editor-foot { align-items: center; }
 .btn.small.desc-editor-pick { margin-left: auto; flex: none; padding: 2px 8px; font-size: 11.5px; }
 .bug-pick { display: flex; align-items: center; gap: 10px; margin-top: -4px; }
+/* Phones: Photo (gallery) and a paperclip for files, side by side */
+.image-pick-group { display: inline-flex; align-items: center; gap: 4px; flex: none; }
 .cmd-chip.mention { font-size: 0.92em; padding: 0 5px; cursor: help; white-space: nowrap; }
 
 /* Team tab (Team.tsx, HuddleTemplates.tsx): teammates, templates and the notes every teammate gets */
@@ -2203,8 +2205,17 @@ button.hd-mode:disabled { cursor: default; }
   .phone-back { width: 36px; height: 36px; }
   .phone-move .select-trigger { padding: 5px 10px; font-weight: 600; background: var(--surface-2); border-color: transparent; min-width: 0; }
   .panel-body.details-closed { grid-template-rows: minmax(0, 1fr); }
-  .panel-body.details-closed .panel-details { display: none; }
-  .panel-details { max-height: 50dvh; overflow-y: auto; }
+  /* Ticket tab (phones): the details sidebar as one full-height page that scrolls as a whole */
+  .panel-ticket { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+  .panel-ticket .panel-details { flex: 1 0 auto; max-height: none; overflow: visible; border: 0; }
+  .panel-ticket .details-pinned { max-height: none; overflow: visible; }
+  .panel-ticket .desc-scroll { flex: none; overflow: visible; }
+  .panel-ticket .section-head .btn { min-height: 36px; padding: 0 14px; font-size: 13px; }
+  /* editing: the editor takes the whole tab */
+  .panel-ticket.editing { overflow: hidden; }
+  .panel-ticket.editing .panel-details { flex: 1; min-height: 0; }
+  .panel-ticket.editing .details-pinned { display: none; }
+  .panel-ticket.editing .details-desc { border-top: 0; }
   .tabs { overflow-x: auto; scrollbar-width: none; padding: 0 8px; flex: none; }
   .tabs::-webkit-scrollbar, .col-jump::-webkit-scrollbar, .board::-webkit-scrollbar { display: none; }
   .tabs button { white-space: nowrap; padding: 10px 10px; flex: none; }
@@ -2218,11 +2229,11 @@ button.hd-mode:disabled { cursor: default; }
   .composer-foot { flex-wrap: wrap; row-gap: 8px; }
   .composer-hint { flex: 1 1 100%; }
   .composer-actions { flex: 1 1 100%; justify-content: flex-end; }
-  .composer-actions .image-pick { margin-right: auto; }
+  .composer-actions .image-pick-group { margin-right: auto; }
   .btn.image-pick, .btn.small.desc-editor-pick { min-height: 36px; padding-left: 12px; padding-right: 12px; font-size: 13px; }
 }
 
-/* Phone (≤720px): the description box footer is a row of tap buttons (Image, @ Snippet, / Skill; DescriptionEditor),
+/* Phone (≤720px): the description box footer is a row of tap buttons (Photo, File, @ Snippet, / Skill; DescriptionEditor),
    and New ticket puts Start planning on its own full-width row with Cancel and Create below. */
 @media (max-width: 720px) {
   .desc-editor-foot.phone { flex-wrap: wrap; gap: 2px 4px; padding: 4px 6px; overflow: visible; font-size: 14px; color: var(--text); }
@@ -2231,11 +2242,14 @@ button.hd-mode:disabled { cursor: default; }
     font: inherit; font-size: 14px; color: var(--text); display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
   }
   .desc-editor-foot .btn.image-pick.desc-editor-tool { background: var(--surface-2); }
+  .desc-editor-foot .desc-editor-tool:not(.image-pick) { padding: 0 6px; }
+  .image-pick-group .btn.image-pick { min-height: 40px; padding: 0 8px; }
+  .image-pick-group .btn.file-pick { min-width: 40px; justify-content: center; }
   .desc-editor-foot .desc-editor-tool:active { background: var(--surface-2); }
   .desc-editor-tool kbd { border: 0; background: none; padding: 0; font: 600 16px system-ui, sans-serif; color: var(--muted); }
   .desc-editor-status { font-size: 12.5px; color: var(--muted); padding: 0 6px; }
-  /* ticket panel: the details pane is capped and scrolls, so the editor keeps its full height instead of squeezing under Save */
-  .desc-edit .desc-editor.fill { flex: 1 0 auto; }
+  /* Ticket tab: the editor fills the tab, its text scrolling inside, with Save below */
+  .panel-ticket .desc-edit .desc-editor.fill { flex: 1; min-height: 0; }
 
   .form-actions.new-ticket-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .new-ticket-actions .btn { justify-content: center; min-height: 44px; }

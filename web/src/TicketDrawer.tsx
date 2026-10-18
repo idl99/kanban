@@ -16,7 +16,7 @@ import { DescriptionEditor, useDescriptionCommands } from "./DescriptionEditor";
 import { CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronUpIcon, CloseIcon, ExternalIcon, FileTextIcon, LinkIcon, SparkIcon } from "./icons";
 import { useImagePaste } from "./imagePaste";
 import { useFocusTrap, useLayer } from "./layers";
-import { isStopKey, isTyping, nextStep, panelStep, stepTab } from "./keynav";
+import { drawerTabs, isStopKey, isTyping, nextStep, panelStep, stepTab, type DrawerTab } from "./keynav";
 import { KeyHint } from "./KeyHint";
 import { MOD } from "./Shortcuts";
 import { complete, PlanFinished, planFinished, PlanPanel, PlanSummary } from "./PlanPanel";
@@ -240,7 +240,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const bodyInput = useRef<HTMLTextAreaElement>(null);
   // Body the current edit started from; the server rejects the save if the file changed meanwhile.
   const [baseBody, setBaseBody] = useState(ticket.body);
-  const [tabPick, setTab] = useState<"chat" | "plan" | "changes" | "huddle" | "outputs" | "usage">(tabRequest?.tab ?? "chat");
+  const phone = usePhone();
+  const [tabPick, setTab] = useState<DrawerTab>(tabRequest?.tab ?? "chat");
   // The huddle round picked in the Huddle tab (null: the default one); kept while the drawer stays on this ticket.
   const [huddlePick, setHuddlePick] = useState<string | null>(tabRequest?.huddleId ?? null);
   useEffect(() => {
@@ -254,13 +255,12 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   // The Plan tab exists only while the ticket has children; Changes while it has a worktree, or it ran in the board's
   // folder itself: its changes since the first run there, or (no version history) why they can't be shown.
   const inFolder = !ticket.worktree && !ticket.workdir && !ticket.branch && (ticket.runCount > 0 || !!ticket.sessionStarted || !!ticket.baseSha);
-  const tab = (tabPick === "plan" && !children.length) || (tabPick === "changes" && !ticket.worktree && !inFolder) ? "chat" : tabPick;
+  // The tabs shown, in order ([ and ] step through them); opening one refreshes what it shows, like a click.
+  const tabs = drawerTabs({ phone, plan: children.length > 0, changes: !!(ticket.worktree || inFolder) });
+  const tab = tabs.includes(tabPick) ? tabPick : "chat";
   const diffState = useTicketDiff(slug, ticket);
   const [outputCount, setOutputCount] = useState(0);
   const ticketUsage = useTicketUsage(slug, ticket.id);
-  // The tabs shown, in order ([ and ] step through them); opening one refreshes what it shows, like a click.
-  const tabs = (["chat", children.length > 0 && "plan", "huddle", (ticket.worktree || inFolder) && "changes", "outputs", "usage"] as const)
-    .filter((t): t is Exclude<typeof t, false | "" | undefined | null> => !!t);
   const openTab = (t: typeof tabPick) => {
     if (t === "changes") diffState.reload();
     else if (t === "outputs") setOutputFocus(null);
@@ -290,11 +290,9 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
       return true;
     }
   });
-  // Phones open on the chat full screen; Details is a toggle there and isn't remembered.
-  const phone = usePhone();
-  const [phoneDetails, setPhoneDetails] = useState(false);
+  // Phones open on the chat full screen; the details live in the Ticket tab there instead of a sidebar.
   const setDetailsOpen = (fn: (v: boolean) => boolean) => {
-    if (phone) return setPhoneDetails(fn);
+    if (phone) return setTab((t) => (t === "ticket" ? "chat" : "ticket"));
     setDetailsOpenState((v) => {
       const next = fn(v);
       try {
@@ -303,7 +301,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
       return next;
     });
   };
-  const detailsShown = phone ? phoneDetails : detailsOpen;
+  const detailsShown = !phone && detailsOpen;
   useEffect(() => {
     // ⌘\ / Ctrl+\ toggles the details column, like a sidebar.
     const onKey = (e: KeyboardEvent) => {
@@ -464,7 +462,10 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   // Only when the panel has the keyboard.
   const letterRef = useRef<(k: string) => boolean>(() => false);
   letterRef.current = (k) => {
-    if (k === "e" && !editing) return startEdit(), true;
+    if (k === "e" && !editing) {
+      if (phone) setTab("ticket");
+      return startEdit(), true;
+    }
     if (k === "r" && !working && !editing && ticket.status === "backlog") return setStatus("planning"), true;
     if (k === "s") return toggleStar(), true;
     if (k === "m") return openStatusPicker(), true;
@@ -513,6 +514,139 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   };
   const cancelEdit = () => { setBody(baseBody); setEditing(false); images.clearError(); };
 
+  // Status, actions, links and the description: a sidebar on wider screens, the Ticket tab on phones.
+  const details = (
+    <div className="panel-details">
+      <div className="details-pinned">
+        <div className="field-row">
+          <span className="field-key">Status</span>
+          <Select className="status-select" ariaLabel="Status" value={ticket.status} onChange={(s) => setStatus(s as Status)}
+            options={COLUMNS.map((c) => ({ value: c.id, label: c.label, hint: c.hint, disabled: c.id === "in_progress" && !working }))} />
+        </div>
+        {col && <p className="field-help">{col.claude && <SparkIcon className="icon spark" />}{col.hint}</p>}
+
+        <div className="action-stack">
+          {working && <button className="btn danger" disabled={stopping} onClick={stop} title={`Stop Claude (${MOD}.)`}>{stopping ? "Stopping…" : "Stop Claude"}<KeyHint keys="⌘." /></button>}
+          {finished && <PlanFinished ticket={ticket} total={children.length} onMoveToDone={() => setStatus("done")} onAddMore={addMoreTickets} />}
+          {!working && !finished && (ticket.status === "backlog" || ticket.status === "planning") && (
+            <button className={`btn ${att?.kind === "questions" || att?.kind === "proposal" ? "" : "primary"}`}
+              onClick={startWork} title={`${startTarget === "planning" ? "Claude interviews you first" : "Claude works on its own"} (${proposalPending ? `${MOD}⇧Enter applies the proposal and starts` : `${MOD}⇧Enter`})`}>
+              Start work{!proposalPending && <KeyHint keys="⌘⇧↵" />}
+            </button>
+          )}
+          {!working && ticket.status === "backlog" && (
+            <button className="btn" onClick={() => setStatus("planning")} title="Move to Planning: Claude interviews you (R)">
+              Refine with Claude<KeyHint keys={startTarget === "planning" && !proposalPending ? "⌘⇧↵ · R" : "R"} />
+            </button>
+          )}
+          {ticket.status === "review" && !finished && (
+            <button className={`btn ${ticket.prUrl ? "" : "primary"}`} onClick={() => setStatus("done")} title={`Mark done (${MOD}⇧Enter)`}>Mark done{!working && <KeyHint keys={proposalPending ? "⌘⇧↵ after Apply" : "⌘⇧↵"} />}</button>
+          )}
+          {ticket.prUrl && ticket.status !== "review" && (
+            <a className="btn icon-label" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer">Open PR #{ticket.prUrl.split("/").pop()} <ExternalIcon size={12} /></a>
+          )}
+        </div>
+        {ticket.prUrl && ticket.status === "review" && <PrBox profile={profile} ticket={ticket as Ticket & { prUrl: string }} onError={onError} />}
+
+        {ticket.parentId && (
+          <div className="field-row">
+            <span className="field-key" title="The planner ticket whose plan runs this one (it proposed or adopted it)">From</span>
+            {parent ? (
+              <button className="link-btn ticket-link" onClick={() => onOpenTicket(parent.id)}>{parent.title}</button>
+            ) : (
+              <span className="muted small">Planner ticket was deleted</span>
+            )}
+          </div>
+        )}
+        {ticket.branchedFrom && (
+          <div className="field-row">
+            <span className="field-key" title="This ticket started as a copy of that one's conversation and code">Branched from</span>
+            {branchedFrom ? (
+              <button className="link-btn ticket-link" onClick={() => onOpenTicket(branchedFrom.id)}>{branchedFrom.title}</button>
+            ) : (
+              <span className="muted small">Source ticket was deleted</span>
+            )}
+          </div>
+        )}
+        {branches.length > 0 && (
+          <div className="field-row">
+            <span className="field-key" title="Tickets branched from this one">Branches</span>
+            <span className="dep-list">
+              {branches.map((b) => <button key={b.id} className="link-btn ticket-link" onClick={() => onOpenTicket(b.id)}>{b.title}</button>)}
+            </span>
+          </div>
+        )}
+        {deps.length > 0 && (
+          <div className="field-row">
+            <span className="field-key" title="A running plan starts this ticket once these are done">Waits for</span>
+            <span className="dep-list">
+              {deps.map((d) => typeof d === "string"
+                ? <span key={d} className="muted small">{d} (missing)</span>
+                : <button key={d.id} className="link-btn ticket-link" onClick={() => onOpenTicket(d.id)}>{d.title}</button>)}
+            </span>
+          </div>
+        )}
+
+        {/* Rarely set by hand (plans and update_ticket set it), so only shown once the ticket has needs. */}
+        {!!ticket.needs?.length && <NeedsField slug={slug} ticket={ticket} onError={onError} />}
+
+        {children.length > 0 && <PlanSummary ticket={ticket} children={children} onOpen={() => setTab("plan")} />}
+
+        {(!!links.length || outputCount > 0 || hasUsage) && (
+          <div className="result-chips" aria-label="Results">
+            {usage && hasUsage && (
+              <button className="result-chip usage-chip" onClick={() => setTab("usage")}
+                title={usage.totals.pctCurrentWindow === null ? missingPctReason(usage) : "This ticket's ≈ share of the current 5h plan window, and its API-equivalent cost"}>
+                {usageChipText(usage)}
+              </button>
+            )}
+            {outputCount > 0 && (
+              <button className="result-chip" onClick={() => setTab("outputs")}><FileTextIcon size={13} /> {outputCount} output file{outputCount > 1 ? "s" : ""}</button>
+            )}
+            {links.slice(0, LINK_CHIPS).map((l) => (
+              <a key={l.url} className="result-chip" href={safeHref(l.url)} target="_blank" rel="noreferrer"
+                title={l.source === "share" ? `Share link: ${l.url}` : l.url}>
+                {l.source === "share" ? <LinkIcon size={12} /> : <ExternalIcon size={12} />} {l.label}
+              </a>
+            ))}
+            {links.length > LINK_CHIPS && (
+              <button className="result-chip" onClick={() => { setOutputFocus(null); setTab("outputs"); }} title="All links are in the Outputs tab">
+                +{links.length - LINK_CHIPS} more
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      <section className={`details-desc ${descScrolled && !editing ? "scrolled" : ""}`}>
+        <div className="section-head">
+          <h4>Description</h4>
+          {!editing && <button className="btn ghost small" onClick={startEdit} title="Edit the description (E)">Edit<KeyHint keys="E" /></button>}
+        </div>
+        {editing ? (
+          <div className="desc-edit">
+            <DescriptionEditor slug={slug} ticketId={ticket.id} value={body} setValue={setBody} images={images} inputRef={bodyInput} autoFocus fill
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) saveBody();
+                else if (e.key === "Escape" && !e.nativeEvent.isComposing) { e.preventDefault(); cancelEdit(); }
+              }} />
+            <div className="form-actions">
+              <button className="btn ghost" onClick={cancelEdit} title="Cancel (Esc)">Cancel<KeyHint keys="Esc" /></button>
+              <button className="btn primary" disabled={images.uploading} onClick={saveBody} title={`Save (${MOD}Enter)`}>{images.uploading ? "Uploading…" : "Save"}<KeyHint keys="⌘↵" /></button>
+            </div>
+          </div>
+        ) : (
+          <div className="desc-scroll" onScroll={(e) => setDescScrolled(e.currentTarget.scrollTop > 0)}>
+            {body.trim() ? (
+              <div className="body-view" onDoubleClick={startEdit}><Markdown text={body} commands={descCommands} /></div>
+            ) : (
+              <div className="muted small">No description yet. {ticket.status === "planning" ? "Claude can propose one in the chat." : ""}</div>
+            )}
+          </div>
+        )}
+      </section>
+    </div>
+  );
   return (
     <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <aside ref={panelRef} className={`panel ${dragging ? "resizing" : ""} ${slideIn ? "" : "no-slide"}`} role="dialog" aria-modal="true" aria-label={ticket.title} style={{ width }} tabIndex={-1}>
@@ -521,7 +655,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
 
         <header className="panel-head">
           {phone && <button className="icon-btn phone-back" onClick={onClose} aria-label="Back to the board"><ChevronLeftIcon size={22} /></button>}
-          <button className={`icon-btn sidebar-toggle ${detailsShown ? "on" : ""}`} onClick={() => setDetailsOpen((v) => !v)}
+          {!phone && <button className={`icon-btn sidebar-toggle ${detailsShown ? "on" : ""}`} onClick={() => setDetailsOpen((v) => !v)}
             aria-label={detailsShown ? "Hide details" : "Show details"} aria-pressed={detailsShown}
             title={`${detailsShown ? "Hide" : "Show"} details (⌘\\)`}>
             <KeyHint keys="⌘\" />
@@ -530,7 +664,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               <line x1="7" y1="3.5" x2="7" y2="14.5" stroke="currentColor" strokeWidth="1.5" />
               {detailsShown && <rect x="2.75" y="3.75" width="3.5" height="10.5" rx="1.5" fill="currentColor" opacity="0.35" />}
             </svg>
-          </button>
+          </button>}
           <StarToggle on={!!ticket.important} onChange={toggleStar} keyHint="S" />
           <input ref={titleRef} className="title-input" value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
             onKeyDown={(e) => {
@@ -581,136 +715,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
 
         <div ref={bodyRef} className={`panel-body ${detailsShown ? "" : "details-closed"} ${side.dragging ? "resizing" : ""}`}
           style={{ "--side-w": `${side.width}px` } as React.CSSProperties}>
-          <div className="panel-details">
-            <div className="details-pinned">
-              <div className="field-row">
-                <span className="field-key">Status</span>
-                <Select className="status-select" ariaLabel="Status" value={ticket.status} onChange={(s) => setStatus(s as Status)}
-                  options={COLUMNS.map((c) => ({ value: c.id, label: c.label, hint: c.hint, disabled: c.id === "in_progress" && !working }))} />
-              </div>
-              {col && <p className="field-help">{col.claude && <SparkIcon className="icon spark" />}{col.hint}</p>}
-
-              <div className="action-stack">
-                {working && <button className="btn danger" disabled={stopping} onClick={stop} title={`Stop Claude (${MOD}.)`}>{stopping ? "Stopping…" : "Stop Claude"}<KeyHint keys="⌘." /></button>}
-                {finished && <PlanFinished ticket={ticket} total={children.length} onMoveToDone={() => setStatus("done")} onAddMore={addMoreTickets} />}
-                {!working && !finished && (ticket.status === "backlog" || ticket.status === "planning") && (
-                  <button className={`btn ${att?.kind === "questions" || att?.kind === "proposal" ? "" : "primary"}`}
-                    onClick={startWork} title={`${startTarget === "planning" ? "Claude interviews you first" : "Claude works on its own"} (${proposalPending ? `${MOD}⇧Enter applies the proposal and starts` : `${MOD}⇧Enter`})`}>
-                    Start work{!proposalPending && <KeyHint keys="⌘⇧↵" />}
-                  </button>
-                )}
-                {!working && ticket.status === "backlog" && (
-                  <button className="btn" onClick={() => setStatus("planning")} title="Move to Planning: Claude interviews you (R)">
-                    Refine with Claude<KeyHint keys={startTarget === "planning" && !proposalPending ? "⌘⇧↵ · R" : "R"} />
-                  </button>
-                )}
-                {ticket.status === "review" && !finished && (
-                  <button className={`btn ${ticket.prUrl ? "" : "primary"}`} onClick={() => setStatus("done")} title={`Mark done (${MOD}⇧Enter)`}>Mark done{!working && <KeyHint keys={proposalPending ? "⌘⇧↵ after Apply" : "⌘⇧↵"} />}</button>
-                )}
-                {ticket.prUrl && ticket.status !== "review" && (
-                  <a className="btn icon-label" href={safeHref(ticket.prUrl)} target="_blank" rel="noreferrer">Open PR #{ticket.prUrl.split("/").pop()} <ExternalIcon size={12} /></a>
-                )}
-              </div>
-              {ticket.prUrl && ticket.status === "review" && <PrBox profile={profile} ticket={ticket as Ticket & { prUrl: string }} onError={onError} />}
-
-              {ticket.parentId && (
-                <div className="field-row">
-                  <span className="field-key" title="The planner ticket whose plan runs this one (it proposed or adopted it)">From</span>
-                  {parent ? (
-                    <button className="link-btn ticket-link" onClick={() => onOpenTicket(parent.id)}>{parent.title}</button>
-                  ) : (
-                    <span className="muted small">Planner ticket was deleted</span>
-                  )}
-                </div>
-              )}
-              {ticket.branchedFrom && (
-                <div className="field-row">
-                  <span className="field-key" title="This ticket started as a copy of that one's conversation and code">Branched from</span>
-                  {branchedFrom ? (
-                    <button className="link-btn ticket-link" onClick={() => onOpenTicket(branchedFrom.id)}>{branchedFrom.title}</button>
-                  ) : (
-                    <span className="muted small">Source ticket was deleted</span>
-                  )}
-                </div>
-              )}
-              {branches.length > 0 && (
-                <div className="field-row">
-                  <span className="field-key" title="Tickets branched from this one">Branches</span>
-                  <span className="dep-list">
-                    {branches.map((b) => <button key={b.id} className="link-btn ticket-link" onClick={() => onOpenTicket(b.id)}>{b.title}</button>)}
-                  </span>
-                </div>
-              )}
-              {deps.length > 0 && (
-                <div className="field-row">
-                  <span className="field-key" title="A running plan starts this ticket once these are done">Waits for</span>
-                  <span className="dep-list">
-                    {deps.map((d) => typeof d === "string"
-                      ? <span key={d} className="muted small">{d} (missing)</span>
-                      : <button key={d.id} className="link-btn ticket-link" onClick={() => onOpenTicket(d.id)}>{d.title}</button>)}
-                  </span>
-                </div>
-              )}
-
-              {/* Rarely set by hand (plans and update_ticket set it), so only shown once the ticket has needs. */}
-              {!!ticket.needs?.length && <NeedsField slug={slug} ticket={ticket} onError={onError} />}
-
-              {children.length > 0 && <PlanSummary ticket={ticket} children={children} onOpen={() => setTab("plan")} />}
-
-              {(!!links.length || outputCount > 0 || hasUsage) && (
-                <div className="result-chips" aria-label="Results">
-                  {usage && hasUsage && (
-                    <button className="result-chip usage-chip" onClick={() => setTab("usage")}
-                      title={usage.totals.pctCurrentWindow === null ? missingPctReason(usage) : "This ticket's ≈ share of the current 5h plan window, and its API-equivalent cost"}>
-                      {usageChipText(usage)}
-                    </button>
-                  )}
-                  {outputCount > 0 && (
-                    <button className="result-chip" onClick={() => setTab("outputs")}><FileTextIcon size={13} /> {outputCount} output file{outputCount > 1 ? "s" : ""}</button>
-                  )}
-                  {links.slice(0, LINK_CHIPS).map((l) => (
-                    <a key={l.url} className="result-chip" href={safeHref(l.url)} target="_blank" rel="noreferrer"
-                      title={l.source === "share" ? `Share link: ${l.url}` : l.url}>
-                      {l.source === "share" ? <LinkIcon size={12} /> : <ExternalIcon size={12} />} {l.label}
-                    </a>
-                  ))}
-                  {links.length > LINK_CHIPS && (
-                    <button className="result-chip" onClick={() => { setOutputFocus(null); setTab("outputs"); }} title="All links are in the Outputs tab">
-                      +{links.length - LINK_CHIPS} more
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <section className={`details-desc ${descScrolled && !editing ? "scrolled" : ""}`}>
-              <div className="section-head">
-                <h4>Description</h4>
-                {!editing && <button className="btn ghost small" onClick={startEdit} title="Edit the description (E)">Edit<KeyHint keys="E" /></button>}
-              </div>
-              {editing ? (
-                <div className="desc-edit">
-                  <DescriptionEditor slug={slug} ticketId={ticket.id} value={body} setValue={setBody} images={images} inputRef={bodyInput} autoFocus fill
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.shiftKey) saveBody();
-                      else if (e.key === "Escape" && !e.nativeEvent.isComposing) { e.preventDefault(); cancelEdit(); }
-                    }} />
-                  <div className="form-actions">
-                    <button className="btn ghost" onClick={cancelEdit} title="Cancel (Esc)">Cancel<KeyHint keys="Esc" /></button>
-                    <button className="btn primary" disabled={images.uploading} onClick={saveBody} title={`Save (${MOD}Enter)`}>{images.uploading ? "Uploading…" : "Save"}<KeyHint keys="⌘↵" /></button>
-                  </div>
-                </div>
-              ) : (
-                <div className="desc-scroll" onScroll={(e) => setDescScrolled(e.currentTarget.scrollTop > 0)}>
-                  {body.trim() ? (
-                    <div className="body-view" onDoubleClick={startEdit}><Markdown text={body} commands={descCommands} /></div>
-                  ) : (
-                    <div className="muted small">No description yet. {ticket.status === "planning" ? "Claude can propose one in the chat." : ""}</div>
-                  )}
-                </div>
-              )}
-            </section>
-          </div>
+          {!phone && details}
 
           {detailsShown && (
             <div className="sidebar-resize" role="separator" aria-orientation="vertical" aria-label="Resize details"
@@ -753,6 +758,9 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               </div>
             )}
             <nav className="tabs" role="tablist" aria-label="Ticket">
+              {phone && (
+                <button role="tab" aria-selected={tab === "ticket"} className={tab === "ticket" ? "active" : ""} onClick={() => setTab("ticket")}>Ticket</button>
+              )}
               <button role="tab" aria-selected={tab === "chat"} className={tab === "chat" ? "active" : ""} onClick={() => setTab("chat")}>
                 Chat {working && <span className="dot" />}
               </button>
@@ -782,7 +790,9 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 Usage{usage && hasUsage && usage.totals.pctCurrentWindow !== null && <span className="tab-count">{approxPct(usage.totals.pctCurrentWindow).replace(" ", "")}</span>}
               </button>
             </nav>
-            {tab === "plan" ? (
+            {tab === "ticket" ? (
+              <div className={`panel-ticket ${editing ? "editing" : ""}`}>{details}</div>
+            ) : tab === "plan" ? (
               <div className="panel-scroll panel-plan">
                 <PlanPanel slug={slug} ticket={ticket} children={children} onOpenTicket={onOpenTicket} onError={onError}
                   onMoveToDone={() => setStatus("done")} onAddMore={addMoreTickets} />

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { cleanFileName as serverClean, FILE_EXTS as SERVER_EXTS, MAX_ATTACHMENT_BYTES as SERVER_MAX } from "../src/server/attachments";
 import {
-  ACCEPT, ATTACHMENT_SRC, cleanFileName, draftFiles, FILE_EXTS, fileHolder, fileHref, fileKind, formatSize, MAX_ATTACHMENT_BYTES, refusal,
+  ACCEPT, ATTACHMENT_SRC, PHOTO_ACCEPT, cleanFileName, draftFiles, FILE_EXTS, fileHolder, fileHref, fileKind, formatSize, MAX_ATTACHMENT_BYTES, refusal,
 } from "../web/src/attachText";
 
 const PDF = "0123456789abcdef0123456789abcdef.pdf";
@@ -43,4 +43,9 @@ test("file cards: kinds, sizes and links", () => {
   expect(`/api/attachments/${PDF}`.match(ATTACHMENT_SRC)?.[1]).toBe(PDF);
   expect(`/Users/me/.claude-kanban/attachments/${PDF}`.match(ATTACHMENT_SRC)?.[1]).toBe(PDF);
   expect("/api/attachments/../x.pdf".match(ATTACHMENT_SRC)).toBeNull();
+});
+
+test("the phone's Photo button asks for images only, so phones open the gallery", () => {
+  expect(PHOTO_ACCEPT).toBe("image/*");
+  expect(ACCEPT).not.toContain("image/*");
 });
