@@ -300,6 +300,11 @@ export class Store {
     return join(this.ticketDir(slug, id), "simplified.json");
   }
 
+  /** "Help me understand" answers shown as cards in the ticket's chat (explain.ts). */
+  helpPath(slug: string, id: string): string {
+    return join(this.ticketDir(slug, id), "help.json");
+  }
+
   readActivity(slug: string, id: string): ActivityEntry[] {
     return readJsonl<ActivityEntry>(this.activityPath(slug, id));
   }

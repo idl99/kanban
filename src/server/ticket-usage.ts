@@ -302,7 +302,7 @@ export interface TicketUsage {
   totals: { costUsd: number; tokens: number; pctCurrentWindow: number | null; pctLifetime: number | null };
   /** Its huddles' teammates, null when they spent nothing. */
   teammates: TeammateUsage | null;
-  /** What its side calls ("Say it simpler") cost; 0 when none. */
+  /** What its side calls ("Say it simpler", "Help me understand") cost; 0 when none. */
   sideCostUsd: number;
   /** The current 5h window, as last seen. */
   window: { utilization: number; resetsAt: string; seenAt: string } | null;

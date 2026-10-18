@@ -10,6 +10,7 @@ import { limitHint, limitLabel, limitWait } from "./limitText";
 import { branchTicket } from "./branch";
 import { BugReportDialog } from "./BugReportDialog";
 import { Changes, useTicketDiff } from "./Changes";
+import { HelpMenu, useHelp } from "./HelpMenu";
 import { Chat, useStop } from "./Chat";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DescriptionEditor, useDescriptionCommands } from "./DescriptionEditor";
@@ -261,6 +262,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const tabs = drawerTabs({ phone, plan: children.length > 0, changes: !!(ticket.worktree || inFolder) });
   const tab = tabs.includes(tabPick) ? tabPick : "chat";
   const diffState = useTicketDiff(slug, ticket);
+  const help = useHelp(slug, ticket, !!diffState.diff?.files.length);
   const [outputCount, setOutputCount] = useState(0);
   const ticketUsage = useTicketUsage(slug, ticket.id);
   const openTab = (t: typeof tabPick) => {
@@ -705,6 +707,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           )}
           {!att && !ticket.huddleBusy && outcomeBadge(ticket)}
           <JobChip jobs={jobs} ticketId={ticket.id} onOpen={onOpenJobs} />
+          <HelpMenu help={help} phone={phone} onAsk={(kind) => { setTab("chat"); void help.ask(kind); }} />
           {nav && (
             <span className="ticket-nav">
               <button className="icon-btn" disabled={!nav.prev || editing} onClick={() => step(nav.prev)} aria-label="Previous ticket"
@@ -832,7 +835,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
               <div className="panel-scroll panel-outputs"><Outputs slug={slug} ticket={ticket} onCount={setOutputCount} focus={outputFocus} /></div>
             ) : (
               <Chat slug={slug} ticket={ticket} tickets={tickets} onOpenTicket={onOpenTicket} onError={onError} onPendingProposal={onPendingProposal}
-                huddle={huddle} onOpenHuddle={() => setTab("huddle")} onOpenTeam={onOpenTeam}
+                huddle={huddle} onOpenHuddle={() => setTab("huddle")} onOpenTeam={onOpenTeam} help={help}
                 onOpenOutput={(name) => { setOutputFocus(name); setTab("outputs"); }} />
             )}
           </div>

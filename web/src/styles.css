@@ -2450,3 +2450,27 @@ button.tag-chip:hover { border-color: currentColor; }
 .simpler .link-btn { font-size: 12px; font-weight: 500; color: var(--info); }
 .simpler.error { color: var(--err); }
 @media (pointer: coarse) { .simpler .link-btn { min-height: 32px; } }
+
+/* "Help me understand" (HelpMenu.tsx): the header button, its menu (a bottom sheet on a phone) and the answer cards in the chat. */
+.help-menu-wrap { position: relative; flex: none; }
+.help-btn { white-space: nowrap; }
+.help-btn.on { background: var(--surface-2); }
+.help-menu { width: 330px; }
+.help-item { display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 8px; cursor: pointer; color: inherit; font: inherit; }
+.help-item:hover:not(:disabled), .help-item:focus-visible { background: var(--surface-2); outline: none; }
+.help-item:disabled { cursor: default; opacity: 0.6; }
+.help-item b { font-weight: 600; font-size: 13.5px; }
+.help-item span { font-size: 12px; color: var(--muted); }
+.help-foot { margin: 4px 10px 4px; padding-top: 6px; border-top: 1px solid var(--border); font-size: 11.5px; color: var(--muted); }
+.help-card { border: 1px solid var(--border); border-left: 3px solid var(--info); border-radius: 10px; padding: 10px 14px; background: var(--surface); font-size: 13.5px; }
+.help-card h5 { margin: 0 0 6px; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--info); }
+.help-card.error { border-left-color: var(--err); }
+.help-card.error h5 { color: var(--err); }
+.help-meta { margin-top: 6px; font-size: 11.5px; }
+.help-actions { display: flex; gap: 6px; margin-top: 8px; }
+@media (max-width: 720px) {
+  .help-btn-label { display: none; }
+  .help-sheet .help-item { padding: 12px; min-height: 56px; justify-content: center; }
+  .help-sheet .help-item b { font-size: 15px; }
+  .help-sheet .help-item span { font-size: 13px; }
+}

@@ -6,7 +6,8 @@ import { dayKey } from "./limit";
 
 // A side call: one short `claude -p` answer on the cheapest model, outside any ticket's session. No resume, no
 // tools, no MCP servers, no skills, no user hooks (only project settings, and its folder has none), nothing saved
-// as a session, run in a folder of its own. Its cost goes to the ticket's side ledger (side-spend.jsonl), which
+// as a session, run in a folder of its own. A reading call ("Help me understand", explain.ts) gets read-only file
+// tools instead, and runs in the ticket's folder with hooks off. Its cost goes to the ticket's side ledger (side-spend.jsonl), which
 // counts in the ticket's spend; the ticket's activity log and session never see it.
 
 export interface SideCallInput {
@@ -15,6 +16,10 @@ export interface SideCallInput {
   /** Default: haiku. */
   model?: string;
   timeoutMs?: number;
+  /** Read-only tools it may use (e.g. Read, Grep, Glob); default none. */
+  tools?: string[];
+  /** Folder it runs in (a reading call: the ticket's folder); default the caller's own side-calls folder. */
+  cwd?: string;
 }
 
 export type SideCallResult = { ok: true; text: string; costUsd: number; model: string } | { ok: false; error: string };
@@ -27,14 +32,22 @@ export interface SideCallOptions {
   env?: Record<string, string | undefined>;
 }
 
+/** Tools a reading call may be given: none of them change files or run commands. */
+export const READ_TOOLS = ["Read", "Grep", "Glob"];
+
+/** Turns a reading call may take (each tool use is one). */
+const READ_TURNS = 20;
+
 export function sideCallArgs(i: SideCallInput): string[] {
-  return ["-p", "--output-format", "json", "--model", i.model ?? "haiku", "--no-session-persistence", "--tools", "",
+  const tools = (i.tools ?? []).filter((t) => READ_TOOLS.includes(t));
+  return ["-p", "--output-format", "json", "--model", i.model ?? "haiku", "--no-session-persistence", "--tools", tools.join(","),
+    ...(tools.length ? ["--max-turns", String(READ_TURNS), "--settings", JSON.stringify({ disableAllHooks: true })] : []),
     "--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "project", "--system-prompt", i.system];
 }
 
 export function makeSideCaller(o: SideCallOptions = {}): SideCaller {
   return async (i) => {
-    const cwd = o.cwd ?? join(homedir(), ".claude-kanban", "side-calls");
+    const cwd = i.cwd ?? o.cwd ?? join(homedir(), ".claude-kanban", "side-calls");
     mkdirSync(cwd, { recursive: true });
     let p: ReturnType<typeof Bun.spawn>;
     try {

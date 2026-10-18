@@ -68,7 +68,7 @@ export interface TicketUsage {
   /** costUsd includes the huddle teammates and side calls; tokens and % are the ticket's runs only. */
   totals: { costUsd: number; tokens: number; pctCurrentWindow: number | null; pctLifetime: number | null };
   teammates?: TeammateUsage | null;
-  /** "Say it simpler" rewrites (side calls outside the ticket's session). */
+  /** "Say it simpler" rewrites and "Help me understand" answers (side calls outside the ticket's session). */
   sideCostUsd?: number;
   window: { utilization: number; resetsAt: string; seenAt: string } | null;
   windowError: string | null;

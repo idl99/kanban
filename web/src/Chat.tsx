@@ -24,6 +24,7 @@ import { ProposalCard, type FollowUp } from "./ProposalCard";
 import { QuestionsForm } from "./QuestionsForm";
 import { RecoveryBanner } from "./RecoveryBanner";
 import { SetupRow } from "./SetupRow";
+import { HelpCardView, HelpPending, type HelpState } from "./HelpMenu";
 import { useSimpler } from "./Simpler";
 import { simplifiable } from "./simplifyText";
 import { useSnippetPicker } from "./SnippetPicker";
@@ -154,7 +155,7 @@ export function useStop(slug: string, ticket: Ticket, working: boolean, onError:
 /** A queued peer message that carries huddle messages (see the server's huddleMainPrompt). */
 const HUDDLE_TAG = /<ckanban-context[^>]* huddle="/;
 
-export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onError, onPendingProposal, huddle = null, onOpenHuddle, onOpenTeam }: {
+export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onError, onPendingProposal, huddle = null, onOpenHuddle, onOpenTeam, help }: {
   slug: string;
   ticket: Ticket;
   /** The board's tickets, to tell which proposed new tickets already exist. */
@@ -171,6 +172,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   onOpenHuddle?: () => void;
   /** Open the dock's Team tab: a proposed teammate's editor (Edit first) or a saved one (Open in Team). */
   onOpenTeam?: (r: TeamRequest) => void;
+  /** "Help me understand" answers, shown as cards in the timeline by time. */
+  help?: HelpState;
 }) {
   const [page, setPage] = useState<{ entries: SessionEntry[]; start: number } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -333,7 +336,14 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       keepOffset.current = null;
     } else if (stickToBottom.current) el.scrollTop = el.scrollHeight;
     else setJump((j) => (j ? { fresh: true } : j));
-  }, [page, pending, running, live, waitingHandoff]);
+  }, [page, pending, running, live, waitingHandoff, help?.cards.length, help?.failed]);
+  // Asking for help scrolls down to where its card appears.
+  const helpBusy = help?.busy.length ?? 0;
+  const helpBusyBefore = useRef(helpBusy);
+  useEffect(() => {
+    if (helpBusy > helpBusyBefore.current) toBottom();
+    helpBusyBefore.current = helpBusy;
+  }, [helpBusy]);
 
   const toBottom = () => {
     const el = scroller.current;
@@ -592,6 +602,15 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   // Divider before the first block after the branch point (after all of them while nothing new was said yet).
   const firstNew = bp ? blocks.findIndex((b) => !before(b.kind === "entry" ? b.e : b.items[0], bp.at)) : -1;
   const dividerAt = !bp || page === null || page.start > 0 && firstNew === 0 ? -1 : firstNew < 0 ? blocks.length : firstNew;
+  // Help cards go before the first block that came after them (after them all when nothing did); older ones than the
+  // loaded page wait for "Load earlier".
+  const helpAt = new Map<number, HelpState["cards"]>();
+  for (const c of help?.cards ?? []) {
+    if (page && page.start > 0 && entries.length && c.at < entries[0].at) continue;
+    let i = blocks.findIndex((b) => (b.kind === "entry" ? b.e : b.items[0]).at > c.at);
+    if (i < 0) i = blocks.length;
+    helpAt.set(i, [...(helpAt.get(i) ?? []), c]);
+  }
   const divider = bp && (
     <div key={`branch-${bp.at}`} className="branch-divider" role="separator">
       <BranchIcon size={12} /> branched from {branchedFrom
@@ -646,9 +665,16 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         )}
         {blocks.map((b, i) => {
           const first = b.kind === "entry" ? b.e : b.items[0];
-          return <Fragment key={first.uuid}>{i === dividerAt && divider}{renderBlock(b, before(first, bp?.at))}</Fragment>;
+          return (
+            <Fragment key={first.uuid}>
+              {helpAt.get(i)?.map((c) => <HelpCardView key={c.id} card={c} />)}
+              {i === dividerAt && divider}{renderBlock(b, before(first, bp?.at))}
+            </Fragment>
+          );
         })}
         {dividerAt === blocks.length && divider}
+        {helpAt.get(blocks.length)?.map((c) => <HelpCardView key={c.id} card={c} />)}
+        {help && <HelpPending help={help} />}
         {/* Replies sent while Claude wasn't working are part of the timeline: plain bubbles, before Claude's reply. */}
         {pending.filter((p) => !p.steer).map((p, i) => (
           <div key={i} className="conv-msg user">

@@ -104,8 +104,8 @@ export function UsagePanel({ usage, error }: { usage: TicketUsage | null; error:
       </div>
       {usage.teammates && <TeammateLines teammates={usage.teammates} />}
       {!!usage.sideCostUsd && (
-        <div className="usage-teammates" title="Claude replies rewritten in plain words with Say it simpler, counted in the total above.">
-          <b>Plain-words rewrites: {costText(usage.sideCostUsd)}</b>
+        <div className="usage-teammates" title="Say it simpler and Help me understand answers, counted in the total above. They are not part of Claude's conversation.">
+          <b>Plain-words help: {costText(usage.sideCostUsd)}</b>
         </div>
       )}
       <table className="usage-table">

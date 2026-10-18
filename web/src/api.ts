@@ -62,6 +62,19 @@ export interface DiffFile {
 
 export type Workspace = "worktree" | "folder";
 
+/** "Help me understand" questions (src/server/explain.ts). */
+export type HelpKind = "recap" | "changes";
+
+/** One "Help me understand" answer, shown as a card in the ticket's chat. */
+export interface HelpCard {
+  id: string;
+  kind: HelpKind;
+  at: string;
+  text: string;
+  costUsd: number;
+  model: string;
+}
+
 export interface TicketDiff {
   base: string;
   mergeBase: string;
@@ -1134,6 +1147,10 @@ export const api = {
   simplified: (slug: string, id: string) => req<Record<string, string>>("GET", `${t(slug, id)}/simplified`),
   /** "Say it simpler": one reply rewritten in plain words (a side call; saved, so the second time is free). */
   simplify: (slug: string, id: string, uuid: string) => req<{ text: string; cached: boolean }>("POST", `${t(slug, id)}/simplify`, { uuid }),
+  /** "Help me understand": saved answer cards, the kinds being answered, and whether a recap has anything to tell. */
+  help: (slug: string, id: string) => req<{ cards: HelpCard[]; busy: HelpKind[]; recap: boolean }>("GET", `${t(slug, id)}/help`),
+  /** A new "Help me understand" answer (a side call reading the ticket; its cost goes on the ticket). */
+  askHelp: (slug: string, id: string, kind: HelpKind) => req<HelpCard>("POST", `${t(slug, id)}/help`, { kind }),
   /** One subagent of the ticket's conversation, with all of its steps. */
   agent: (slug: string, id: string, toolUseId: string) => req<AgentInfo>("GET", `${t(slug, id)}/agent/${encodeURIComponent(toolUseId)}`),
   /** A tool call's full input and output (main conversation or a subagent's). */

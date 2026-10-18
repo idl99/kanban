@@ -39,6 +39,7 @@ import { UpdateChecker } from "./update";
 import { SpendIndex } from "./spend";
 import { makeSideCaller, readSideSpend, type SideCaller } from "./side-call";
 import { Simplifier, SimplifyError } from "./simplify";
+import { changesPrompt, HELP_KINDS, Helper, HelpError, recapAvailable, recapPrompt, type HelpKind } from "./explain";
 import { ClaudeLogIndex, readWindows, recordWindow, ticketRuns, ticketUsage, UsageCache, windowsNeeded } from "./ticket-usage";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
@@ -200,7 +201,9 @@ export function createServer(deps: ServerDeps) {
   const windowsFile = join(store.root, "usage-windows.json");
   const usage = new UsageCache(deps.usage ?? fetchUsage, (r) => recordWindow(windowsFile, r));
   const spend = new SpendIndex(store);
-  const simplifier = new Simplifier(store, deps.sideCall ?? makeSideCaller({ cwd: join(store.root, "side-calls") }));
+  const sideCall = deps.sideCall ?? makeSideCaller({ cwd: join(store.root, "side-calls") });
+  const simplifier = new Simplifier(store, sideCall);
+  const helper = new Helper(store, sideCall);
   const claudeLogs = deps.claudeLogs ?? new ClaudeLogIndex();
   const publishArtifact = deps.publishArtifact ?? ((job: ArtifactJob) => runArtifactJob(job));
   // No listener (not bound): 0, so `on` refuses instead of pointing serve at whatever holds the port.
@@ -1133,28 +1136,19 @@ export function createServer(deps: ServerDeps) {
         },
       });
     }
-    if (action === "diff" && m === "GET") {
-      // The Changes tab: the worktree (committed, uncommitted and untracked) against its merge-base with the base branch;
-      // a ticket working in the board's folder itself, that folder against its HEAD at the ticket's first run.
-      const t = store.getTicket(slug, id)!;
-      const ws = url.searchParams.get("w") === "1";
-      if (!t.worktree && t.baseSha && !t.workdir) {
-        try {
-          return json(await folderDiff(profile.path, t.baseSha, { ignoreWhitespace: ws }));
-        } catch (e) {
-          if (e instanceof DiffError) throw new HttpError(e.status, e.message);
-          throw e;
-        }
-      }
-      if (!t.worktree) throw new HttpError(404, "No version history for this folder, so changes can't be shown.");
+    // The Changes tab: the worktree (committed, uncommitted and untracked) against its merge-base with the base branch;
+    // a ticket working in the board's folder itself, that folder against its HEAD at the ticket's first run.
+    const changes = async (t: Ticket, ignoreWhitespace = false) => {
       try {
-        const base = profile.baseBranch || (await detectBaseBranch(t.worktree));
-        return json(await ticketDiff(t.worktree, base, { ignoreWhitespace: url.searchParams.get("w") === "1" }));
+        if (!t.worktree && t.baseSha && !t.workdir) return await folderDiff(profile.path, t.baseSha, { ignoreWhitespace });
+        if (!t.worktree) throw new HttpError(404, "No version history for this folder, so changes can't be shown.");
+        return await ticketDiff(t.worktree, profile.baseBranch || (await detectBaseBranch(t.worktree)), { ignoreWhitespace });
       } catch (e) {
         if (e instanceof DiffError) throw new HttpError(e.status, e.message);
         throw e;
       }
-    }
+    };
+    if (action === "diff" && m === "GET") return json(await changes(store.getTicket(slug, id)!, url.searchParams.get("w") === "1"));
     // What `/` runs in this ticket's chat: skills, custom commands and built-ins (the composer's picker).
     if (action === "commands" && m === "GET") {
       return json(board.commands(slug, id).map(({ local, ...c }) => c));
@@ -1193,6 +1187,37 @@ export function createServer(deps: ServerDeps) {
         return json(await simplifier.simplify(slug, id, t.title, e));
       } catch (err) {
         if (err instanceof SimplifyError) throw new HttpError(err.status, err.message);
+        throw err;
+      }
+    }
+    if (action === "help" && m === "GET") {
+      // "Help me understand": the saved answer cards, the ones being worked out, and whether a recap has anything to tell.
+      const t = store.getTicket(slug, id)!;
+      const entries = (t.sessionId ? sessions.get(t.sessionId)?.entries : null) ?? [];
+      return json({ cards: helper.cards(slug, id), busy: helper.busy(slug, id), recap: recapAvailable(entries) });
+    }
+    if (action === "help" && m === "POST") {
+      // A side call answers from the conversation and the changes, reading the ticket's folder; the session never sees it.
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "Help me understand is the user's click, not a board run's");
+      const kind = (await body(req))?.kind as HelpKind;
+      if (!HELP_KINDS.includes(kind)) throw new HttpError(400, `kind must be one of: ${HELP_KINDS.join(", ")}`);
+      const t = store.getTicket(slug, id)!;
+      const entries = (t.sessionId ? sessions.get(t.sessionId)?.entries : null) ?? [];
+      let prompt: string;
+      if (kind === "recap") {
+        if (!recapAvailable(entries)) throw new HttpError(400, "nothing happened since your last message");
+        const findings = huddles.list(slug, id).flatMap((h) => h.findings);
+        prompt = recapPrompt({ ticket: t, entries, findings, running: board.isRunning(slug, id) });
+      } else {
+        const diff = await changes(t);
+        if (!diff.files.length) throw new HttpError(400, diff.note ?? "this ticket has no changed files");
+        prompt = changesPrompt({ ticket: t, entries, diff });
+      }
+      const cwd = t.worktree ?? t.workdir ?? (t.baseSha ? profile.path : null);
+      try {
+        return json(await helper.ask(slug, id, kind, prompt, cwd));
+      } catch (err) {
+        if (err instanceof HelpError) throw new HttpError(err.status, err.message);
         throw err;
       }
     }
