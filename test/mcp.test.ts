@@ -2,7 +2,7 @@ import { beforeEach, expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Bus, type BusEvent } from "../src/server/events";
-import { addArgs, maskSecrets, McpManager, parseMcpGet, parseMcpList, readMcpConfig, scopeOf, shellQuote } from "../src/server/mcp";
+import { addArgs, maskSecrets, McpManager, parseMcpGet, parseMcpList, parseSessionInit, readMcpConfig, scopeOf, shellQuote } from "../src/server/mcp";
 import { tempDir } from "./helpers";
 
 const FAKE = join(import.meta.dir, "fixtures", "fake-claude-mcp.ts");
@@ -81,6 +81,7 @@ function setup(servers: Record<string, { target: string; status: string }>, user
   delete process.env.FAKE_LOGIN;
   delete process.env.FAKE_ADD;
   delete process.env.FAKE_LIST_MS;
+  delete process.env.FAKE_SESSION;
   const bus = new Bus();
   events = [];
   bus.on((e) => events.push(e));
@@ -193,6 +194,45 @@ test("a list that started before an add, edit or remove doesn't undo it", async 
   expect(seen.every((n) => n.includes("fs") && !n.includes("old"))).toBe(true);
 });
 
+test("parseSessionInit reads statuses from a session's init event", () => {
+  const line = JSON.stringify({ type: "system", subtype: "init", mcp_servers: [
+    { name: "claude.ai Google Calendar", status: "needs-auth" }, { name: "fs", status: "connected" },
+    { name: "x", status: "failed" }, { name: "off", status: "disabled" },
+  ] });
+  expect([...parseSessionInit(line)!]).toEqual([["claude.ai Google Calendar", "needs_auth"], ["fs", "connected"], ["x", "failed"]]);
+  expect(parseSessionInit(JSON.stringify({ type: "system", subtype: "hook_started" }))).toBeNull();
+  expect(parseSessionInit("not json")).toBeNull();
+});
+
+test("a connector the list calls connected but sessions can't use shows as needing login", async () => {
+  setup({
+    "claude.ai Google Calendar": { target: "https://calendarmcp.googleapis.com/mcp/v1", status: "✔ Connected" },
+    "claude.ai Gmail": { target: "https://gmailmcp.googleapis.com/mcp/v1", status: "✔ Connected" },
+  }, []);
+  await mgr.refresh();
+  expect(mgr.state().servers.map((s) => s.status)).toEqual(["connected", "connected"]);
+  process.env.FAKE_SESSION = JSON.stringify({ "claude.ai Google Calendar": "needs-auth" });
+  await mgr.refresh();
+  const [cal, gmail] = mgr.state().servers;
+  expect(cal).toMatchObject({ status: "needs_auth", message: "Needs authentication", attention: true });
+  expect(gmail.status).toBe("connected");
+  // `claude mcp get` would say connected again; a connector's recheck asks a session instead.
+  expect((await mgr.recheck("claude.ai Google Calendar"))?.status).toBe("needs_auth");
+  expect(calls().filter((c) => c[0] === "mcp" && c[1] === "get")).toEqual([]);
+  // The probe never runs a model call: the API address is a closed port, hooks are off, nothing is saved.
+  const probe = calls().find((c) => c[0] === "-p")!;
+  expect(probe).toContain("--no-session-persistence");
+  expect(probe.join(" ")).toContain('"disableAllHooks":true');
+});
+
+test("without a probe answer the list's statuses stay", async () => {
+  setup({ "claude.ai X": { target: "https://x", status: "✔ Connected" } }, []);
+  process.env.FAKE_SESSION = "none";
+  const m = new McpManager(new Bus(), { claudeBin: FAKE, cwd: dir, configFile: join(dir, "claude.json"), probeTimeoutMs: 200 });
+  await m.refresh();
+  expect(m.state().servers[0].status).toBe("connected");
+});
+
 test("missing claude binary is reported, not thrown", async () => {
   const bus = new Bus();
   const m = new McpManager(bus, { claudeBin: join(tempDir(), "no-such-claude"), cwd: tempDir() });
@@ -204,7 +244,7 @@ test("missing claude binary is reported, not thrown", async () => {
 test("slow CLI times out", async () => {
   const slow = join(tempDir(), "slow.sh");
   writeFileSync(slow, "#!/bin/sh\nsleep 5\n", { mode: 0o755 });
-  const m = new McpManager(new Bus(), { claudeBin: slow, cwd: tempDir(), listTimeoutMs: 100 });
+  const m = new McpManager(new Bus(), { claudeBin: slow, cwd: tempDir(), listTimeoutMs: 100, probeTimeoutMs: 100 });
   await m.refresh();
   expect(m.state().error).toMatch(/timed out/);
 });
@@ -263,7 +303,7 @@ test("update replaces a user-scope server (remove + add) and restores it if add 
   const n = calls().length;
   await expect(mgr.update("fs", { name: "fs", transport: "stdio", command: "bad" })).rejects.toThrow(/add failed/);
   // Background `mcp list` refreshes can interleave; only the edits matter here.
-  const tried = calls().slice(n).map((c) => c.join(" ")).filter((c) => c !== "mcp list");
+  const tried = calls().slice(n).map((c) => c.join(" ")).filter((c) => c !== "mcp list" && !c.startsWith("-p "));
   expect(tried[0]).toBe("mcp remove fs --scope user");
   expect(tried.filter((c) => c.startsWith("mcp add")).length).toBe(2); // the new one, then the restore
 });

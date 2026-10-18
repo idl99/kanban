@@ -122,6 +122,44 @@ export function parseMcpGet(text: string): { status: McpStatus; message: string 
   return s;
 }
 
+const SESSION_STATUS: Record<string, McpStatus> = {
+  connected: "connected", "needs-auth": "needs_auth", failed: "failed", pending: "pending",
+};
+
+/**
+ * Server statuses from a Claude session's stream-json `init` event (`{"type":"system","subtype":"init","mcp_servers":[…]}`).
+ * Null for any other line. Statuses we don't map (e.g. "disabled") are left out.
+ */
+export function parseSessionInit(line: string): Map<string, McpStatus> | null {
+  let d: any;
+  try {
+    d = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (d?.type !== "system" || d.subtype !== "init" || !Array.isArray(d.mcp_servers)) return null;
+  const out = new Map<string, McpStatus>();
+  for (const s of d.mcp_servers) {
+    const status = SESSION_STATUS[String(s?.status)];
+    if (typeof s?.name === "string" && status) out.set(s.name, status);
+  }
+  return out;
+}
+
+/**
+ * Puts what a Claude session sees over what `claude mcp list` says. The list can call a claude.ai connector
+ * connected while sessions still get "needs authentication" for it, so the session wins.
+ */
+export function applySessionStatus<T extends Pick<McpServer, "name" | "status" | "message">>(s: T, session: Map<string, McpStatus> | null): T {
+  const status = session?.get(s.name);
+  if (!status || status === s.status) return s;
+  const message = status === "connected" ? null
+    : status === "needs_auth" ? "Needs authentication"
+    : status === "failed" ? s.message ?? "Failed to connect in Claude sessions"
+    : s.message;
+  return { ...s, status, message };
+}
+
 /** Scope from Claude's config files, as seen from `cwd` (the list itself doesn't say). */
 export function scopeOf(name: string, cfg: { user: Set<string>; local: Set<string>; project: Set<string> }): McpScope {
   if (name.startsWith("claude.ai ")) return "claude.ai";
@@ -239,6 +277,8 @@ export interface McpOptions {
   /** Remembers which servers once worked, so "needs auth" there means expired (badge). */
   seenFile?: string;
   listTimeoutMs?: number;
+  /** How long to wait for a probe session's statuses (see `sessionStatuses`). */
+  probeTimeoutMs?: number;
   loginTimeoutMs?: number;
   /** How often and how long to re-check a server after `login` exits, waiting for the browser flow. */
   loginPollMs?: number;
@@ -260,7 +300,7 @@ export class McpManager {
   private bin: string;
   private cwd: string;
   private configFile: string;
-  private opts: Required<Pick<McpOptions, "listTimeoutMs" | "loginTimeoutMs" | "loginPollMs" | "loginPollForMs">>;
+  private opts: Required<Pick<McpOptions, "listTimeoutMs" | "probeTimeoutMs" | "loginTimeoutMs" | "loginPollMs" | "loginPollForMs">>;
 
   constructor(private bus: Bus, private options: McpOptions = {}) {
     this.bin = options.claudeBin ?? "claude";
@@ -269,6 +309,7 @@ export class McpManager {
       ?? join(process.env.CLAUDE_CONFIG_DIR ?? homedir(), ".claude.json");
     this.opts = {
       listTimeoutMs: options.listTimeoutMs ?? 120_000,
+      probeTimeoutMs: options.probeTimeoutMs ?? 60_000,
       loginTimeoutMs: options.loginTimeoutMs ?? 10 * 60_000,
       loginPollMs: options.loginPollMs ?? 5_000,
       loginPollForMs: options.loginPollForMs ?? 5 * 60_000,
@@ -317,14 +358,14 @@ export class McpManager {
 
   private async doRefresh(): Promise<void> {
     const touched = (this.touched = new Set());
-    const r = await this.run(["mcp", "list"], this.opts.listTimeoutMs);
+    const [r, session] = await Promise.all([this.run(["mcp", "list"], this.opts.listTimeoutMs), this.sessionStatuses()]);
     if (r.code !== 0) {
       this.error = errorText(r, "claude mcp list");
       return;
     }
     const { servers, unparsed } = parseMcpList(r.stdout);
     const scopes = configScopes(this.cwd, this.configFile);
-    let next = servers.map((s) => this.decorate({ ...s, scope: scopeOf(s.name, scopes), attention: false, login: null }));
+    let next = servers.map((s) => this.decorate(applySessionStatus({ ...s, scope: scopeOf(s.name, scopes), attention: false, login: null }, session)));
     for (const name of touched) {
       const now = this.servers.find((x) => x.name === name);
       next = next.filter((x) => x.name !== name);
@@ -358,6 +399,7 @@ export class McpManager {
 
   /** Re-checks one server with `claude mcp get` (a few seconds, vs. the whole list). */
   async recheck(name: string): Promise<McpServer | null> {
+    if (this.servers.find((x) => x.name === name)?.scope === "claude.ai") return this.recheckConnector(name);
     const r = await this.run(["mcp", "get", name], 60_000);
     const parsed = r.code === 0 ? parseMcpGet(r.stdout) : null;
     const i = this.servers.findIndex((x) => x.name === name);
@@ -366,6 +408,56 @@ export class McpManager {
     this.saveSeen();
     this.emit();
     return this.servers[i];
+  }
+
+  /** `claude mcp get` has the same blind spot as the list for claude.ai connectors: ask a probe session instead. */
+  private async recheckConnector(name: string): Promise<McpServer | null> {
+    const session = await this.sessionStatuses();
+    const i = this.servers.findIndex((x) => x.name === name);
+    if (!session?.has(name) || i < 0) return null;
+    this.servers[i] = this.decorate(applySessionStatus(this.servers[i], session));
+    this.saveSeen();
+    this.emit();
+    return this.servers[i];
+  }
+
+  /**
+   * Server statuses as a real Claude session sees them. Starts `claude -p` and stops it at its `init` event,
+   * before any model call: the API address points at a closed local port, hooks are off and the session isn't saved,
+   * so it costs nothing and leaves no trace. Null if the session didn't report in time.
+   */
+  private async sessionStatuses(): Promise<Map<string, McpStatus> | null> {
+    let p: ReturnType<typeof Bun.spawn>;
+    try {
+      p = Bun.spawn([this.bin, "-p", "ok", "--output-format", "stream-json", "--verbose", "--tools", "", "--max-turns", "1",
+        "--no-session-persistence", "--settings", JSON.stringify({ disableAllHooks: true })], {
+        cwd: this.cwd, env: { ...process.env, ANTHROPIC_BASE_URL: "http://127.0.0.1:9" },
+        stdin: "ignore", stdout: "pipe", stderr: "ignore",
+      });
+    } catch {
+      return null;
+    }
+    const read = async () => {
+      const dec = new TextDecoder();
+      let buf = "";
+      for await (const chunk of p.stdout as ReadableStream<Uint8Array>) {
+        buf += dec.decode(chunk, { stream: true });
+        for (let i; (i = buf.indexOf("\n")) >= 0; buf = buf.slice(i + 1)) {
+          const init = parseSessionInit(buf.slice(0, i));
+          if (init) return init;
+        }
+      }
+      return null;
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    // Don't wait for the stream to end after a timeout: children of the killed CLI can hold the pipe open.
+    const timeout = new Promise<null>((r) => (timer = setTimeout(() => r(null), this.opts.probeTimeoutMs)));
+    try {
+      return await Promise.race([read().catch(() => null), timeout]);
+    } finally {
+      clearTimeout(timer);
+      p.kill();
+    }
   }
 
   /** Saved settings of one server (unmasked). Throws 404 if it isn't in Claude's config files. */

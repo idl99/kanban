@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 // Fake `claude mcp …` for tests. State lives in FAKE_MCP_STATE (JSON: name → status line), argv log in FAKE_ARGS_FILE.
 // FAKE_LOGIN=fail makes `login` exit 1, FAKE_ADD=fail makes `add` exit 1.
+// `-p` (a probe session) prints a stream-json init event with each server's status, then hangs like a model call:
+// FAKE_SESSION (JSON: name → "connected" | "needs-auth" | …) overrides statuses; FAKE_SESSION=none prints no init.
 // FAKE_LIST_MS makes `list` print the state it read at start only after that many ms (a slow health check).
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 
@@ -11,7 +13,16 @@ const state: Record<string, { target: string; status: string }> = JSON.parse(rea
 const save = () => writeFileSync(file, JSON.stringify(state));
 const [, cmd, name] = args;
 
-if (cmd === "list") {
+if (args[0] === "-p") {
+  if (process.env.FAKE_SESSION !== "none") {
+    const override = process.env.FAKE_SESSION ? JSON.parse(process.env.FAKE_SESSION) : {};
+    const sdk = (status: string) => (/connected/i.test(status) ? "connected" : /auth/i.test(status) ? "needs-auth" : "failed");
+    const mcp_servers = Object.entries(state).map(([n, s]) => ({ name: n, status: override[n] ?? sdk(s.status) }));
+    console.log(JSON.stringify({ type: "system", subtype: "hook_started" }));
+    console.log(JSON.stringify({ type: "system", subtype: "init", mcp_servers }));
+  }
+  await Bun.sleep(60_000);
+} else if (cmd === "list") {
   if (process.env.FAKE_LIST_MS) await Bun.sleep(Number(process.env.FAKE_LIST_MS));
   console.log("Checking MCP server health…\n");
   for (const [n, s] of Object.entries(state)) console.log(`${n}: ${s.target} - ${s.status}`);
