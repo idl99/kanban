@@ -1319,15 +1319,24 @@ export function safeHref(url: string | null | undefined): string | undefined {
   return url && /^https:\/\//.test(url) ? url : undefined;
 }
 
-export async function copy(text: string): Promise<void> {
+/** Resolves false when nothing could be copied. Over plain http (a phone on the LAN) navigator.clipboard is missing. */
+export async function copy(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
+    return true;
   } catch {
     const ta = document.createElement("textarea");
     ta.value = text;
+    // Off-screen and read-only: no scroll jump and no phone keyboard popping up.
+    ta.readOnly = true;
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
     document.body.appendChild(ta);
     ta.select();
-    document.execCommand("copy");
+    ta.setSelectionRange(0, text.length); // iOS Safari ignores select() alone
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch { /* not supported */ }
     ta.remove();
+    return ok;
   }
 }

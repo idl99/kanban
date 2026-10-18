@@ -1,7 +1,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { useEffect, useMemo, useRef } from "react";
-import { api, type ActivityEntry } from "./api";
+import { api, copy, type ActivityEntry } from "./api";
 import { ATTACHMENT_SRC, fileHref, fileKind, formatSize, opensInline } from "./attachText";
 import { opensNewTab } from "./links";
 import { sourceLabel, splitCommandMentions, type SlashCommand } from "./slashText";
@@ -45,7 +45,41 @@ function thumbnails(html: string, commands?: SlashCommand[] | null, handles?: st
     a.setAttribute("rel", "noopener noreferrer");
   });
   fileCards(doc);
+  copyBars(doc);
   return doc.body.innerHTML;
+}
+
+/** Code blocks get a "Copy text" bar underneath. Added after sanitizing, so PURIFY's button ban doesn't strip it. */
+function copyBars(doc: Document) {
+  doc.querySelectorAll("pre").forEach((pre) => {
+    const box = doc.createElement("div");
+    box.className = "code-block";
+    const bar = doc.createElement("button");
+    bar.type = "button";
+    bar.className = "code-copy";
+    bar.textContent = "Copy text";
+    pre.replaceWith(box);
+    box.append(pre, bar);
+  });
+}
+
+/** Text of a code block as written: marked ends every block with a newline that isn't part of it. */
+export function codeText(raw: string): string {
+  return raw.replace(/\n$/, "");
+}
+
+async function copyCode(bar: HTMLButtonElement) {
+  const pre = bar.parentElement?.querySelector("pre");
+  if (!pre) return;
+  const ok = await copy(codeText(pre.textContent ?? ""));
+  bar.textContent = ok ? "Copied ✓" : "Couldn't copy";
+  bar.classList.toggle("done", ok);
+  bar.classList.toggle("failed", !ok);
+  clearTimeout(Number(bar.dataset.timer));
+  bar.dataset.timer = String(setTimeout(() => {
+    bar.textContent = "Copy text";
+    bar.classList.remove("done", "failed");
+  }, ok ? 1500 : 2500));
 }
 
 /**
@@ -168,7 +202,14 @@ export function Markdown({ text, commands, handles }: { text: string; commands?:
   useEffect(() => fillSizes(ref.current), [html]);
   return (
     <div ref={ref} className="md" dangerouslySetInnerHTML={{ __html: html }}
+      onDoubleClick={(e) => { if ((e.target as HTMLElement).closest(".code-copy")) e.stopPropagation(); }}
       onClick={(e) => {
+        const bar = (e.target as HTMLElement).closest<HTMLButtonElement>(".code-copy");
+        if (bar) {
+          e.stopPropagation(); // e.g. a click on the ticket description opens its editor
+          void copyCode(bar);
+          return;
+        }
         const img = e.target as HTMLElement;
         if (img.tagName === "IMG" && img.classList.contains("attachment")) window.open(img.getAttribute("src")!, "_blank", "noopener");
       }} />

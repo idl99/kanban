@@ -353,6 +353,18 @@ textarea { resize: vertical; font-size: 13.5px; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md pre { background: var(--surface-2); padding: 10px; border-radius: 8px; overflow-x: auto; }
+.md .code-block { margin: 1em 0; background: var(--surface-2); border-radius: 8px; overflow: hidden; }
+.md .code-block pre { margin: 0; border-radius: 0; }
+.md .code-copy {
+  display: block; width: 100%; min-height: 40px; padding: 8px 10px; border: 0; border-top: 1px solid var(--border);
+  background: transparent; color: var(--accent); font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer;
+}
+.md .code-copy:hover { background: var(--border); }
+.md .code-copy.done { color: var(--ok); }
+.md .code-copy.failed { color: var(--err); }
+@media (max-width: 720px) {
+  .md pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+}
 .md code { background: var(--surface-2); padding: 1px 4px; border-radius: 4px; }
 .md pre code { background: none; padding: 0; }
 .md p { margin: 0.5em 0; }
