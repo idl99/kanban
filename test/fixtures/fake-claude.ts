@@ -5,6 +5,7 @@
 // FAKE_SILENT_MS: how long silent mode goes quiet after init before carrying on (default 30s).
 // FAKE_HEARD_FILE=<path>: appends {session, text} for every user message it reads (huddle routing tests).
 // FAKE_NO_SAVE=1: stopped before the session transcript is saved (under CLAUDE_CONFIG_DIR, like the real CLI).
+// FAKE_START_MS: how long it starts up (SessionStart hooks) before it reads its prompt.
 // FAKE_TRANSCRIPT=1: it also thinks, runs a Bash call and posts to its huddle, and writes what it emits to the transcript.
 // With --input-format stream-json it reads user messages from stdin like the real CLI: messages that
 // arrive mid-run are picked up at the next step (replayed with --replay-user-messages), later ones
@@ -96,6 +97,7 @@ if (args.includes("--resume") && (mode === "nosession" || (process.env.CLAUDE_CO
   process.exit(1);
 }
 
+if (process.env.FAKE_START_MS) await Bun.sleep(Number(process.env.FAKE_START_MS));
 emit({ type: "system", subtype: "init", session_id: sessionId, cwd: process.cwd(), ...initSkills });
 // Like the real CLI, save the transcript where --resume looks for it (only under a test's own CLAUDE_CONFIG_DIR).
 if (process.env.CLAUDE_CONFIG_DIR && sessionId !== "none" && !process.env.FAKE_NO_SAVE) {

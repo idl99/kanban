@@ -243,7 +243,7 @@ export interface Ticket {
   userWait?: string | null;
   /** Set once this ticket's plan was started: the board runs its children unattended. */
   plan?: Plan | null;
-  /** Messages sent while Claude was working that it has not read yet; "unsent" ones were cut off by Stop. */
+  /** Messages Claude has not read yet (sent while it worked, or the one that started its reply); "unsent" ones were cut off by Stop. */
   queued?: QueuedMessage[];
   /** A reply a daemon restart cut off; the board resumes it. partial: what Claude had written so far. */
   interrupted?: { at: string; partial?: string; held?: boolean } | null;

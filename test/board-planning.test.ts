@@ -238,7 +238,8 @@ test("a chat cut off before claude started gets its message again, not a 'contin
   const t = await board.createTicket("p", { title: "plan", body: "", status: "backlog" });
   await board.chat("p", t.id, "my question");
   await board.shutdown(); // still setting up the worktree: claude never spawned
-  expect(store.getTicket("p", t.id)!.interrupted?.prompt).toEqual({ text: "my question" });
+  // Claude never read it: it stays queued on the ticket, and recover() answers it.
+  expect(store.getTicket("p", t.id)!.queued).toMatchObject([{ text: "my question", state: "queued" }]);
   restartBoard();
   board.recover();
   await board.whenIdle();

@@ -168,7 +168,7 @@ export interface Ticket {
   reopenedFrom?: Pick<Ticket, "status" | "outcome"> | null;
   /** Set on a planner ticket once its plan was started: the board runs its children unattended. */
   plan?: Plan | null;
-  /** Chat messages sent while Claude was working that it has not read yet, oldest first. */
+  /** Chat messages Claude has not read yet, oldest first: sent while it was working, or the one that started its reply. */
   queued?: QueuedMessage[];
   /** A chat reply the daemon cut off by restarting (or held back while a restart waited); recover() resumes it. */
   interrupted?: Interrupted | null;

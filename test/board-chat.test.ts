@@ -107,6 +107,35 @@ test("Stop keeps unread messages as unsent; send or discard them later", async (
   expect(() => board.discardQueued("p", t.id, q[0].id)).toThrow(/not found/);
 }, 15000);
 
+test("Stop before Claude reads the message that started its reply keeps it unsent", async () => {
+  await setup();
+  process.env.FAKE_START_MS = "3000";
+  try {
+    const t = await board.createTicket("p", { title: "x", body: "", status: "review" });
+    const sent = await board.chat("p", t.id, "oops, wrong message");
+    expect(sent.queued).toMatchObject([{ text: "oops, wrong message", state: "queued" }]);
+    await untilSpawned();
+    board.stop("p", t.id);
+    await board.whenIdle();
+    const q = store.getTicket("p", t.id)!.queued!;
+    expect(q.map((m) => [m.text, m.state])).toEqual([["oops, wrong message", "unsent"]]);
+
+    board.discardQueued("p", t.id, q[0].id);
+    expect(store.getTicket("p", t.id)!.queued).toEqual([]);
+  } finally {
+    delete process.env.FAKE_START_MS;
+  }
+}, 15000);
+
+test("a reply whose message Claude read leaves nothing queued", async () => {
+  await setup();
+  const t = await board.createTicket("p", { title: "x", body: "", status: "review" });
+  await board.chat("p", t.id, "what did you change?");
+  await board.whenIdle();
+  expect(store.getTicket("p", t.id)!.queued).toEqual([]);
+  expect(readArgs().at(-1)!.prompt.startsWith("what did you change?")).toBe(true);
+});
+
 test("daemon restart keeps unread messages and delivers them after recovery", async () => {
   await setup();
   process.env.FAKE_MODE = "slow";

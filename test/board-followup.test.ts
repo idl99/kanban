@@ -136,7 +136,7 @@ test("a follow-up waits while the ticket is running and never stacks onto the li
   expect(board.dueFollowUps("p")).toEqual([]);
   await new FollowUpWatcher(board, store).tick();
   expect(store.getTicket("p", t.id)!.followUp).toBeTruthy();
-  expect(store.getTicket("p", t.id)!.queued ?? []).toEqual([]);
+  expect((store.getTicket("p", t.id)!.queued ?? []).filter((m) => m.followUp)).toEqual([]);
   await expect(board.wakeFollowUp("p", t.id, { manual: true })).rejects.toThrow("working on this ticket");
 
   process.env.FAKE_MODE = "ok";

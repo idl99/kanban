@@ -33,6 +33,7 @@ import { commandNote, messageCommand, type SlashCommand } from "./slashText";
 import { filesByReply } from "./fileCards";
 
 import { handoff as handoffOf, liveView, saved, type Handoff } from "./liveReply";
+import { heldByReply, unsentNow, type Pending } from "./pendingBubbles";
 import { baseName, copyFile, dirName, downloadFile } from "./share";
 import { draftKey, formKey } from "./drafts";
 import { fullTime, timeAgo } from "./time";
@@ -185,7 +186,9 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   useNow();
   // Sent messages not yet in the session file (the server's queue covers ones Claude hasn't read).
   // steer: sent while Claude was working, so it waits for the server queue instead of joining the timeline.
-  const [pending, setPending] = useState<{ text: string; steer: boolean }[]>([]);
+  const [pending, setPending] = useState<Pending[]>([]);
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
   const queued = ticket.queued ?? [];
   // Unsent text survives closing the drawer, switching tickets and reloads.
   const [draft, setDraft] = usePersistentState(draftKey(slug, ticket.id), () => "", (v) => !v.trim(), (v) => typeof v === "string");
@@ -211,17 +214,22 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const { stopping, stop } = useStop(slug, ticket, running, onError);
   const refine = REFINE(ticket.status);
 
-  const loadTail = useCallback(async () => {
-    if (!ticket.sessionId) return setPage({ entries: [], start: 0 });
+  // Resolves to the loaded tail (null when a newer load won or there is no session).
+  const loadTail = useCallback(async (): Promise<SessionEntry[] | null> => {
+    if (!ticket.sessionId) {
+      setPage({ entries: [], start: 0 });
+      return null;
+    }
     const seq = ++tailSeq.current;
     const r = await api.conversation(slug, ticket.id);
-    if (seq < tailApplied.current) return;
+    if (seq < tailApplied.current) return null;
     tailApplied.current = seq;
     setPage((prev) => {
       if (!prev || r.start <= prev.start) return { entries: r.entries, start: r.start };
       const idx = prev.entries.findIndex((e) => e.uuid === r.entries[0]?.uuid);
       return idx >= 0 ? { entries: [...prev.entries.slice(0, idx), ...r.entries], start: prev.start } : { entries: r.entries, start: r.start };
     });
+    return r.entries;
   }, [slug, ticket.id, ticket.sessionId]);
 
   const reload = useCallback(() => {
@@ -259,9 +267,20 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     }, 700);
   }), [slug, ticket.id, loadTail]);
 
-  // A run just finished: pick up the final message even if no more events arrive.
+  // A run just finished: pick up the final message even if no more events arrive. A reply's own message that never
+  // reached the session (Stop before Claude read it) can't arrive any more: drop its bubble so it doesn't stick below
+  // later messages. Messages sent after this point are left alone.
   useEffect(() => {
-    if (!running) loadTail().catch(() => {}).finally(() => setLive(""));
+    if (running) return;
+    const before = pendingRef.current.filter((p) => !p.steer);
+    loadTail()
+      .then((tail) => {
+        if (!tail) return;
+        const stale = before.filter((p) => !delivered(tail, p.text));
+        if (stale.length) setPending((ps) => ps.filter((p) => !stale.includes(p)));
+      })
+      .catch(() => {})
+      .finally(() => setLive(""));
   }, [running]);
 
   // A message Claude hasn't received yet (not sent after Stop, or waiting for a slot or a restart): the user can
@@ -296,7 +315,10 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     // Peer messages show up in the session as another ticket's message, not as the user's bubble.
     const read = prevQueued.current.filter((q) => q.state === "queued" && !q.peer && !discarded.current.has(q.id) && !queued.some((n) => n.id === q.id)).map((q) => q.text);
     prevQueued.current = queued;
-    if (read.length) setPending((ps) => [...ps, ...read.map((text) => ({ text, steer: false }))]);
+    // The reply's own message already has its plain bubble.
+    if (read.length) setPending((ps) => [...ps, ...read.filter((text) => !ps.some((p) => !p.steer && p.text === text)).map((text) => ({ text, steer: false }))]);
+    const unsent = unsentNow(pendingRef.current, queued);
+    if (unsent.length) setPending((ps) => ps.filter((p) => !unsent.includes(p)));
   }, [ticket.queued]);
 
   const entries = page?.entries ?? [];
@@ -359,12 +381,14 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     if (!t || stopping || images.uploading) return;
     images.clearError();
     stickToBottom.current = true;
-    setPending((ps) => [...ps, { text: t, steer: running }]);
+    const steer = running;
+    setPending((ps) => [...ps, { text: t, steer }]);
     setDraft("");
     try {
       const r = await api.chat(slug, ticket.id, t);
-      // Steering: the server queue now shows it. /clear and /model: the board ran them, nothing reaches the session.
-      if (r.queued?.some((q) => q.text === t) || messageCommand(t, commands)?.source === "board") setPending((ps) => ps.filter((p) => p.text !== t));
+      // Steering or waiting for a slot: the server queue now shows it. A reply it started keeps its plain bubble while the
+      // board holds it until Claude reads it. /clear and /model: the board ran them, nothing reaches the session.
+      if ((r.queued?.some((q) => q.text === t) && (steer || !r.running)) || messageCommand(t, commands)?.source === "board") setPending((ps) => ps.filter((p) => p.text !== t));
     } catch (e: any) {
       setPending((ps) => ps.filter((p) => p.text !== t));
       setDraft(t);
@@ -742,7 +766,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             )}
           </div>
         ))}
-        {queued.filter((q) => !q.peer).map((q) => (
+        {queued.filter((q) => !q.peer && !heldByReply(q, pending)).map((q) => (
           <div key={q.id} className={`conv-msg user pending${editable(q) ? " unsent" : ""}${editing?.id === q.id && editable(q) ? " editing" : ""}`}>
             <div className="conv-head">
               <b>You</b>

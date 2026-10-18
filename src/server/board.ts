@@ -491,7 +491,14 @@ export class Board {
       this.dispatch(slug);
       return this.store.getTicket(slug, id)!;
     }
-    this.start(slug, id, chat);
+    // The user's message is saved until Claude reads it: Stop before then leaves it unsent, not lost.
+    if (opts.peer || opts.hostWake || opts.followUp) this.start(slug, id, chat);
+    else {
+      const msg: QueuedMessage = { id: crypto.randomUUID(), text, at: nowIso(), state: "queued", ...flags(opts) };
+      this.start(slug, id, chat, msg.id);
+      // Added once the run is registered, so the chat never shows it as waiting with no run behind it.
+      this.patch(slug, id, { queued: [...(this.store.getTicket(slug, id)!.queued ?? []), msg] });
+    }
     return this.store.getTicket(slug, id)!;
   }
 
