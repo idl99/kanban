@@ -9,14 +9,21 @@ export interface RunResult {
   stderr: string;
 }
 
-export async function run(cmd: string[], cwd: string, env?: Record<string, string>): Promise<RunResult> {
+/** timeoutMs: the command is killed after that long and fails (code -1, "timed out" in stderr). */
+export async function run(cmd: string[], cwd: string, env?: Record<string, string>, timeoutMs?: number): Promise<RunResult> {
   try {
     const p = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: env ? { ...process.env, ...env } : undefined });
+    let timedOut = false;
+    const timer = timeoutMs ? setTimeout(() => {
+      timedOut = true;
+      p.kill();
+    }, timeoutMs) : null;
     const [stdout, stderr, code] = await Promise.all([
       new Response(p.stdout).text(),
       new Response(p.stderr).text(),
       p.exited,
-    ]);
+    ]).finally(() => timer && clearTimeout(timer));
+    if (timedOut) return { code: -1, stdout, stderr: `${stderr}${stderr && !stderr.endsWith("\n") ? "\n" : ""}timed out after ${Math.round(timeoutMs! / 1000)}s` };
     return { code, stdout, stderr };
   } catch (e) {
     return { code: -1, stdout: "", stderr: (e as Error).message };
@@ -71,10 +78,57 @@ export function worktreeDir(profile: Pick<Profile, "path" | "slug">, id: string)
  */
 export const NO_HOOKS = ["git", "-c", "core.hooksPath=/dev/null"];
 
+export const FETCH_TIMEOUT_MS = 30_000;
+
+export class FetchError extends Error {}
+
+/**
+ * Brings origin's copy of the base branch up to date and returns the ref new ticket branches start from:
+ * `origin/<base>`, so a new ticket gets work other tickets already pushed even when the user's local base branch is
+ * behind. Only remote-tracking refs change: never the user's checkout or local branches. Falls back to the local
+ * base when origin has no such branch. Throws FetchError when origin can't be reached (offline, signed out).
+ */
+export function latestBase(repo: string, base: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<string> {
+  // Tickets starting together share one fetch: parallel fetches of the same ref fail on git's ref lock.
+  const key = `${repo}\0${base}`;
+  const running = fetches.get(key);
+  if (running) return running;
+  const p = fetchBase(repo, base, timeoutMs).finally(() => fetches.delete(key));
+  fetches.set(key, p);
+  return p;
+}
+
+const fetches = new Map<string, Promise<string>>();
+
+async function fetchBase(repo: string, base: string, timeoutMs: number): Promise<string> {
+  const name = base.replace(/^origin\//, "");
+  if (name === "HEAD") return base;
+  // No password prompts or ssh questions: a run has nobody to answer them, so they'd hang until the timeout.
+  // The user's own ssh command (env or core.sshCommand, e.g. a custom key) wins: overriding it would break the fetch.
+  const ownSsh = !!process.env.GIT_SSH_COMMAND || (await run(["git", "config", "--get", "core.sshCommand"], repo)).stdout.trim() !== "";
+  const env: Record<string, string> = { GIT_TERMINAL_PROMPT: "0", ...(ownSsh ? {} : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" }) };
+  const cmd = [...NO_HOOKS, "fetch", "--quiet", "--no-tags", "origin", `+refs/heads/${name}:refs/remotes/origin/${name}`];
+  let r = await run(cmd, repo, env, timeoutMs);
+  // Someone else (the user, an editor) fetching at the same moment holds the ref lock: once more, then judge.
+  if (r.code !== 0 && /cannot lock ref|\.lock'?: File exists/i.test(r.stderr)) {
+    await Bun.sleep(500);
+    r = await run(cmd, repo, env, timeoutMs);
+  }
+  if (r.code !== 0) {
+    if (/couldn't find remote ref/i.test(r.stderr)) return base;
+    const last = r.stderr.trim().split("\n").filter(Boolean).at(-1) ?? `git fetch exited with ${r.code}`;
+    throw new FetchError(
+      `Couldn't reach the online copy of your project to get its latest version (offline or signed out?). Check your connection or sign in, then send a message to retry.\n\n${last}`,
+    );
+  }
+  return (await isCommit(repo, `origin/${name}`)) ? `origin/${name}` : base;
+}
+
 export async function addWorktree(repo: string, dir: string, branch: string, base: string): Promise<void> {
   mkdirSync(dirname(dir), { recursive: true });
   const exists = await branchExists(repo, branch);
-  const args = exists ? [...NO_HOOKS, "worktree", "add", dir, branch] : [...NO_HOOKS, "worktree", "add", "-b", branch, dir, base];
+  // --no-track: a branch made from origin/<base> would otherwise track it, and a plain `git push` would then refuse.
+  const args = exists ? [...NO_HOOKS, "worktree", "add", dir, branch] : [...NO_HOOKS, "worktree", "add", "--no-track", "-b", branch, dir, base];
   const r = await run(args, repo);
   if (r.code !== 0) {
     throw new Error(`Could not create an isolated git worktree for this ticket from "${base}". Check the board's base branch in its settings, then send a message to retry.\n\ngit worktree add failed: ${r.stderr.trim()}`);

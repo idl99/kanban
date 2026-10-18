@@ -5,8 +5,10 @@ import { run } from "../src/server/git";
 import { parseSession } from "../src/server/session";
 import type { Profile } from "../src/server/types";
 import {
-  applyDetection, copySetupFiles, detectSetup, parseSetupBlock, prepareWorktree, runShell, withSetup, type SetupResult,
+  applyDetection, copySetupFiles, detectMissing, detectSetup, parseSetupBlock, prepareWorktree, runShell, setupBlock, withBoardText, type SetupResult,
 } from "../src/server/worktree-setup";
+import { Store } from "../src/server/store";
+import { setupText } from "../src/ticket-cli";
 import { makeRepo, tempDir } from "./helpers";
 
 function write(root: string, rel: string, text = "x\n") {
@@ -61,6 +63,7 @@ test("each lockfile maps to its install command", async () => {
   for (const [file, cmd] of cases) {
     const repo = await makeRepo();
     write(repo, file);
+    await commit(repo);
     expect((await detectSetup(repo)).setupCommand).toBe(cmd);
   }
 });
@@ -75,6 +78,41 @@ test("git-ignored folders and non-git folders are not scanned", async () => {
   write(plain, "bun.lock");
   write(plain, ".env");
   expect(await detectSetup(plain)).toMatchObject({ copyFiles: [], setupCommand: "" });
+});
+
+test("only lockfiles in version history count: an untracked folder is left out", async () => {
+  const repo = await makeRepo();
+  write(repo, "expo/package-lock.json");
+  write(repo, "next/package-lock.json");
+  await commit(repo);
+  write(repo, "marketing-video/package-lock.json");
+  write(repo, "yarn.lock");
+  const d = await detectSetup(repo);
+  expect(d.setupCommand).toBe("(cd expo && npm ci) && (cd next && npm ci)");
+  expect(d.setupFrom).toEqual(["expo/package-lock.json", "next/package-lock.json"]);
+});
+
+test("on daemon start an unedited guess is guessed again; an edited command stays", async () => {
+  const store = new Store(tempDir("ck-home-"));
+  const repo = await makeRepo();
+  write(repo, "expo/package-lock.json");
+  await commit(repo);
+  write(repo, "marketing-video/package-lock.json");
+  const old = { at: "t", copyFiles: [], setupCommand: "(cd expo && npm ci) && (cd marketing-video && npm ci)", setupFrom: [] };
+  const base = { name: "b", path: repo, baseBranch: "main", maxParallel: 1, createdAt: "" };
+  store.saveProfile({ ...base, slug: "guessed", setupCommand: old.setupCommand, setupDetected: old });
+  store.saveProfile({ ...base, slug: "edited", setupCommand: "make deps", setupDetected: old });
+  store.saveProfile({ ...base, slug: "fresh" });
+  const updated: string[] = [];
+  await detectMissing(store, (p) => updated.push(p.slug));
+  expect(updated.sort()).toEqual(["fresh", "guessed"]);
+  expect(store.getProfile("guessed")).toMatchObject({ setupCommand: "(cd expo && npm ci)", setupDetected: { setupCommand: "(cd expo && npm ci)" } });
+  expect(store.getProfile("edited")!.setupCommand).toBe("make deps");
+  expect(store.getProfile("fresh")!.setupCommand).toBe("(cd expo && npm ci)");
+  // Already right: nothing to update on the next start.
+  updated.length = 0;
+  await detectMissing(store, (p) => updated.push(p.slug));
+  expect(updated).toEqual([]);
 });
 
 test("applyDetection keeps values the user set unless asked to overwrite", () => {
@@ -128,17 +166,35 @@ test("prepareWorktree copies files before running the setup command, and keeps t
   expect(failed).toMatchObject({ ok: false, exitCode: 1, output: "boom" });
 });
 
-test("setup block round-trips through the prompt and becomes a row in the chat", () => {
-  const r: SetupResult = { copied: [".env"], missing: [], command: "bun install", ok: false, exitCode: 1, timedOut: false, output: "error: </ckanban-setup> oops", durationMs: 1200 };
-  const prompt = withSetup("Fix the bug\n\n<ckanban-context note=\"Board started work\">do it</ckanban-context>", r);
-  expect(prompt).toContain("failed (exit 1)");
-  expect(parseSetupBlock(prompt)).toEqual(r);
-  const line = JSON.stringify({ type: "user", uuid: "u1", timestamp: "2026-01-01T00:00:00Z", message: { role: "user", content: prompt } });
-  const entry = parseSession(line).entries[0];
+test("`ticket setup` output ends with the setup block; the chat shows it as a row after that Bash call", () => {
+  const r: SetupResult = { copied: [], missing: [], command: "npm ci", ok: false, exitCode: 1, timedOut: false, output: "error: </ckanban-setup> oops", durationMs: 1200 };
+  const out = setupText({ status: "ran", result: r });
+  expect(out).toStartWith("`npm ci` failed (exit 1) after 1s.");
+  expect(parseSetupBlock(out)).toEqual(r);
+  expect(parseSetupBlock(setupBlock(r))).toEqual(r);
+  expect(setupText({ status: "already-done" })).toContain("Already done");
+  const lines = [
+    { type: "assistant", uuid: "a1", timestamp: "2026-01-01T00:00:00Z", message: { role: "assistant", content: [{ type: "tool_use", id: "tu1", name: "Bash", input: { command: "bun /x/cli.ts ticket setup p/t_1" } }] } },
+    { type: "user", uuid: "u1", timestamp: "2026-01-01T00:00:05Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: out, is_error: true }] } },
+    // Other commands printing the same text don't make a row.
+    { type: "assistant", uuid: "a2", timestamp: "", message: { role: "assistant", content: [{ type: "tool_use", id: "tu2", name: "Bash", input: { command: "cat log.txt" } }] } },
+    { type: "user", uuid: "u2", timestamp: "", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu2", content: out }] } },
+  ].map((l) => JSON.stringify(l)).join("\n");
+  const rows = parseSession(lines).entries.filter((e) => e.setup);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ uuid: "tu1:setup", kind: "board", text: "", setup: r });
+});
+
+test("withBoardText keeps board text inside board instructions", () => {
+  expect(withBoardText("Fix\n\n<ckanban-context note=\"x\">do</ckanban-context>", "NOTE", "Setup")).toBe("Fix\n\n<ckanban-context note=\"x\">do</ckanban-context>\n\nNOTE");
+  const raw = withBoardText("hello", "NOTE", "Setup");
+  expect(raw).toBe("hello\n\n<ckanban-context note=\"Setup\">\nNOTE\n</ckanban-context>");
+  expect(parseSession(JSON.stringify({ type: "user", uuid: "u", timestamp: "", message: { role: "user", content: raw } })).entries[0]).toMatchObject({ text: "hello" });
+});
+
+test("setup blocks in older run prompts still become a row", () => {
+  const r: SetupResult = { copied: [".env"], missing: [], command: "bun install", ok: true, exitCode: 0, timedOut: false, output: "", durationMs: 900 };
+  const prompt = withBoardText("Fix the bug", setupBlock(r), "Worktree setup");
+  const entry = parseSession(JSON.stringify({ type: "user", uuid: "u1", timestamp: "", message: { role: "user", content: prompt } })).entries[0];
   expect(entry).toMatchObject({ kind: "text", text: "Fix the bug", setup: r });
-  // A prompt with no board instructions gets its own context tag, so the chat doesn't show the block as typed text.
-  const raw = withSetup("hello", { ...r, ok: true, exitCode: 0 });
-  const e2 = parseSession(JSON.stringify({ type: "user", uuid: "u2", timestamp: "", message: { role: "user", content: raw } })).entries[0];
-  expect(e2).toMatchObject({ text: "hello", setup: { ok: true } });
-  expect(withSetup("same", null)).toBe("same");
 });

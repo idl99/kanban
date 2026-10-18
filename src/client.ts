@@ -4,6 +4,7 @@ import { dirname, isAbsolute, resolve, sep } from "node:path";
 import type { HuddlePresetView } from "./server/huddle-presets";
 import { HUDDLE_AGENT_ENV, HUDDLE_HEADER, SOURCE_HEADER, type RosterEntry } from "./server/huddle-roster";
 import type { HuddleTemplateView } from "./server/huddle-templates";
+import type { SetupOutcome } from "./server/worktree-setup";
 import { RUN_HEADER } from "./server/scheduler";
 import { defaultRoot, Store } from "./server/store";
 import { STATUSES, type HuddleFinding, type HuddleLearning, type HuddleMessage, type HuddleMode, type Status, type TicketMode } from "./server/types";
@@ -254,7 +255,7 @@ export class BoardClient {
     return this.base;
   }
 
-  private async req<T>(method: string, path: string, body?: unknown, extra: Record<string, string> = {}): Promise<T> {
+  private async req<T>(method: string, path: string, body?: unknown, extra: Record<string, string> = {}, long = false): Promise<T> {
     let res: Response;
     const headers = { ...(body === undefined ? {} : { "content-type": "application/json" }), ...extra };
     try {
@@ -262,7 +263,9 @@ export class BoardClient {
         method,
         headers: Object.keys(headers).length ? headers : undefined,
         body: body === undefined ? undefined : JSON.stringify(body),
-      });
+        // long: a request that waits minutes for its answer (Bun's fetch gives up on a silent response otherwise).
+        ...(long ? { timeout: false } : {}),
+      } as RequestInit);
     } catch {
       throw new ClientError(DAEMON_DOWN);
     }
@@ -297,6 +300,8 @@ export class BoardClient {
   updateTicket = (slug: string, id: string, patch: TicketPatch, run?: string | null) => this.req<TicketInfo>("PATCH", this.t(slug, id), patch, this.by(run));
   deleteTicket = (slug: string, id: string) => this.req<void>("DELETE", this.t(slug, id));
   chat = (slug: string, id: string, text: string, run?: string | null) => this.req<TicketInfo>("POST", `${this.t(slug, id)}/chat`, { text }, this.by(run));
+  /** Waits for the setup command to finish (it may take minutes). */
+  setup = (slug: string, id: string, run?: string | null) => this.req<SetupOutcome>("POST", `${this.t(slug, id)}/setup`, {}, this.by(run), true);
   stop = (slug: string, id: string, run?: string | null) => this.req<{ stopped: boolean }>("POST", `${this.t(slug, id)}/stop`, {}, this.by(run));
   listComments = (slug: string, id: string) => this.req<CommentInfo[]>("GET", `${this.t(slug, id)}/comments`);
   comment = (slug: string, id: string, text: string, run?: string | null) =>

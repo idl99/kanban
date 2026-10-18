@@ -279,14 +279,14 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
                 : <span id="stall-hint" className="muted small">A silent run lands in the Inbox with Stop / Keep waiting / Restart; nothing is killed. Runs waiting on background tasks don't count. 0: off.</span>}
             </label>
             <div className="form-section">
-              <span>Worktree setup</span>
+              <span>Preparing each ticket's copy</span>
               <button type="button" className="btn small ghost link" onClick={detectAgain} disabled={detecting}>
                 {detecting ? "Detecting…" : "↺ Detect again"}
               </button>
             </div>
             <div className="setup-explain">
               Each ticket works in a fresh copy of your repo (a git worktree). Git-ignored files like <code>.env</code> and{" "}
-              <code>node_modules</code> aren't there. These settings prepare that copy before Claude starts.{" "}
+              <code>node_modules</code> aren't there. The files below are copied in when the copy is made; the setup command runs only when Claude needs the project's dependencies (to build, test or run it), so other tickets start right away.{" "}
               {(filesAuto || setupAuto) && <b>We filled them in from your folder, so you can leave them as they are.</b>}
             </div>
             <div className="field">
@@ -314,7 +314,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
                 placeholder="e.g. npm ci" />
               <span className="muted small setup-hint">
                 {setupAuto && detected?.setupFrom.length ? `From ${detected.setupFrom.join(", ")}. ` : ""}
-                Runs before Claude starts; if it fails, Claude still starts and sees the error.
+                Runs the first time Claude needs it in a ticket; if it fails, Claude sees the error.
               </span>
             </label>
             <label>

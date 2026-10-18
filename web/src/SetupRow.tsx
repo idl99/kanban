@@ -4,13 +4,13 @@ function secs(ms: number): string {
   return ms < 10_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms / 1000)}s`;
 }
 
-/** "Worktree setup · 14.2s": files the board copied into the new worktree and the setup command, output on click. */
+/** "Installed project dependencies · 14.2s": the board's setup command (and files copied, older runs), output on click. */
 export function SetupRow({ setup, old }: { setup: SetupResult; old?: boolean }) {
   const failed = setup.ok === false;
   return (
     <details className={`setup-row${failed ? " failed" : ""}${old ? " inherited" : ""}`}>
       <summary>
-        Worktree setup · {secs(setup.durationMs)}
+        {!setup.command ? "Copied files into this copy of the folder" : failed ? "Installing project dependencies" : "Installed project dependencies"} · {secs(setup.durationMs)}
         {failed && <span className="setup-fail"> · failed</span>}
       </summary>
       <div className="setup-lines">
@@ -23,7 +23,7 @@ export function SetupRow({ setup, old }: { setup: SetupResult; old?: boolean }) 
           </div>
         )}
         {setup.output && <pre className="setup-output">{setup.output}</pre>}
-        {failed && <div className="muted small">Claude started anyway and was shown this output.</div>}
+        {failed && <div className="muted small">Claude was shown this output.</div>}
       </div>
     </details>
   );

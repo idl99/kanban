@@ -5,8 +5,10 @@ import type { Store } from "./store";
 import type { Profile, SetupDetection } from "./types";
 
 /**
- * Worktree setup: a fresh git worktree lacks git-ignored files (.env, node_modules), so before Claude starts the
- * board copies the board's copyFiles from the main checkout and runs its setupCommand there. Both are auto-detected.
+ * Worktree setup: a fresh git worktree lacks git-ignored files (.env, node_modules). The board copies the board's
+ * copyFiles from the main checkout when it makes the worktree, and runs its setupCommand there only when the ticket's
+ * Claude asks for it (`ckanban ticket setup`), so tickets that never build or test don't wait for an install. Both are
+ * auto-detected.
  */
 
 export const SETUP_TIMEOUT_MS = 10 * 60_000;
@@ -63,6 +65,13 @@ async function ignored(repo: string, paths: string[]): Promise<Set<string>> {
   return new Set(r.code === 0 ? r.stdout.split("\n").map((l) => l.trim()).filter(Boolean) : []);
 }
 
+/** Which of these repo-relative file paths git tracks. */
+async function trackedFiles(repo: string, paths: string[]): Promise<Set<string>> {
+  if (!paths.length) return new Set();
+  const r = await run(["git", "ls-files", "--", ...paths], repo);
+  return new Set(r.code === 0 ? r.stdout.split("\n").map((l) => l.trim()).filter(Boolean) : []);
+}
+
 /** Looks at the folder: git-ignored .env* files to copy and lockfiles that say how to install dependencies. */
 export async function detectSetup(repo: string): Promise<SetupDetection> {
   const at = new Date().toISOString();
@@ -76,10 +85,13 @@ export async function detectSetup(repo: string): Promise<SetupDetection> {
   const ignoredEnvs = await ignored(repo, envs);
   const copyFiles = envs.filter((f) => ignoredEnvs.has(f));
 
+  // Only lockfiles in version history: a ticket's copy has no untracked folders, so a command for one would fail.
+  const candidates = dirs.flatMap((d) => files(join(repo, d)).filter((f) => LOCKFILES.some((g) => g.some((l) => l.file === f))).map((f) => (d ? `${d}/${f}` : f)));
+  const tracked = await trackedFiles(repo, candidates);
   const commands: string[] = [];
   const setupFrom: string[] = [];
   for (const d of dirs) {
-    const present = new Set(files(join(repo, d)));
+    const present = new Set(files(join(repo, d)).filter((f) => tracked.has(d ? `${d}/${f}` : f)));
     for (const group of LOCKFILES) {
       const hit = group.find((l) => present.has(l.file));
       if (!hit) continue;
@@ -100,15 +112,24 @@ export function applyDetection(p: Profile, d: SetupDetection, overwrite = false)
   };
 }
 
-/** Boards made before worktree setup existed: detect once (on daemon start), keeping any values already set. */
+/**
+ * On daemon start: boards made before worktree setup existed are detected once, keeping any values already set. A
+ * setup command still equal to an earlier guess (the user never edited it) is guessed again, so a fixed guess (only
+ * folders in version history) reaches boards that have one; a command the user edited stays.
+ */
 export async function detectMissing(store: Store, onUpdated: (p: Profile) => void): Promise<void> {
   for (const p of store.listProfiles()) {
-    if (p.setupDetected !== undefined || !existsSync(p.path)) continue;
+    const guessed = !!p.setupDetected && p.setupCommand === p.setupDetected.setupCommand;
+    if ((p.setupDetected !== undefined && !guessed) || !existsSync(p.path)) continue;
     try {
       const d = await detectSetup(p.path);
       const now = store.getProfile(p.slug);
-      if (!now || now.setupDetected !== undefined) continue;
-      const next = applyDetection(now, d);
+      if (!now) continue;
+      let next: Profile;
+      if (now.setupDetected === undefined) next = applyDetection(now, d);
+      else if (now.setupDetected && now.setupCommand === now.setupDetected.setupCommand && d.setupCommand !== now.setupCommand) {
+        next = { ...now, setupCommand: d.setupCommand, setupDetected: { ...now.setupDetected, at: d.at, setupCommand: d.setupCommand, setupFrom: d.setupFrom } };
+      } else continue;
       store.saveProfile(next);
       onUpdated(next);
     } catch (e) {
@@ -270,26 +291,22 @@ export async function prepareWorktree(
 const SETUP_TAG = "ckanban-setup";
 export const SETUP_BLOCK_RE = /<ckanban-setup>([\s\S]*?)<\/ckanban-setup>/;
 
-/** The setup result as a prompt block: a note for Claude plus the data the chat row is drawn from. */
+/** The setup result as a block (ends `ckanban ticket setup`'s output): the data the chat's setup row is drawn from. */
 export function setupBlock(r: SetupResult): string {
-  const lines = [`Before you started, the board prepared this worktree (it copied git-ignored files from the main checkout and ran the board's setup command).`];
-  if (r.ok === false) {
-    lines.push(`The setup command \`${r.command}\` ${r.timedOut ? "timed out" : `failed (exit ${r.exitCode ?? "signal"})`}; the last lines of its output are in "output" below. Dependencies may be missing: fix or work around that first if the task needs them.`);
-  }
-  if (r.missing.length) lines.push(`Not found, so not copied: ${r.missing.join(", ")}.`);
   // "<" escaped so command output can't close the tag early.
   const json = JSON.stringify(r).replace(/</g, "\\u003c");
-  return `${lines.join(" ")}\n<${SETUP_TAG}>${json}</${SETUP_TAG}>`;
+  return `<${SETUP_TAG}>${json}</${SETUP_TAG}>`;
 }
 
-/** Adds the setup block to a prompt, inside board instructions so the chat shows the row, not the text. */
-export function withSetup(prompt: string, r: SetupResult | null): string {
-  if (!r) return prompt;
-  const block = setupBlock(r);
+/** Adds board text to a prompt inside its board instructions (or new ones), so the chat doesn't show it as typed. */
+export function withBoardText(prompt: string, text: string, note: string): string {
   return prompt.includes("<ckanban-context")
-    ? `${prompt}\n\n${block}`
-    : `${prompt}\n\n<ckanban-context note="Worktree setup">\n${block}\n</ckanban-context>`;
+    ? `${prompt}\n\n${text}`
+    : `${prompt}\n\n<ckanban-context note="${note}">\n${text}\n</ckanban-context>`;
 }
+
+/** What `ckanban ticket setup` got back from the daemon. */
+export type SetupOutcome = { status: "ran"; result: SetupResult } | { status: "already-done" | "no-command" | "no-worktree" };
 
 export function parseSetupBlock(text: string): SetupResult | null {
   const m = SETUP_BLOCK_RE.exec(text);

@@ -1,11 +1,12 @@
 // `ckanban profiles`, `ckanban ticket ...` and `ckanban mcp ...`: the board from a terminal or another agent.
 import { readFileSync } from "node:fs";
 import {
-  assertCanChange, BoardClient, bugReportText, ClientError, parseMode, parseStatus, profileList, resolveProfile, runProfile,
+  assertCanChange, BoardClient, RUN_ENV, bugReportText, ClientError, parseMode, parseStatus, profileList, resolveProfile, runProfile,
   ticketLine, ticketText, type TicketPatch,
 } from "./client";
 import { AGENT_IDS, AgentRegistry, type AgentId } from "./server/agents";
 import { normalizeTags } from "./server/tags";
+import { setupBlock, type SetupOutcome } from "./server/worktree-setup";
 
 export const TICKET_USAGE = `  ckanban profiles     List boards (profiles) and their folders
   ckanban ticket list [--status <s>]
@@ -17,6 +18,9 @@ export const TICKET_USAGE = `  ckanban profiles     List boards (profiles) and t
   ckanban ticket comment <id> <text>
   ckanban ticket stop <id>
   ckanban ticket delete <id>
+  ckanban ticket setup [<board>/]<id>
+                       Install a ticket's project dependencies (the board's setup command)
+                       in its copy of the folder; waits until done. Runs ask for this.
   ckanban ticket report-bug [<id>] --title <t> [--body <md> | --body-file <f>] [--no-logs]
                        File a ckanban bug as a GitHub issue (with <id>: attach that
                        ticket's details and last run log). Needs gh, else prints a link.
@@ -120,10 +124,12 @@ export async function ticketCommand(argv: string[], io: CliIo = defaultIo()): Pr
   const [action, id, ...rest] = p.positional;
   const json = !!p.flags.json;
   const print = (data: unknown, text: string) => io.out(json ? JSON.stringify(data, null, 2) : text);
-  const known = ["list", "show", "create", "update", "move", "chat", "comment", "stop", "delete", "report-bug"];
+  const known = ["list", "show", "create", "update", "move", "chat", "comment", "stop", "delete", "report-bug", "setup"];
   if (!action || !known.includes(action)) throw new ClientError(`usage:\n${TICKET_USAGE}`);
   // Filing a bug doesn't touch the board (and needs no board without a ticket id), so runs may do it.
   if (action === "report-bug") return reportBug(p, id, io);
+  // Installing a ticket's dependencies is what its run asks for, so runs may do it.
+  if (action === "setup") return setupTicket(p, id, io);
   if (!["list", "show"].includes(action)) assertCanChange(io.env);
   const slug = resolveProfile(await io.client.listProfiles(), {
     explicit: flagStr(p, "profile") ?? runProfile(io.env), cwd: io.cwd,
@@ -205,6 +211,34 @@ export async function ticketCommand(argv: string[], io: CliIo = defaultIo()): Pr
       return print({ deleted: tid }, `Deleted ${tid}.`);
     }
   }
+}
+
+async function setupTicket(p: ParsedArgs, ref: string | undefined, io: CliIo): Promise<void> {
+  const target = need(ref, "ticket setup [<board>/]<id>");
+  const cut = target.indexOf("/");
+  const tid = cut >= 0 ? target.slice(cut + 1) : target;
+  const slug = resolveProfile(await io.client.listProfiles(), {
+    explicit: (cut >= 0 ? target.slice(0, cut) : undefined) ?? flagStr(p, "profile") ?? runProfile(io.env), cwd: io.cwd,
+  }).slug;
+  const r = await io.client.setup(slug, need(tid, "ticket setup [<board>/]<id>"), io.env[RUN_ENV]);
+  if (p.flags.json) io.out(JSON.stringify(r, null, 2));
+  else io.out(setupText(r));
+  if (r.status === "ran" && !r.result.ok) throw new ClientError(r.result.timedOut ? "Setup timed out." : `Setup failed (exit ${r.result.exitCode ?? "signal"}).`);
+}
+
+/** What `ticket setup` prints; a run's setup ends with the block the chat draws its setup row from. */
+export function setupText(r: SetupOutcome): string {
+  if (r.status !== "ran") {
+    return {
+      "already-done": "Already done: this ticket's dependencies are installed.",
+      "no-command": "Nothing to install: this board has no setup command.",
+      "no-worktree": "Nothing to install: this ticket works in the project folder itself, not a separate copy.",
+    }[r.status];
+  }
+  const x = r.result;
+  const secs = Math.round(x.durationMs / 1000);
+  const head = x.ok ? `Installed the project's dependencies in ${secs}s (\`${x.command}\`).` : `\`${x.command}\` ${x.timedOut ? "timed out" : `failed (exit ${x.exitCode ?? "signal"})`} after ${secs}s. Last lines of its output:`;
+  return [head, x.ok ? "" : x.output, setupBlock(x)].filter(Boolean).join("\n");
 }
 
 async function reportBug(p: ParsedArgs, id: string | undefined, io: CliIo): Promise<void> {

@@ -452,6 +452,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const renderBlock = (b: Block, old: boolean) => {
     const el = renderEntry(b, old);
     if (b.kind !== "entry" || !b.e.setup) return el;
+    // The setup Claude asked for (`ckanban ticket setup`): just the row.
+    if (b.e.kind === "board" && !b.e.text) return <SetupRow key={b.e.uuid} setup={b.e.setup} old={old} />;
     return <Fragment key={b.e.uuid}><SetupRow setup={b.e.setup} old={old} />{el}</Fragment>;
   };
   const renderEntry = (b: Block, old: boolean) => {

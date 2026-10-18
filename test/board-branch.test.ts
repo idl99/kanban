@@ -146,41 +146,6 @@ test("a run waiting on a background task shows it on the ticket, then finishes w
   }
 });
 
-test("worktree setup copies files and runs the setup command before Claude starts", async () => {
-  const p = await setup();
-  writeFileSync(join(p.path, ".gitignore"), ".env\n");
-  await run(["git", "add", "-A"], p.path);
-  await run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "ignore"], p.path);
-  writeFileSync(join(p.path, ".env"), "SECRET=1\n");
-  store.saveProfile({ ...p, copyFiles: [".env", "missing.env"], setupCommand: "cat .env > installed.txt && echo deps ok" });
-  const t = await board.createTicket("p", { title: "Setup", body: "", status: "ready" });
-  await board.whenIdle();
-  const got = store.getTicket("p", t.id)!;
-  expect(got.status).toBe("review");
-  expect(readFileSync(join(got.worktree!, ".env"), "utf8")).toBe("SECRET=1\n");
-  expect(readFileSync(join(got.worktree!, "installed.txt"), "utf8")).toBe("SECRET=1\n");
-  const prompt = readArgs()[0].prompt;
-  expect(prompt).toContain("<ckanban-setup>");
-  expect(prompt).toContain('"copied":[".env"]');
-  expect(prompt).toContain('"missing":["missing.env"]');
-  expect(prompt).toContain("deps ok");
-});
-
-test("a failing setup command doesn't block the run: Claude starts and sees the output", async () => {
-  const p = await setup();
-  store.saveProfile({ ...p, setupCommand: "echo cannot install; exit 7" });
-  const t = await board.createTicket("p", { title: "Fails", body: "", status: "ready" });
-  await board.whenIdle();
-  expect(store.getTicket("p", t.id)).toMatchObject({ status: "review", outcome: "done" });
-  const prompt = readArgs()[0].prompt;
-  expect(prompt).toContain("failed (exit 7)");
-  expect(prompt).toContain("cannot install");
-  // Told once: the next run's prompt has no setup block.
-  await board.chat("p", t.id, "again");
-  await board.whenIdle();
-  expect(readArgs().at(-1)!.prompt).not.toContain("<ckanban-setup>");
-});
-
 test("cleanup command runs in the worktree before it is removed", async () => {
   const p = await setup();
   const marker = join(tempDir("ck-marker-"), "cleaned.txt");

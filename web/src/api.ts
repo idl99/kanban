@@ -114,7 +114,7 @@ export interface Profile {
   createdAt: string;
   /** Git-ignored files copied into each new worktree (paths or globs relative to the folder). */
   copyFiles?: string[];
-  /** Runs in each new worktree before Claude starts. */
+  /** Installs dependencies in a ticket's worktree, only when its Claude asks for it. */
   setupCommand?: string;
   /** Runs in a worktree before it is removed. */
   cleanupCommand?: string;

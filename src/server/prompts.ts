@@ -702,3 +702,9 @@ If any MUST finding is still unfixed, do NOT land: end with status "blocked" and
 
 ${RESULT_RULE}`, { huddle: h.id });
 }
+
+/** A work run in a worktree whose setup command hasn't run: how to run it, only when the task needs it. */
+export function setupNote(slug: string, id: string): string {
+  return `# Project dependencies
+This copy of the project doesn't have its dependencies installed yet (the board installs them only when a ticket needs them). Before you build, test, run or install anything that needs them, run \`${helperCommand()} ticket setup ${slug}/${id}\` with Bash and a long timeout (10 minutes: it can take a few). It prints the result; if it fails, fix or work around that first. Skip it when the task doesn't need the project's code to run (writing, answering questions, reading code).`;
+}

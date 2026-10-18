@@ -18,7 +18,7 @@ export interface Profile {
   createdAt: string;
   /** Git-ignored files (paths or globs relative to the board folder) copied into each new worktree. */
   copyFiles?: string[];
-  /** Runs in each new worktree (user's shell) after copyFiles, before Claude starts. */
+  /** Installs dependencies in a ticket's worktree (user's shell), only when its Claude asks (`ckanban ticket setup`). */
   setupCommand?: string;
   /** Runs in a worktree before the board removes it. */
   cleanupCommand?: string;
@@ -109,6 +109,8 @@ export interface Ticket {
   order: number;
   sessionId: string | null;
   worktree: string | null;
+  /** The worktree was made but the board's setup command hasn't succeeded in it yet (runs on demand, see Board.runSetup). */
+  setupPending?: boolean;
   /** Folder of a linked pre-existing Claude session (runs happen here instead of a worktree). */
   workdir?: string | null;
   branch: string | null;

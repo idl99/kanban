@@ -5,14 +5,14 @@ import { extractFinalText, summarizeEvent } from "./activity";
 import { copyAttachments, deleteAttachments, localizeAttachments, localizeUrls, referencedAttachments } from "./attachments";
 import type { Bus } from "./events";
 import { isSessionLive as psSessionLive, sessionTitle } from "./claude";
-import { addWorktree, branchesWithPrefix, branchExists, isGitRepo, listWorktrees, removeWorktree, repoKind, resolveBaseBranch, worktreeDir, type RepoKind } from "./git";
+import { addWorktree, branchesWithPrefix, branchExists, FetchError, isGitRepo, latestBase, listWorktrees, removeWorktree, repoKind, resolveBaseBranch, worktreeDir, type RepoKind } from "./git";
 import { MOVE_TO_PLANNING_RE, STAY_RE } from "./session";
 import { forkSessionFile } from "./fork";
 import { saveMockups } from "./mockups";
 import { macBanner } from "./notify";
 import { type HostHuddle, ticketAttention, userWaitReason } from "./attention";
 import type { SessionSummary } from "./session";
-import { chatPrompt, firstRunPrompt, freshSessionPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
+import { chatPrompt, firstRunPrompt, freshSessionPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, setupNote, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
 import {
   childrenOf, DEFAULT_MAX_CONCURRENT, findCycle, isComplete, normalizeNeeds, planActive, planProblem, planStep, planTable, resolveDeps, wakeupCap,
 } from "./plan";
@@ -28,7 +28,9 @@ import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
 import { normalizeTags } from "./tags";
 import { autoHuddlesOn, runCapFor, workspaceOf, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
-import { CLEANUP_TIMEOUT_MS, prepareWorktree, runShell, withSetup, type SetupResult } from "./worktree-setup";
+import { CLEANUP_TIMEOUT_MS, copySetupFiles, prepareWorktree, runShell, SETUP_TIMEOUT_MS, withBoardText, type SetupOutcome, type SetupResult } from "./worktree-setup";
+
+const INSTALLING = "Installing project dependencies…";
 import { nowIso, slugify } from "./util";
 
 export interface BoardOptions {
@@ -225,10 +227,8 @@ export class ConflictError extends Error {}
 
 export class Board {
   private runs = new Map<string, ActiveRun>();
-  /** Worktree setups running now (stopping the ticket's run aborts them), per ticket key. */
-  private setups = new Map<string, { done: Promise<void>; abort: AbortController }>();
-  /** Setup results the ticket's next run tells Claude about (and shows as a row in the chat). */
-  private setupResults = new Map<string, SetupResult>();
+  /** Setup commands running now (`ckanban ticket setup`; stopping the ticket's run aborts them), per ticket key. */
+  private setups = new Map<string, { done: Promise<SetupOutcome>; abort: AbortController }>();
   private shuttingDown = false;
   /** A restart waits for active runs to finish: no new run starts until then (see requestRestart). */
   private restartPending = false;
@@ -676,7 +676,8 @@ export class Board {
       const msg = (e as Error).message;
       this.store.addComment(slug, id, "ai", `Could not start: ${msg}`);
       // refineStarted back off: moving the card into Planning again retries the interview.
-      this.patch(slug, id, { ...this.endStatus(run), outcome: "failed", error: msg, lastActivity: null, ...(run.chat?.mode === "refine" ? { refineStarted: false } : {}) });
+      // Offline or signed out (FetchError): nothing is wrong with the ticket; the user fixes it and sends a message.
+      this.patch(slug, id, { ...this.endStatus(run), outcome: e instanceof FetchError ? "blocked" : "failed", error: msg, lastActivity: null, ...(run.chat?.mode === "refine" ? { refineStarted: false } : {}) });
       return;
     }
     if (this.shuttingDown) return;
@@ -708,7 +709,7 @@ export class Board {
     const outputDir = this.store.outputsDir(slug, id);
     // Start fresh session: a work run in a new session that picks up from the branch (until that session exists).
     const fresh = !!t.freshSession && !run.chat;
-    let prompt = resume ?? withSetup(localizeAttachments(run.chat?.raw
+    let prompt = resume ?? this.withSetupNote(slug, t, profile, session, refine, localizeAttachments(run.chat?.raw
       ? run.chat.text
       : run.chat
       ? chatPrompt(t, run.chat.text, run.chat.mode, outputDir, !!profile.artifacts, session.repo, session.inPlace)
@@ -720,7 +721,7 @@ export class Board {
         schedule: t.scheduleId ? { id: t.scheduleId, name: this.store.getSchedule(slug, t.scheduleId)?.name ?? null, board: slug } : undefined,
         autoHuddles: autoHuddlesOn(profile), artifacts: !!profile.artifacts,
       })
-      : resumePrompt(t, newComments, outputDir, autoHuddlesOn(profile), !!profile.artifacts, session.repo, session.inPlace, { folder: profile.path, baseBranch: profile.baseBranch }), this.store.attachmentsDir), this.takeSetup(slug, id));
+      : resumePrompt(t, newComments, outputDir, autoHuddlesOn(profile), !!profile.artifacts, session.repo, session.inPlace, { folder: profile.path, baseBranch: profile.baseBranch }), this.store.attachmentsDir));
     // A slash command only runs when it is the whole message: Claude Code passes everything after the name to
     // it as arguments (the board's note too). So the command goes alone and the board's instructions go in
     // the system prompt for this run.
@@ -1208,17 +1209,18 @@ export class Board {
           if (profile.baseBranch) patch.notice = `Base branch "${profile.baseBranch}" was not found in this repo, so the board now uses "${base}".`;
         }
         const fresh = !existsSync(dir);
-        if (fresh) await addWorktree(profile.path, dir, branch, base);
+        if (fresh) {
+          // A new branch starts from the remote's latest base (other tickets push there); an existing one keeps its history.
+          const from = repo === "remote" && !(await branchExists(profile.path, branch)) ? await latestBase(profile.path, base) : base;
+          await addWorktree(profile.path, dir, branch, from);
+          // Only the cheap part now; the setup command runs when Claude asks for it (runSetup).
+          this.copyWorktreeFiles(slug, id, profile, dir);
+          patch.setupPending = true;
+        }
         patch.worktree = dir;
         patch.branch = branch;
-        if (fresh) {
-          t = this.patch(slug, id, patch);
-          await this.setupWorktree(slug, id, profile, dir);
-        }
       }
     }
-    // A worktree made elsewhere (branchTicket) may still be setting up.
-    await this.setups.get(this.key(slug, id))?.done;
     // In place on a repo with commits: the folder's HEAD at the first run is what the Changes tab diffs against.
     if (!t.workdir && !t.worktree && !patch.worktree && !t.baseSha && (repo === "local" || repo === "remote")) {
       const head = await runCmd(["git", "rev-parse", "HEAD"], profile.path);
@@ -1238,37 +1240,66 @@ export class Board {
     };
   }
 
-  /**
-   * Copies the board's files into a new worktree and runs its setup command there. Never throws: a failed setup
-   * doesn't block the run, Claude is told about it (see takeSetup).
-   */
-  private setupWorktree(slug: string, id: string, profile: Profile, dir: string): Promise<void> {
-    const key = this.key(slug, id);
-    const abort = new AbortController();
-    const done = (async () => {
-      if (!(profile.copyFiles?.length || profile.setupCommand?.trim())) return;
-      if (profile.setupCommand?.trim()) this.patch(slug, id, { lastActivity: `Setting up worktree: ${profile.setupCommand.trim().split("\n")[0]}` });
-      try {
-        const r = await prepareWorktree(profile.path, dir, profile, { signal: abort.signal, env: { CKANBAN_TICKET: `${slug}/${id}` } });
-        if (r) this.setupResults.set(key, r);
-        if (!this.isRunning(slug, id) && this.store.getTicket(slug, id)) this.patch(slug, id, { lastActivity: null });
-        if (r?.ok === false) console.log(`ticket ${slug}/${id}: worktree setup failed (${r.command}): ${r.output.split("\n").slice(-3).join(" | ")}`);
-      } catch (e) {
-        console.error(`ticket ${slug}/${id}: worktree setup crashed: ${(e as Error).message}`);
-      }
-    })();
-    this.setups.set(key, { done, abort });
-    return done.finally(() => {
-      if (this.setups.get(key)?.done === done) this.setups.delete(key);
-    });
+  /** Work runs in a worktree whose setup command hasn't run yet learn how to run it; planning chats never do. */
+  private withSetupNote(slug: string, t: Ticket, profile: Profile, session: Session, refine: boolean, prompt: string): string {
+    if (refine || !t.setupPending || !t.worktree || session.dir !== t.worktree || !profile.setupCommand?.trim()) return prompt;
+    return withBoardText(prompt, setupNote(slug, t.id), "Setup");
   }
 
-  /** The setup result not yet told to Claude, once. */
-  private takeSetup(slug: string, id: string): SetupResult | null {
+  /** Copies the board's git-ignored files (.env) into a new worktree. Quiet: missing ones are only logged. */
+  private copyWorktreeFiles(slug: string, id: string, profile: Profile, dir: string): void {
+    if (!profile.copyFiles?.length) return;
+    try {
+      const { missing } = copySetupFiles(profile.path, dir, profile.copyFiles);
+      if (missing.length) console.log(`ticket ${slug}/${id}: files to copy not found: ${missing.join(", ")}`);
+    } catch (e) {
+      console.error(`ticket ${slug}/${id}: copying files into the worktree failed: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * Runs the board's setup command in the ticket's worktree, when its Claude asks (`ckanban ticket setup`). Calls while
+   * one runs share it; after a success it isn't run again for this worktree. Never throws for a failed command: the
+   * result carries its output, and Claude decides what to do.
+   */
+  runSetup(slug: string, id: string): Promise<SetupOutcome> {
+    const profile = this.store.getProfile(slug);
+    const t = this.store.getTicket(slug, id);
+    if (!profile || !t) return Promise.reject(new Error(`ticket ${id} not found`));
     const key = this.key(slug, id);
-    const r = this.setupResults.get(key) ?? null;
-    this.setupResults.delete(key);
-    return r;
+    const running = this.setups.get(key);
+    if (running) return running.done;
+    const command = profile.setupCommand?.trim() ?? "";
+    if (!t.worktree || !existsSync(t.worktree)) return Promise.resolve({ status: "no-worktree" });
+    if (!command) return Promise.resolve({ status: "no-command" });
+    if (!t.setupPending) return Promise.resolve({ status: "already-done" });
+    const dir = t.worktree;
+    const abort = new AbortController();
+    const done = (async (): Promise<SetupOutcome> => {
+      this.patch(slug, id, { lastActivity: INSTALLING });
+      let r: SetupResult | null = null;
+      try {
+        r = (await prepareWorktree(profile.path, dir, { setupCommand: command }, {
+          signal: abort.signal, timeoutMs: SETUP_TIMEOUT_MS, env: { CKANBAN_TICKET: `${slug}/${id}` },
+        }))!;
+      } finally {
+        // The worktree may have been removed or replaced meanwhile: only mark the one it ran in.
+        const now = this.store.getTicket(slug, id);
+        if (now) {
+          this.patch(slug, id, {
+            ...(r?.ok && now.worktree === dir ? { setupPending: false } : {}),
+            ...(now.lastActivity === INSTALLING ? { lastActivity: null } : {}),
+          });
+        }
+      }
+      if (!r.ok) console.log(`ticket ${slug}/${id}: setup failed (${r.command}): ${r.output.split("\n").slice(-3).join(" | ")}`);
+      return { status: "ran", result: r };
+    })();
+    this.setups.set(key, { done, abort });
+    done.finally(() => {
+      if (this.setups.get(key)?.done === done) this.setups.delete(key);
+    }).catch(() => {});
+    return done;
   }
 
   /** Removes a ticket's worktree, running the board's cleanup command in it first (its failure never blocks). */
@@ -1804,7 +1835,8 @@ export class Board {
         }
         await addWorktree(profile.path, dir, branch, base);
         worktree = dir;
-        Object.assign(patch, { worktree: dir, branch });
+        this.copyWorktreeFiles(slug, t.id, profile, dir);
+        Object.assign(patch, { worktree: dir, branch, setupPending: true });
       } else {
         // The source works in the project folder itself: so does the branch, with the same Changes base.
         if (src.baseSha) patch.baseSha = src.baseSha;
@@ -1820,8 +1852,6 @@ export class Board {
       forkSessionFile(srcFile, { fromId: src.sessionId, toId: patch.sessionId!, fromCwd, toCwd, rename });
       this.store.copyOutputs(slug, src.id, t.id);
       const out = this.patch(slug, t.id, patch);
-      // In the background: the branch opens at once; its first run waits for the setup (ensureSession).
-      if (worktree) void this.setupWorktree(slug, t.id, profile, worktree);
       return { ticket: out, warning: warnings.join(" ") || null };
     } catch (e) {
       if (worktree) await removeWorktree(profile.path, worktree).catch(() => {});

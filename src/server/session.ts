@@ -80,7 +80,7 @@ export interface SessionEntry {
   peer?: { dir: "in" | "out"; ticketId: string | null };
   /** Huddle messages delivered to this ticket's session (also a peer entry, ticketId null): the huddle's id. */
   huddleId?: string;
-  /** The board prepared a new worktree before this prompt (copied files, setup command): shown as a row before it. */
+  /** A setup the board ran: before this prompt (older runs), or alone (text "") after `ckanban ticket setup`. Shown as a row. */
   setup?: SetupResult;
   /** A user message that ran a slash command (its name, without the slash); text is `/name args`. */
   command?: string;
@@ -306,6 +306,9 @@ const PUBLISHED = /Published (\S+) at (https:\/\/claude\.ai\/(?:code\/)?artifact
 const HELPER_PUBLISH = /\bartifact publish\b/;
 const PUBLISH_TOOL = /(?:^|__)publish_artifact$/;
 
+/** `ckanban ticket setup`: its output ends with the setup block the chat draws a row from. */
+const SETUP_HELPER = /\bticket setup\b/;
+
 function isPublisher(block: any): boolean {
   if (block.name === "Artifact" || PUBLISH_TOOL.test(String(block.name ?? ""))) return true;
   return block.name === "Bash" && typeof block.input?.command === "string" && HELPER_PUBLISH.test(block.input.command);
@@ -403,6 +406,8 @@ export function parseSession(raw: string): ParsedSession {
   const entries: SessionEntry[] = [];
   const artifacts = new Map<string, SessionArtifact>();
   const publishers = new Set<string>();
+  /** Bash calls running `ckanban ticket setup` (by tool_use id). */
+  const setups = new Set<string>();
   /** Card tool calls (by tool_use id) and those whose result was an error: those don't render. */
   const cards = new Set<string>();
   const failed = new Set<string>();
@@ -481,6 +486,10 @@ export function parseSession(raw: string): ParsedSession {
           if (b?.type === "tool_result" && agents.has(b.tool_use_id)) agentResult(agents.get(b.tool_use_id)!, b, ev.toolUseResult, at);
           if (b?.type === "tool_result" && b.is_error && cards.has(b.tool_use_id)) failed.add(b.tool_use_id);
           if (b?.type === "tool_result" && b.is_error) errored.add(b.tool_use_id);
+          if (b?.type === "tool_result" && setups.has(b.tool_use_id)) {
+            const setup = parseSetupBlock(resultText(b.content));
+            if (setup) entries.push({ uuid: `${b.tool_use_id}:setup`, at, role: "assistant", kind: "board", text: "", setup });
+          }
           // Only real publishes: output of the Artifact tool, or of the `ckanban artifact publish`
           // helper / publish_artifact MCP tool headless runs use. Other tools (e.g. Bash grepping a different session's file)
           // can print the same text.
@@ -501,6 +510,7 @@ export function parseSession(raw: string): ParsedSession {
     if (!Array.isArray(content)) continue;
     content.forEach((b: any, i: number) => {
       if (b?.type === "tool_use" && typeof b.id === "string" && isPublisher(b)) publishers.add(b.id);
+      if (b?.type === "tool_use" && typeof b.id === "string" && b.name === "Bash" && SETUP_HELPER.test(String(b.input?.command ?? ""))) setups.add(b.id);
       const id = i ? `${uuid}:${i}` : uuid;
       const card = b?.type === "tool_use" && typeof b.id === "string" ? cardEntry(b) : null;
       if (b?.type === "text" && b.text?.trim()) entries.push({ uuid: id, at, role: "assistant", kind: "text", ...assistantBlock(b.text.trim()) });

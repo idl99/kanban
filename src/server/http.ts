@@ -1271,6 +1271,12 @@ export function createServer(deps: ServerDeps) {
         throw new HttpError(400, (e as Error).message);
       }
     }
+    // Installs the worktree's dependencies (the board's setup command) when the ticket's Claude needs them; waits for it.
+    if (m === "POST" && action === "setup") {
+      // A run may only install its own ticket's dependencies (the command runs the branch's install scripts).
+      if (req.headers.get(RUN_HEADER) && runTicket(req, slug) !== id) throw new HttpError(403, "a board run may only run the setup of its own ticket");
+      return json(await board.runSetup(slug, id));
+    }
     if (m === "POST" && action === "stop") {
       const { planner, requester } = runRights(req, slug, store.getTicket(slug, id)!);
       const stopped = board.stop(slug, id);
