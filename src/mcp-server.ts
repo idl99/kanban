@@ -676,7 +676,8 @@ const PLANNING_TOOLS: Tool[] = [
     name: "propose_ticket",
     description:
       "Board planning chat only: propose an improved title and markdown description for this ticket. " +
-      "The board shows it as a card; the user clicks Apply to replace the ticket's title and description. " +
+      "The board shows it as a card; the user clicks Apply to replace the ticket's title and description " +
+      "(on a ticket that already ran, Create follow-up makes a new ticket linked to it instead). " +
       "Write the description self-contained (## Goal, ## Context, ## Scope, ## Requirements, ## Acceptance criteria, ## Open questions): " +
       "Claude works on it later without this chat. Nothing is created or changed by the call.",
     inputSchema: {

@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { BOARD_COLUMNS, type Huddle, type Job, type Status, type Ticket } from "./api";
 import { Card } from "./Card";
 import { groupByColumn } from "./columns";
+import { followUpLinks, type FollowUpLinks } from "./followUp";
 import { cardHuddleBadge } from "./huddleText";
 import { CollapseIcon, PlusIcon, SparkIcon } from "./icons";
 import { useNow } from "./useNow";
@@ -45,11 +46,13 @@ interface Props {
   jobs?: Job[];
   /** That chip was clicked: open Schedules → Upcoming for the ticket. */
   onOpenJobs?: (ticketId: string) => void;
+  /** Every ticket of the board, also the ones a search hides: the follow-up chips name the linked ticket. */
+  allTickets?: Ticket[];
 }
 
 /** Card props shared down the columns. */
 interface CardCtx { huddles: Huddle[]; onOpenHuddle?: (id: string) => void; limit?: { slug: string; onError: (msg: string) => void }; onTag?: (tag: string) => void;
-  jobs?: Job[]; onOpenJobs?: (ticketId: string) => void }
+  jobs?: Job[]; onOpenJobs?: (ticketId: string) => void; followUps: Map<string, FollowUpLinks> }
 
 /** Drag with the mouse, or focus a card: Enter opens it, Space picks it up (arrows move, Space drops, Esc cancels). */
 function SortableCard({ ticket, onOpen, queued, held, ctx }: { ticket: Ticket; onOpen: (id: string) => void; queued?: number; held?: boolean; ctx: CardCtx }) {
@@ -79,7 +82,7 @@ function SortableCard({ ticket, onOpen, queued, held, ctx }: { ticket: Ticket; o
     >
       <Card ticket={ticket} onClick={() => onOpen(ticket.id)} queued={queued} held={held}
         huddle={cardHuddleBadge(ctx.huddles, ticket.id, now)} onOpenHuddle={ctx.onOpenHuddle} limit={ctx.limit} onTag={ctx.onTag}
-        jobs={ctx.jobs} onOpenJobs={ctx.onOpenJobs} />
+        jobs={ctx.jobs} onOpenJobs={ctx.onOpenJobs} followUp={ctx.followUps.get(ticket.id)} onOpenTicket={onOpen} />
     </div>
   );
 }
@@ -198,10 +201,12 @@ const collision: CollisionDetection = (args) => {
 
 const NO_HUDDLES: Huddle[] = [];
 
-export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restartPending = false, huddles = NO_HUDDLES, onOpenHuddle, slug, onTag, jobs, onOpenJobs }: Props) {
+export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restartPending = false, huddles = NO_HUDDLES, onOpenHuddle, slug, onTag, jobs, onOpenJobs, allTickets }: Props) {
+  const linked = allTickets ?? tickets;
+  const followUps = useMemo(() => followUpLinks(linked), [linked]);
   const ctx = useMemo(() => ({
-    huddles, onOpenHuddle, limit: slug ? { slug, onError: (msg: string) => toast(msg, { tone: "error" }) } : undefined, onTag, jobs, onOpenJobs,
-  }), [huddles, onOpenHuddle, slug, onTag, jobs, onOpenJobs]);
+    huddles, onOpenHuddle, limit: slug ? { slug, onError: (msg: string) => toast(msg, { tone: "error" }) } : undefined, onTag, jobs, onOpenJobs, followUps,
+  }), [huddles, onOpenHuddle, slug, onTag, jobs, onOpenJobs, followUps]);
   const phone = usePhone();
   const sensors = useSensors(
     // Phones: long-press picks a card up, so a swipe still scrolls the board.
@@ -303,7 +308,7 @@ export function Board({ tickets, onOpen, onMove, onAdd, filtered = false, restar
             collapsed={!phone && collapsed.has(c.id)} onCollapse={(v) => setColumnCollapsed(c.id, v)} />
         ))}
       </main>
-      <DragOverlay>{dragging ? <Card ticket={dragging} dragging huddle={cardHuddleBadge(huddles, dragging.id)} /> : null}</DragOverlay>
+      <DragOverlay>{dragging ? <Card ticket={dragging} dragging huddle={cardHuddleBadge(huddles, dragging.id)} followUp={followUps.get(dragging.id)} /> : null}</DragOverlay>
     </DndContext>
   );
 }

@@ -885,7 +885,7 @@ export function App() {
           )}
           <Board tickets={shownTickets} filtered={filtering} onOpen={(id) => openTicket(id)} onMove={move} onAdd={() => setNewTicket(true)} restartPending={restart.pending}
             huddles={huddles} onOpenHuddle={openHuddle} slug={slug ?? undefined} onTag={addTagFilter}
-            jobs={jobs ?? undefined} onOpenJobs={openSchedules} />
+            jobs={jobs ?? undefined} onOpenJobs={openSchedules} allTickets={tickets} />
         </>
       )}
       {phone && profile && (

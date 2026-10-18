@@ -160,6 +160,12 @@ export interface Ticket {
   branchedFrom?: string | null;
   /** When the branch was made: conversation entries before this are the copied history. */
   branchPoint?: BranchPoint | null;
+  /** Ticket this one follows up (a new requirement on a ticket that already ran). Not a plan parent. */
+  followUpOf?: string | null;
+  /** Branch the first worktree starts from instead of the base branch (a follow-up of a ticket still in Review). */
+  startFrom?: string | null;
+  /** Where the ticket was before a chat or the user moved it from Review/Done back to Planning or Backlog. */
+  reopenedFrom?: Pick<Ticket, "status" | "outcome"> | null;
   /** Set on a planner ticket once its plan was started: the board runs its children unattended. */
   plan?: Plan | null;
   /** Chat messages sent while Claude was working that it has not read yet, oldest first. */

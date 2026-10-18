@@ -231,6 +231,8 @@ body.show-hints .sortable-card:not(:focus) .key-hint.card-keys { display: none; 
 }
 .badge.running { background: var(--accent-soft); color: var(--accent); }
 .badge.ok { background: var(--ok-soft); color: var(--ok); }
+.badge.follow-up { display: inline-block; background: var(--info-soft); color: var(--info); border: 0; font-family: inherit; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+span.badge.follow-up { cursor: default; }
 .badge.blocked { background: var(--warn-soft); color: var(--warn); }
 .badge.failed { background: var(--err-soft); color: var(--err); }
 .badge.stopped { background: var(--surface-2); color: var(--muted); }
@@ -711,6 +713,8 @@ body > .output-view.reader { position: fixed; }
 .proposal-title { font-size: 15px; font-weight: 650; }
 .proposal-body { font-size: 13px; border-top: 1px solid var(--border); padding-top: 6px; }
 .proposal-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.proposal-note { font-size: 12px; background: var(--info-soft); color: var(--info); border-radius: 8px; padding: 6px 10px; }
+.proposal .btn.ghost { color: var(--muted); }
 /* propose_delete: the user confirms deleting tickets */
 .delete-card { border-color: var(--err); }
 .delete-card .proposal-tag { color: var(--err); display: inline-flex; align-items: center; gap: 4px; }

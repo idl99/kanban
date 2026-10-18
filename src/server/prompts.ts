@@ -28,7 +28,7 @@ Only if the ckanban tools aren't available: put the same JSON array in ONE <ckan
 
 /** How Claude proposes an improved ticket so the board can show an Apply button. */
 export const TICKET_FORMAT = `To propose an improved ticket, call the \`propose_ticket\` tool ${TOOL_NOTE} with title (short, specific, under 80 characters) and description (markdown: ## Goal, ## Context, ## Scope with **In:** / **Out:**, ## Requirements, ## Acceptance criteria, ## Open questions).
-The board shows it as a card; the user clicks Apply to replace the ticket's title and description. If the tool returns an error, fix the input and call it again.
+The board shows it as a card; the user clicks Apply to replace the ticket's title and description (on a ticket that already ran, Create follow-up makes a new ticket linked to it instead). If the tool returns an error, fix the input and call it again.
 Only if the ckanban tools aren't available: put {"title":"...","description":"..."} in ONE <ckanban-ticket>{...}</ckanban-ticket> block in your message instead. ${BLOCK_RULE}`;
 
 /** How a planner ticket's chat proposes splitting the work into new tickets; the user creates them by clicking. */
@@ -393,6 +393,19 @@ export function interruptedPrompt(): string {
 }
 
 /** A message the user typed in the ticket's chat. Their text comes first; board instructions are wrapped so the UI can hide them. */
+/**
+ * Planning a ticket that already ran: a new requirement becomes a linked follow-up ticket (the proposal card creates
+ * it), so this one keeps its title and description. Empty for a ticket that never ran.
+ */
+export function followUpRule(t: Pick<Ticket, "title" | "status" | "runCount" | "reopenedFrom">): string {
+  const was = t.reopenedFrom?.status ?? t.status;
+  if (!(t.runCount > 0 || was === "review" || was === "done")) return "";
+  const state = was === "done" ? "is Done" : was === "review" ? "is waiting in Review" : "already ran";
+  return `
+This ticket ${state}. Treat a new requirement as a follow-up: unless the user asks to rewrite this ticket itself, call \`propose_ticket\` with a title for the new work (not this ticket's title) and a description whose ## Context starts with "Follow-up of “${t.title}”", then says what shipped (commit SHA or PR link, or the files it changed when the folder has no version history) and the key files, so the new ticket's Claude needs no other context. The card then creates a new ticket linked to this one, which keeps its title and description.
+`;
+}
+
 export function chatPrompt(t: Ticket, text: string, mode: ChatMode, outputDir: string, artifacts = false, repo: RepoKind = "remote", inPlace = false): string {
   const typed = text.trim();
   if (mode === "refine") {
@@ -409,7 +422,7 @@ Current ticket
 Title: ${t.title}${t.tags?.length ? `\nTags: ${t.tags.join(", ")}` : ""}
 Description:
 ${t.body.trim() || "(empty)"}
-
+${followUpRule(t)}
 How to help:
 - Interview the user about what is still unclear: goal and why, who it is for, scope (must-haves vs nice-to-haves), constraints, how we know it's done. Ask only what matters for this ticket, in small rounds.
 - When you know enough (or the user asks), propose the improved ticket. After the user applies it they will move it to Ready and Claude will work on it autonomously, so make it self-contained.

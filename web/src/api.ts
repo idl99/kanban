@@ -174,6 +174,10 @@ export interface Ticket {
   branchedFrom?: string | null;
   /** When it was branched: conversation entries before this are the copied history. */
   branchPoint?: { at: string; sourceTitle: string } | null;
+  /** Ticket this one follows up (a new requirement on a ticket that already ran). */
+  followUpOf?: string | null;
+  /** Where it was before it moved from Review/Done back to Planning or Backlog. */
+  reopenedFrom?: { status: Status; outcome: Outcome } | null;
   /** Short name siblings use in dependsOn. */
   planKey?: string | null;
   /** Siblings (ticket id or planKey) a running plan finishes before starting this one. */
@@ -1081,6 +1085,8 @@ export const api = {
   ticket: (slug: string, id: string) => req<Ticket>("GET", t(slug, id)),
   quickChat: (slug: string) => req<QuickChat>("GET", `/api/profiles/${encodeURIComponent(slug)}/claude/session`),
   sessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/sessions`),
+  followUpTicket: (slug: string, id: string, input: { title: string; body: string; start?: boolean }) =>
+    req<Ticket>("POST", `${t(slug, id)}/follow-up`, input),
   branchTicket: (slug: string, id: string) => req<{ ticket: Ticket; warning: string | null }>("POST", `${t(slug, id)}/branch`),
   /** external: the session is open in a terminal the board can't close (nothing changed). */
   freshSession: (slug: string, id: string) => req<{ ticket: Ticket; external: boolean }>("POST", `${t(slug, id)}/fresh-session`),

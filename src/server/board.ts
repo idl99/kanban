@@ -151,6 +151,11 @@ export function autoHuddleActivity(a: NonNullable<Ticket["autoHuddle"]>): string
 }
 
 /** Holding a resource: Claude works on the ticket (In progress or a chat reply), or it is queued in Ready. */
+/** Statuses whose ticket already did its work: moving it back to Planning or Backlog remembers it (Ticket.reopenedFrom). */
+function reopenable(s: Status): boolean {
+  return s === "review" || s === "done";
+}
+
 function holding(t: Ticket, running: boolean, withReady: boolean): boolean {
   return running || t.status === "in_progress" || (withReady && t.status === "ready");
 }
@@ -909,6 +914,7 @@ export class Board {
       this.patch(slug, id, {
         ...base, status: "planning",
         outcome: null, error: null, refineStarted: true, lastActivity: null,
+        ...(run.chat.from && reopenable(run.chat.from.status) ? { reopenedFrom: run.chat.from } : {}),
       });
       return;
     }
@@ -1211,12 +1217,15 @@ export class Board {
         const fresh = !existsSync(dir);
         if (fresh) {
           // A new branch starts from the remote's latest base (other tickets push there); an existing one keeps its history.
-          const from = repo === "remote" && !(await branchExists(profile.path, branch)) ? await latestBase(profile.path, base) : base;
+          // A follow-up of a ticket still in Review builds on that ticket's branch, while it exists.
+          const from = t.startFrom && (await branchExists(profile.path, t.startFrom)) ? t.startFrom
+            : repo === "remote" && !(await branchExists(profile.path, branch)) ? await latestBase(profile.path, base) : base;
           await addWorktree(profile.path, dir, branch, from);
           // Only the cheap part now; the setup command runs when Claude asks for it (runSetup).
           this.copyWorktreeFiles(slug, id, profile, dir);
           patch.setupPending = true;
         }
+        if (t.startFrom) patch.startFrom = null;
         patch.worktree = dir;
         patch.branch = branch;
       }
@@ -1405,6 +1414,10 @@ export class Board {
     if (clean.status && current.limit) clean.limit = null;
     if (clean.status && current.autoHuddle) clean.autoHuddle = null;
     if (clean.status && current.snooze) clean.snooze = null;
+    // Back to Planning/Backlog from Review/Done: remember where it was, so a follow-up can put it back there.
+    const shaping = clean.status === "planning" || clean.status === "backlog";
+    if (shaping && reopenable(current.status)) clean.reopenedFrom = { status: current.status, outcome: current.outcome };
+    else if (clean.status && !shaping && current.reopenedFrom) clean.reopenedFrom = null;
     let t = this.patch(slug, id, clean);
 
     if (clean.status === "done") t = await this.cleanupWorktree(slug, t);
@@ -1858,6 +1871,34 @@ export class Board {
       this.store.deleteTicket(slug, t.id);
       throw e;
     }
+  }
+
+  /**
+   * A new requirement on a ticket that already ran becomes its own ticket, linked to the original (followUpOf), so the
+   * original keeps its title and description. start: straight to Ready, else Backlog. A follow-up of a ticket still in
+   * Review builds on its work (startFrom; in the project folder it is there anyway). The original goes back to
+   * Review/Done when a chat or the user had moved it to Planning/Backlog for this.
+   */
+  async followUpTicket(slug: string, id: string, input: { title: string; body: string; start?: boolean }): Promise<Ticket> {
+    const src = this.store.getTicket(slug, id);
+    if (!src) throw new Error(`ticket ${id} not found`);
+    const title = input.title.trim();
+    if (!title) throw new Error("title is required");
+    const shaping = src.status === "planning" || src.status === "backlog";
+    const was = shaping && src.reopenedFrom ? src.reopenedFrom : src;
+    const t = await this.createTicket(slug, {
+      title, body: input.body, status: "backlog", mode: "auto",
+      ...(src.tags?.length ? { tags: src.tags } : {}), ...(src.important ? { important: true } : {}),
+    });
+    const patch: Partial<Ticket> = { followUpOf: src.id };
+    if (was.status === "review" && src.branch && !src.workdir) patch.startFrom = src.branch;
+    this.patch(slug, t.id, patch);
+    if (shaping && src.reopenedFrom && !this.isRunning(slug, id)) {
+      // Like a move by hand (Done cleans up its worktree); then its old outcome badge comes back too.
+      await this.updateTicket(slug, id, { status: src.reopenedFrom.status });
+      this.patch(slug, id, { outcome: src.reopenedFrom.outcome });
+    }
+    return input.start ? this.updateTicket(slug, t.id, { status: "ready" }) : this.store.getTicket(slug, t.id)!;
   }
 
   // ---- One-click recovery from a lost or busy session ----

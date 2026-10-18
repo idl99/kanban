@@ -1259,6 +1259,17 @@ export function createServer(deps: ServerDeps) {
         throw new HttpError(400, (e as Error).message);
       }
     }
+    // Follow-up: a new ticket for a new requirement on this one, which keeps its title and description (the user's click).
+    if (m === "POST" && action === "follow-up") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "follow-ups are created by the user's click on a proposal card; use the propose_ticket tool");
+      const b = await body(req);
+      try {
+        const t = await board.followUpTicket(slug, id, { title: String(b.title ?? ""), body: String(b.body ?? ""), start: !!b.start });
+        return json(view(profile, t), 201);
+      } catch (e) {
+        throw new HttpError(400, (e as Error).message);
+      }
+    }
     // One-click recovery: the session is gone (fresh-session) or open in a terminal (take-over). The user's call.
     if (m === "POST" && (action === "fresh-session" || action === "take-over")) {
       if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "session recovery is the user's call, not a run's");
