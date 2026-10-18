@@ -58,21 +58,21 @@ export interface Corrections {
   /** A reviewer asked for changes on its pull request. */
   changesRequested: boolean;
   /** Tickets made to follow it up. */
-  followUps: Pick<Ticket, "id" | "title">[];
+  addOns: Pick<Ticket, "id" | "title">[];
 }
 
-/** The user's corrections on a ticket: messages after a run, a reopen, a pull request review asking for changes, follow-ups. */
+/** The user's corrections on a ticket: messages after a run, a reopen, a pull request review asking for changes, add-on tickets. */
 export function corrections(t: Ticket, entries: SessionEntry[], tickets: Ticket[]): Corrections {
   const first = entries.findIndex(runEnd);
   return {
     messages: first < 0 ? [] : entries.slice(first + 1).filter((e) => typedByUser(e) && e.text.trim()),
     reopened: !!t.reopenedFrom,
     changesRequested: t.pr?.reviewDecision === "CHANGES_REQUESTED",
-    followUps: tickets.filter((o) => o.followUpOf === t.id).map((o) => ({ id: o.id, title: o.title })),
+    addOns: tickets.filter((o) => o.addOnOf === t.id).map((o) => ({ id: o.id, title: o.title })),
   };
 }
 
-export const hasCorrections = (c: Corrections) => !!(c.messages.length || c.reopened || c.changesRequested || c.followUps.length);
+export const hasCorrections = (c: Corrections) => !!(c.messages.length || c.reopened || c.changesRequested || c.addOns.length);
 
 /** "Learn from this ticket" shows on Review and Done tickets the user corrected. */
 export function lessonsAvailable(t: Ticket, entries: SessionEntry[], tickets: Ticket[]): boolean {
@@ -112,7 +112,7 @@ export function lessonsPrompt({ ticket: t, entries, corrections: c, existing = [
     ...c.messages.map((e) => `- [${e.at}] The user wrote after a run: "${clip(e.text.trim(), CORRECTION_MAX)}"`),
     c.reopened ? "- The user moved the ticket back to be reworked after it was finished." : "",
     c.changesRequested ? "- A reviewer asked for changes on the pull request." : "",
-    ...c.followUps.map((f) => `- The user made a follow-up ticket: "${f.title}"`),
+    ...c.addOns.map((f) => `- The user made an add-on ticket: "${f.title}"`),
   ].filter(Boolean);
   return [
     `Task: "${t.title}"`,

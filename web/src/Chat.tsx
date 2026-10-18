@@ -19,8 +19,8 @@ import { AttachmentChips } from "./AttachmentChips";
 import { ImagePickButton } from "./ImagePickButton";
 import { NewTicketsCard } from "./NewTicketsCard";
 import { KeyHint } from "./KeyHint";
-import { followUpFor, followUpState } from "./followUp";
-import { ProposalCard, type FollowUp } from "./ProposalCard";
+import { addOnFor, addOnState } from "./addOn";
+import { ProposalCard, type AddOn } from "./ProposalCard";
 import { QuestionsForm } from "./QuestionsForm";
 import { RecoveryBanner } from "./RecoveryBanner";
 import { SetupRow } from "./SetupRow";
@@ -452,27 +452,27 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   };
   const dismissTeammate = (uuid: string) => api.answerTeammateCard(slug, ticket.id, uuid, { state: "dismissed" }).then(() => {}, (err) => onError(err.message));
 
-  // A ticket that already ran: proposals become linked follow-up tickets, so this one keeps its title and description.
-  const followState = followUpState(ticket);
-  const createFollowUp = async (p: { title: string; description: string }, start: boolean) => {
+  // A ticket that already ran: proposals become linked add-on tickets, so this one keeps its title and description.
+  const onState = addOnState(ticket);
+  const createAddOn = async (p: { title: string; description: string }, start: boolean) => {
     try {
-      const f = await api.followUpTicket(slug, ticket.id, { title: p.title, body: p.description, start });
-      toast(start ? "Follow-up created and moved to Ready" : "Follow-up created in Backlog", {
+      const f = await api.addOnTicket(slug, ticket.id, { title: p.title, body: p.description, start });
+      toast(start ? "Add-on ticket created and moved to Ready" : "Add-on ticket created in Backlog", {
         tone: "ok", action: { label: "Open", run: () => onOpenTicket(f.id) },
       });
     } catch (err: any) {
       onError(err.message);
     }
   };
-  const followUpOf = (p: { title: string; description: string }): FollowUp | undefined => followState === undefined ? undefined : {
-    state: followState, created: followUpFor(tickets, ticket.id, p.title), onCreate: (start) => createFollowUp(p, start), onOpen: onOpenTicket,
+  const addOnOf = (p: { title: string; description: string }): AddOn | undefined => onState === undefined ? undefined : {
+    state: onState, created: addOnFor(tickets, ticket.id, p.title), onCreate: (start) => createAddOn(p, start), onOpen: onOpenTicket,
   };
 
-  const pendingProposal = entries.findLast((e) => e.proposal && !isApplied(e.proposal) && !(followState !== undefined && followUpFor(tickets, ticket.id, e.proposal.title)));
+  const pendingProposal = entries.findLast((e) => e.proposal && !isApplied(e.proposal) && !(onState !== undefined && addOnFor(tickets, ticket.id, e.proposal.title)));
   const applyPendingRef = useRef((_start: boolean) => Promise.resolve());
   applyPendingRef.current = (start) => (!pendingProposal?.proposal ? Promise.resolve()
-    // ⌘⇧Enter on a follow-up card: create it and start work.
-    : followState !== undefined ? createFollowUp(pendingProposal.proposal, true)
+    // ⌘⇧Enter on an add-on card: create it and start work.
+    : onState !== undefined ? createAddOn(pendingProposal.proposal, true)
     : applyProposal(pendingProposal.proposal, start && canStart ? { uuid: pendingProposal.uuid } : undefined));
   useEffect(() => {
     onPendingProposal?.(pendingProposal ? (start) => applyPendingRef.current(start) : null);
@@ -527,7 +527,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                 <ProposalCard proposal={e.proposal} applied={isApplied(e.proposal)} started={startedProposals.has(e.uuid)}
                   onApply={() => applyProposal(e.proposal!)}
                   onApplyStart={canStart ? () => applyProposal(e.proposal!, { uuid: e.uuid }) : undefined}
-                  keyHint={e === pendingProposal} followUp={followUpOf(e.proposal)} />
+                  keyHint={e === pendingProposal} addOn={addOnOf(e.proposal)} />
               )}
               {e.newTickets && (
                 <NewTicketsCard drafts={e.newTickets} created={childFor} onCreate={createChild} onOpen={onOpenTicket} />

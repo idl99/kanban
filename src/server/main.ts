@@ -13,6 +13,7 @@ import { PushService } from "./push";
 import { RemoteAccess, remoteListenPort, remoteUrl } from "./remote";
 import { Scheduler } from "./scheduler";
 import { JobRunner } from "./jobs";
+import { FollowUpWatcher } from "./followup";
 import { LimitWatcher } from "./limit";
 import { startHuddleSessionWatcher } from "./huddle-session";
 import { SessionCache, startSessionWatcher } from "./session";
@@ -73,6 +74,7 @@ export async function startDaemon(): Promise<void> {
   const stopScheduler = scheduler.start();
   const stopJobs = jobs.start();
   const stopLimits = new LimitWatcher(board, store).start();
+  const stopFollowUps = new FollowUpWatcher(board, store).start();
   const stopWatcher = startSessionWatcher(store, bus, sessions);
   const stopHuddleWatcher = startHuddleSessionWatcher(store, bus, (id) => sessions.version(id));
   const stopTerminals = terminals.start();
@@ -86,6 +88,7 @@ export async function startDaemon(): Promise<void> {
     stopScheduler();
     stopJobs();
     stopLimits();
+    stopFollowUps();
     stopWatcher();
     stopHuddleWatcher();
     stopTerminals();

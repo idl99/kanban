@@ -60,6 +60,8 @@ export interface TicketInfo {
   /** ⭐ Important: reviewed in an auto huddle before landing. */
   important?: boolean;
   autoHuddle?: { state: "waiting" | "live"; reason: string; trigger?: string; template: string; huddleId?: string | null } | null;
+  /** When Claude comes back to this ticket, and why (follow_up). */
+  followUp?: { dueAt: string; note: string; cancelOnReply: boolean; missedAt?: string | null } | null;
   createdAt: string;
   updatedAt: string;
   attention?: { kind: string } | null;
@@ -306,6 +308,10 @@ export class BoardClient {
   listComments = (slug: string, id: string) => this.req<CommentInfo[]>("GET", `${this.t(slug, id)}/comments`);
   comment = (slug: string, id: string, text: string, run?: string | null) =>
     this.req<CommentInfo>("POST", `${this.t(slug, id)}/comments`, { text }, this.by(run));
+  setFollowUp = (slug: string, id: string, input: { after?: string; at?: string; note: string; cancelOnReply?: boolean }, run?: string | null) =>
+    this.req<TicketInfo>("POST", `${this.t(slug, id)}/follow-up`, input, this.by(run));
+  cancelFollowUp = (slug: string, id: string, reason: string | null, run?: string | null) =>
+    this.req<TicketInfo>("DELETE", `${this.t(slug, id)}/follow-up`, { reason }, this.by(run));
   reportBug = (input: BugReportRequest) => this.req<BugReportReply>("POST", "/api/bug-report", input);
 
   private s(slug: string, id?: string): string {

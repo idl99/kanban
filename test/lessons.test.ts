@@ -108,7 +108,7 @@ test("a corrected Done ticket: lessons quote the correction, a rule goes into CL
   // Make it a ticket: a Backlog ticket that follows this one up, with the lesson as its description.
   const made = (await (await post(id, "lesson", { card: card.id, lesson: code.id, action: "ticket" })).json()) as any;
   const nt = store.getTicket("p", made.lessons[1].done.ticketId)!;
-  expect(nt).toMatchObject({ status: "backlog", followUpOf: id, title: "Shared form footer" });
+  expect(nt).toMatchObject({ status: "backlog", addOnOf: id, title: "Shared form footer" });
   expect(nt.body).toContain("shared form footer");
   expect(nt.body).toContain("always go under the main button");
   expect((await help(id)).cards[0].lessons[1].done.ticketId).toBe(nt.id);
@@ -130,9 +130,9 @@ test("no corrections, no item; the call is refused too", async () => {
   expect(calls).toHaveLength(0);
   // A corrected ticket that is still being worked on doesn't offer it either.
   expect((await help(ticket(CORRECTED_SID, "in_progress"))).lessons).toBe(false);
-  // A follow-up ticket counts as a correction.
+  // An add-on ticket counts as a correction.
   const f = store.createTicket("p", { title: "More", body: "", status: "backlog" });
-  store.updateTicket("p", f.id, { followUpOf: id });
+  store.updateTicket("p", f.id, { addOnOf: id });
   expect((await help(id)).lessons).toBe(true);
 });
 

@@ -125,6 +125,17 @@ export interface QuickChat {
   title: string | null;
 }
 
+export interface FollowUp { dueAt: string; note: string; cancelOnReply: boolean; setAt: string; missedAt?: string | null }
+export interface FollowUpLogEntry {
+  at: string;
+  kind: "set" | "woke" | "cancelled" | "replied" | "missed";
+  dueAt?: string;
+  note?: string;
+  by?: "user" | "claude" | "reply";
+  run?: number;
+  costUsd?: number;
+}
+
 export type AttentionKind = "stalled" | "failed" | "limit" | "blocked" | "questions" | "proposal" | "review" | "reply" | "huddle";
 /** Why a ticket needs you (one server rule for cards, counts and the Inbox); since: when it started waiting. */
 export interface Attention {
@@ -203,8 +214,15 @@ export interface Ticket {
   branchedFrom?: string | null;
   /** When it was branched: conversation entries before this are the copied history. */
   branchPoint?: { at: string; sourceTitle: string } | null;
-  /** Ticket this one follows up (a new requirement on a ticket that already ran). */
-  followUpOf?: string | null;
+  /** Ticket this one is an add-on to (a new requirement on a ticket that already ran). */
+  addOnOf?: string | null;
+  /** Claude comes back to this ticket at dueAt (follow_up); missedAt: it came due while the board was off, the user decides. */
+  followUp?: FollowUp | null;
+  /** Follow-ups set, woken, cancelled and replied to, oldest first. */
+  followUpLog?: FollowUpLogEntry[];
+  /** Claude stopped following up, and why (shown on the card until a new follow-up is set). */
+  followUpStopped?: { at: string; reason: string } | null;
+  seenAt?: string | null;
   /** Where it was before it moved from Review/Done back to Planning or Backlog. */
   reopenedFrom?: { status: Status; outcome: Outcome } | null;
   /** Short name siblings use in dependsOn. */
@@ -1114,8 +1132,8 @@ export const api = {
   ticket: (slug: string, id: string) => req<Ticket>("GET", t(slug, id)),
   quickChat: (slug: string) => req<QuickChat>("GET", `/api/profiles/${encodeURIComponent(slug)}/claude/session`),
   sessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/sessions`),
-  followUpTicket: (slug: string, id: string, input: { title: string; body: string; start?: boolean }) =>
-    req<Ticket>("POST", `${t(slug, id)}/follow-up`, input),
+  addOnTicket: (slug: string, id: string, input: { title: string; body: string; start?: boolean }) =>
+    req<Ticket>("POST", `${t(slug, id)}/add-on`, input),
   branchTicket: (slug: string, id: string) => req<{ ticket: Ticket; warning: string | null }>("POST", `${t(slug, id)}/branch`),
   /** external: the session is open in a terminal the board can't close (nothing changed). */
   freshSession: (slug: string, id: string) => req<{ ticket: Ticket; external: boolean }>("POST", `${t(slug, id)}/fresh-session`),
@@ -1143,6 +1161,9 @@ export const api = {
     req<Ticket>("PATCH", t(slug, id), patch),
   deleteTicket: (slug: string, id: string) => req<void>("DELETE", t(slug, id)),
   /** Inbox Snooze: hide what the ticket waits for now for a day (or until its state changes). */
+  followUpNow: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/follow-up/now`, {}),
+  stopFollowUp: (slug: string, id: string) => req<Ticket>("DELETE", `${t(slug, id)}/follow-up`, {}),
+  markSeen: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/seen`, {}),
   snooze: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/snooze`, {}),
   unsnooze: (slug: string, id: string) => req<Ticket>("DELETE", `${t(slug, id)}/snooze`),
   /** The user answered a teammate card (saved it, or dismissed it). */

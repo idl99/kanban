@@ -14,12 +14,15 @@ import { type HostHuddle, ticketAttention, userWaitReason } from "./attention";
 import type { SessionSummary } from "./session";
 import { recallBlock } from "./recall";
 import { lessonsBlock } from "./lessons";
-import { chatPrompt, firstRunPrompt, freshSessionPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, setupNote, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
+import { chatPrompt, firstRunPrompt, followUpWakePrompt, freshSessionPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, setupNote, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
 import {
   childrenOf, DEFAULT_MAX_CONCURRENT, findCycle, isComplete, normalizeNeeds, planActive, planProblem, planStep, planTable, resolveDeps, wakeupCap,
 } from "./plan";
 import { run as runCmd } from "./git";
 import { parseResult } from "./result";
+import { FOLLOW_UP_LATE_MS, FOLLOW_UP_NOTE_MAX, FOLLOW_UP_REASON_MAX, FollowUpError, followUpTime, logFollowUp } from "./followup";
+import { formatAt } from "./jobs";
+import { ticketRuns } from "./ticket-usage";
 import { AUTO_CONTINUE_PER_DAY, clockTime, CONTINUE_TEXT, dayKey, limitMessage, parseReset } from "./limit";
 import { DraftTracker } from "./draft";
 import { buildArgs, DEFAULT_STALL_MINUTES, PLANNING_DISALLOWED_TOOLS, startRun, type RunHandle } from "./runner";
@@ -29,7 +32,7 @@ import { mcpConfig } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
 import { normalizeTags } from "./tags";
-import { autoHuddlesOn, runCapFor, workspaceOf, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
+import { autoHuddlesOn, runCapFor, workspaceOf, type FollowUp, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
 import { CLEANUP_TIMEOUT_MS, copySetupFiles, prepareWorktree, runShell, SETUP_TIMEOUT_MS, withBoardText, type SetupOutcome, type SetupResult } from "./worktree-setup";
 
 const INSTALLING = "Installing project dependencies…";
@@ -82,6 +85,8 @@ interface ActiveRun {
     slash?: "prompt" | "local";
     /** A wake for the ticket's own auto huddle (see QueuedMessage.hostWake): a full prompt, run as the ticket's work. */
     hostWake?: boolean;
+    /** The board's follow-up wake (see Board.wakeFollowUp): a full prompt; afterwards the card goes back to returnTo. */
+    followUp?: boolean;
   };
   /** This message's run already got its one automatic retry after a passing API error. */
   retried?: boolean;
@@ -119,8 +124,10 @@ export function chatModeFor(status: Status): ChatMode {
 
 /** How a chat run handles a queued message: a peer message (from another ticket's Claude) is sent as-is, quietly. */
 function chatFor(
-  t: Pick<Ticket, "status" | "outcome">, msg: { text: string; peer?: boolean; fromPlanner?: boolean; slash?: "prompt" | "local"; hostWake?: boolean },
+  t: Pick<Ticket, "status" | "outcome">, msg: { text: string; peer?: boolean; fromPlanner?: boolean; slash?: "prompt" | "local"; hostWake?: boolean; followUp?: boolean },
 ): NonNullable<ActiveRun["chat"]> {
+  // A follow-up comes back to the ticket's own work, wherever the card is; afterwards the card goes back there.
+  if (msg.followUp) return { text: msg.text, mode: "act", raw: true, returnTo: t.status === "in_progress" ? "review" : t.status, followUp: true };
   // The ticket's auto huddle wakes it: unattended work on its own ticket, so it ends like a work run (result line, column).
   if (msg.hostWake) return { text: msg.text, mode: "act", raw: true, hostWake: true };
   const mode = chatModeFor(t.status);
@@ -132,19 +139,20 @@ function chatFor(
 }
 
 /** Queued-message flags from Board.chat options. */
-function flags(o: ChatOptions): Pick<QueuedMessage, "peer" | "fromPlanner" | "slash" | "hostWake"> {
+function flags(o: ChatOptions): Pick<QueuedMessage, "peer" | "fromPlanner" | "slash" | "hostWake" | "followUp"> {
   return {
     ...(o.peer ? { peer: true } : {}), ...(o.fromPlanner ? { fromPlanner: true } : {}), ...(o.slash ? { slash: o.slash } : {}),
-    ...(o.hostWake ? { hostWake: true } : {}),
+    ...(o.hostWake ? { hostWake: true } : {}), ...(o.followUp ? { followUp: true } : {}),
   };
 }
 
-/** Board.chat options; hostWake: the ticket's own auto huddle (or a free auto-huddle slot) wakes it. */
+/** Board.chat options; hostWake: the ticket's own auto huddle (or a free auto-huddle slot) wakes it; followUp: its follow-up is due. */
 export interface ChatOptions {
   peer?: boolean;
   fromPlanner?: boolean;
   slash?: "prompt" | "local";
   hostWake?: boolean;
+  followUp?: boolean;
 }
 
 /** What the card says while the ticket waits for its auto huddle. */
@@ -167,7 +175,7 @@ function holding(t: Ticket, running: boolean, withReady: boolean): boolean {
  * another ticket's Claude (its asker waits on them) and planner wake-ups are short housekeeping and don't.
  */
 function takesSlot(chat?: ActiveRun["chat"]): boolean {
-  return !chat || (chat.mode === "act" && !chat.quiet && !chat.returnTo);
+  return !chat || (chat.mode === "act" && !chat.quiet && (!chat.returnTo || !!chat.followUp));
 }
 
 const ACTIVITY_THROTTLE_MS = 1000;
@@ -391,7 +399,7 @@ export class Board {
         this.cancelSlotWait(slug, t.id);
         continue;
       }
-      const chat = next.peer || next.hostWake ? chatFor(t, next) : { ...chatFor(t, next), mode: "act" as const, from: t.slotWait!.from };
+      const chat = next.peer || next.hostWake ? chatFor(t, next) : next.followUp ? chatFor(t.slotWait!.from, next) : { ...chatFor(t, next), mode: "act" as const, from: t.slotWait!.from };
       if (takesSlot(chat) && this.full(slug)) return;
       if (chat.mode === "act" && this.folderBusy(slug, t)) continue;
       this.patch(slug, t.id, { slotWait: null });
@@ -438,7 +446,7 @@ export class Board {
     if (!text.trim()) throw new Error("message is empty");
     if (t.error?.startsWith("corrupt")) throw new Error("ticket file is corrupt");
     const active = this.runs.get(this.key(slug, id));
-    if (!opts.peer && !opts.slash && !opts.hostWake) {
+    if (!opts.peer && !opts.slash && !opts.hostWake && !opts.followUp) {
       const refused = parseSlash(text)?.name;
       if (refused && REFUSED_COMMANDS.has(refused)) {
         throw new Error(`/${refused} isn't available here: start a new ticket for a fresh conversation.`);
@@ -448,7 +456,7 @@ export class Board {
       if (slash) [text, opts] = [slash.text, { ...opts, slash: slash.command.local ? "local" : "prompt" }];
     }
     // The user (or the board's automatic continue) picks the conversation up again: the limit wait is over.
-    if (t.limit && !opts.peer && !opts.hostWake) this.patch(slug, id, { limit: null });
+    if (t.limit && !opts.peer && !opts.hostWake && !opts.followUp) this.patch(slug, id, { limit: null });
     if (active) {
       if (active.stopRequested || this.shuttingDown) throw new ConflictError("Claude is stopping; send your message once it has stopped");
       // Saved on the ticket until Claude reads it, so closing the chat, Stop or a restart can't lose it.
@@ -518,7 +526,7 @@ export class Board {
     if (!msg) throw new Error("message not found");
     if (msg.state !== "unsent") throw new ConflictError("message is already on its way to Claude");
     this.dropQueued(slug, id, [msgId]);
-    return this.chat(slug, id, msg.text, { peer: msg.peer, fromPlanner: msg.fromPlanner, slash: msg.slash, hostWake: msg.hostWake });
+    return this.chat(slug, id, msg.text, { peer: msg.peer, fromPlanner: msg.fromPlanner, slash: msg.slash, hostWake: msg.hostWake, followUp: msg.followUp });
   }
 
   discardQueued(slug: string, id: string, msgId: string): Ticket {
@@ -557,7 +565,7 @@ export class Board {
   private steer(run: ActiveRun, msg: QueuedMessage): boolean {
     if (run.inFlight.has(msg.id) || run.promptMsgId === msg.id) return true;
     // A slash command goes alone: anything after it would become the command's arguments.
-    const text = msg.slash ? localizeUrls(msg.text, this.store.attachmentsDir) : localizeAttachments(msg.peer || msg.hostWake ? msg.text : steerPrompt(msg.text), this.store.attachmentsDir);
+    const text = msg.slash ? localizeUrls(msg.text, this.store.attachmentsDir) : localizeAttachments(msg.peer || msg.hostWake || msg.followUp ? msg.text : steerPrompt(msg.text), this.store.attachmentsDir);
     if (!run.handle?.send(text, { local: msg.slash === "local" })) return false;
     // Claude never echoes a local command back: it is read once it is written.
     if (msg.slash === "local") this.dropQueued(run.slug, run.id, [msg.id]);
@@ -613,7 +621,7 @@ export class Board {
         // Tell the UI the run is over (earlier updates were sent while it was still registered).
         const now = this.store.getTicket(slug, id);
         if (now && !this.shuttingDown) {
-          if (now.runStartedAt || now.interrupted || now.waitingOn || now.stalled) this.patch(slug, id, { runStartedAt: null, interrupted: null, waitingOn: null, stalled: null });
+          if (now.runStartedAt || now.interrupted || now.waitingOn || now.stalled || now.followUpRun) this.patch(slug, id, { runStartedAt: null, interrupted: null, waitingOn: null, stalled: null, followUpRun: null });
           else this.emitTicket(slug, now);
         }
         // When the user moved the card, updateTicket() writes the new status and dispatches itself.
@@ -623,6 +631,9 @@ export class Board {
   }
 
   private begin(run: ActiveRun) {
+    const t = this.store.getTicket(run.slug, run.id);
+    const followUpRun = run.chat?.followUp && run.chat.returnTo ? { returnTo: run.chat.returnTo } : null;
+    if (followUpRun || t?.followUpRun) this.patch(run.slug, run.id, { followUpRun });
     this.patch(run.slug, run.id, run.chat?.quiet
       ? { error: null, lastActivity: "Claude is replying…", runStartedAt: nowIso(), waitingOn: null, stalled: null }
       : run.chat?.mode === "refine"
@@ -633,6 +644,7 @@ export class Board {
   /** One claude run, then a chat reply for each message that came in too late for it. */
   private async execute(run: ActiveRun): Promise<void> {
     await this.executeOnce(run);
+    if (run.chat?.followUp) this.followUpCost(run.slug, run.id);
     for (;;) {
       if (this.shuttingDown || this.restartPending) return; // queue stays on the ticket; recover() delivers it
       const t = this.store.getTicket(run.slug, run.id);
@@ -658,6 +670,7 @@ export class Board {
       run.handle = null;
       this.begin(run);
       await this.executeOnce(run);
+      if (run.chat?.followUp) this.followUpCost(run.slug, run.id);
     }
   }
 
@@ -757,7 +770,7 @@ export class Board {
     if (!refine && !quiet && t.capNextUsd) this.patch(slug, id, { capNextUsd: null });
     // Marks where this run starts in the log and what it was (the Usage tab lists runs by kind).
     // A resumed attempt (retry, stall restart) continues the same run in the log.
-    if (!resumeText) this.store.appendActivity(slug, id, runNo, { type: "ckanban_run", kind: refine ? "planning" : quiet ? "reply" : run.chat ? "chat" : "work" });
+    if (!resumeText) this.store.appendActivity(slug, id, runNo, { type: "ckanban_run", kind: refine ? "planning" : quiet ? "reply" : run.chat?.followUp ? "follow-up" : run.chat ? "chat" : "work" });
     run.handle = startRun({
       bin: this.opts.claudeBin,
       cwd: session.dir,
@@ -939,6 +952,9 @@ export class Board {
       });
       return;
     }
+    // A follow-up on a Done or Backlog card that needs the user: Review, where the user sees it (those columns never ask).
+    const asks = result?.status === "questions" || result?.status === "blocked";
+    if (run.chat?.followUp && asks && (base.status === "done" || base.status === "backlog")) base.status = "review";
     this.patch(slug, id, {
       ...base,
       outcome: result?.status === "questions" ? "needs_input" : result?.status ?? "done",
@@ -1061,6 +1077,122 @@ export class Board {
       .filter((t) => t.outcome === "limit" && t.limit?.auto && !this.isRunning(slug, t.id) && t.status !== "done"
         && new Date(t.limit.resetAt).getTime() + delayMs <= now)
       .map((t) => t.id);
+  }
+
+  // ---- Follow-ups (followup.ts): Claude comes back to this ticket later ----
+
+  /** follow_up: when Claude (or the user) wants the ticket's conversation woken again; replaces the pending one. */
+  setFollowUp(slug: string, id: string, input: { after?: string | null; at?: string | null; note?: string | null; cancelOnReply?: boolean }): Ticket {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    const note = input.note?.trim();
+    if (!note) throw new FollowUpError("note is required: why you come back, and what to check then");
+    if (note.length > FOLLOW_UP_NOTE_MAX) throw new FollowUpError(`note is too long (max ${FOLLOW_UP_NOTE_MAX} characters): keep it to why and what to check`);
+    const now = this.now();
+    const due = followUpTime(input, now);
+    const followUp: FollowUp = { dueAt: due.toISOString(), note, cancelOnReply: input.cancelOnReply !== false, setAt: now.toISOString() };
+    this.store.addComment(slug, id, "ai", `Follow-up set for ${formatAt(followUp.dueAt)}: ${note}`);
+    return this.patch(slug, id, {
+      followUp, followUpStopped: null,
+      followUpLog: logFollowUp(t.followUpLog, { at: followUp.setAt, kind: "set", dueAt: followUp.dueAt, note }),
+    });
+  }
+
+  /**
+   * Stop following up. by "claude": cancel_follow_up, with the reason the card shows ("Stopped following up: …").
+   * by "user": Stop following up on the card; it also clears a stopped note.
+   */
+  cancelFollowUp(slug: string, id: string, by: "user" | "claude", reason?: string | null): Ticket {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    const why = reason?.trim();
+    if (by === "claude" && !why) throw new FollowUpError("reason is required: one line on why you stop following up");
+    if (why && why.length > FOLLOW_UP_REASON_MAX) throw new FollowUpError(`reason is too long (max ${FOLLOW_UP_REASON_MAX} characters): one line`);
+    if (by === "user" && !t.followUp) return t.followUpStopped ? this.patch(slug, id, { followUpStopped: null }) : t;
+    const at = this.now().toISOString();
+    this.store.addComment(slug, id, "ai", by === "user" ? "Follow-up stopped by user." : `Stopped following up: ${why}`);
+    return this.patch(slug, id, {
+      followUp: null, followUpStopped: by === "claude" ? { at, reason: why! } : null,
+      followUpLog: logFollowUp(t.followUpLog, { at, kind: "cancelled", by, ...(why ? { note: why } : {}) }),
+    });
+  }
+
+  /** The user wrote in the ticket chat: Claude hears about it on its next wake, and it cancels a cancel-on-reply follow-up. */
+  userReplied(slug: string, id: string): void {
+    const t = this.store.getTicket(slug, id);
+    if (!t?.followUp) return;
+    const at = this.now().toISOString();
+    if (!t.followUp.cancelOnReply) {
+      this.patch(slug, id, { followUpLog: logFollowUp(t.followUpLog, { at, kind: "replied" }) });
+      return;
+    }
+    this.store.addComment(slug, id, "ai", "Follow-up cancelled: you replied.");
+    this.patch(slug, id, { followUp: null, followUpLog: logFollowUp(logFollowUp(t.followUpLog, { at, kind: "replied" }), { at, kind: "cancelled", by: "reply" }) });
+  }
+
+  /** The user opened the ticket: the follow-up wake prompt tells Claude when (at most one write per 5 minutes). */
+  markSeen(slug: string, id: string): Ticket {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    const now = this.now();
+    if (t.seenAt && now.getTime() - new Date(t.seenAt).getTime() < 5 * 60_000) return t;
+    return this.patch(slug, id, { seenAt: now.toISOString() });
+  }
+
+  /** Tickets whose follow-up is due and that are free to take it: not running, queued or waiting (FollowUpWatcher). */
+  dueFollowUps(slug: string): string[] {
+    const now = this.now().getTime();
+    return this.store.listTickets(slug)
+      .filter((t) => t.followUp && !t.followUp.missedAt && new Date(t.followUp.dueAt).getTime() <= now
+        && !this.isRunning(slug, t.id) && t.status !== "in_progress" && !t.slotWait && !this.waiting(slug, t.id).length
+        && !(t.outcome === "limit" && t.limit)
+        && !t.error?.startsWith("corrupt"))
+      .map((t) => t.id);
+  }
+
+  /**
+   * Wake the ticket's conversation for its follow-up. A follow-up seen more than FOLLOW_UP_LATE_MS late waits for the
+   * user instead (missedAt). manual: the user pressed Follow up now (any time, also when missed).
+   */
+  async wakeFollowUp(slug: string, id: string, opts: { manual?: boolean } = {}): Promise<Ticket> {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    const f = t.followUp;
+    if (!f) throw new FollowUpError("this ticket has no follow-up");
+    if (this.isRunning(slug, id) || t.slotWait) {
+      if (opts.manual) throw new ConflictError("Claude is working on this ticket; follow up once it has finished");
+      return t;
+    }
+    const now = this.now();
+    const late = now.getTime() - new Date(f.dueAt).getTime();
+    if (!opts.manual && late > FOLLOW_UP_LATE_MS) {
+      if (f.missedAt) return t;
+      this.store.addComment(slug, id, "ai", `Missed follow-up: it was due ${formatAt(f.dueAt)}, while the computer was asleep or the board was off. Press Follow up now to let Claude check, or stop it.`);
+      return this.patch(slug, id, { followUp: { ...f, missedAt: now.toISOString() }, followUpLog: logFollowUp(t.followUpLog, { at: now.toISOString(), kind: "missed", dueAt: f.dueAt }) });
+    }
+    const text = followUpWakePrompt(t, now, opts.manual);
+    // Cleared before the run starts, so the next tick can't wake it twice; a follow_up call in the run sets the next one.
+    this.patch(slug, id, { followUp: null, followUpLog: logFollowUp(t.followUpLog, { at: now.toISOString(), kind: "woke", dueAt: f.dueAt, note: f.note }) });
+    try {
+      return await this.chat(slug, id, text, { followUp: true });
+    } catch (e) {
+      const cur = this.store.getTicket(slug, id);
+      if (cur && !cur.followUp) this.patch(slug, id, { followUp: f, followUpLog: t.followUpLog ?? [] });
+      throw e;
+    }
+  }
+
+  /** A follow-up run ended: its cost goes on its "woke" log entry (the menu and the next wake prompt show the total). */
+  private followUpCost(slug: string, id: string): void {
+    const t = this.store.getTicket(slug, id);
+    if (!t?.followUpLog?.length) return;
+    const run = ticketRuns(this.store.readActivity(slug, id)).findLast((r) => r.kind === "follow-up");
+    const i = t.followUpLog.findLastIndex((e) => e.kind === "woke");
+    if (!run || i < 0 || t.followUpLog[i].costUsd !== undefined) return;
+    const log = t.followUpLog.map((e, j) => (j === i ? { ...e, run: run.run, costUsd: Math.round(run.costUsd * 10_000) / 10_000 } : e));
+    // Claude set no next follow-up and didn't say it stopped (it forgot, the run failed or was stopped): the card says so.
+    const said = t.followUp || (t.followUpStopped && t.followUpStopped.at >= t.followUpLog[i].at);
+    this.patch(slug, id, { followUpLog: log, ...(said ? {} : { followUpStopped: { at: this.now().toISOString(), reason: "no next follow-up was set" } }) });
   }
 
   /** Planning replies carry mockups as blocks (they can't write files); save them for the Outputs tab. */
@@ -1219,7 +1351,7 @@ export class Board {
         const fresh = !existsSync(dir);
         if (fresh) {
           // A new branch starts from the remote's latest base (other tickets push there); an existing one keeps its history.
-          // A follow-up of a ticket still in Review builds on that ticket's branch, while it exists.
+          // An add-on to a ticket still in Review builds on that ticket's branch, while it exists.
           const from = t.startFrom && (await branchExists(profile.path, t.startFrom)) ? t.startFrom
             : repo === "remote" && !(await branchExists(profile.path, branch)) ? await latestBase(profile.path, base) : base;
           await addWorktree(profile.path, dir, branch, from);
@@ -1416,7 +1548,7 @@ export class Board {
     if (clean.status && current.limit) clean.limit = null;
     if (clean.status && current.autoHuddle) clean.autoHuddle = null;
     if (clean.status && current.snooze) clean.snooze = null;
-    // Back to Planning/Backlog from Review/Done: remember where it was, so a follow-up can put it back there.
+    // Back to Planning/Backlog from Review/Done: remember where it was, so an add-on can put it back there.
     const shaping = clean.status === "planning" || clean.status === "backlog";
     if (shaping && reopenable(current.status)) clean.reopenedFrom = { status: current.status, outcome: current.outcome };
     else if (clean.status && !shaping && current.reopenedFrom) clean.reopenedFrom = null;
@@ -1876,12 +2008,12 @@ export class Board {
   }
 
   /**
-   * A new requirement on a ticket that already ran becomes its own ticket, linked to the original (followUpOf), so the
-   * original keeps its title and description. start: straight to Ready, else Backlog. A follow-up of a ticket still in
+   * A new requirement on a ticket that already ran becomes its own ticket, linked to the original (addOnOf), so the
+   * original keeps its title and description. start: straight to Ready, else Backlog. An add-on to a ticket still in
    * Review builds on its work (startFrom; in the project folder it is there anyway). The original goes back to
    * Review/Done when a chat or the user had moved it to Planning/Backlog for this.
    */
-  async followUpTicket(slug: string, id: string, input: { title: string; body: string; start?: boolean }): Promise<Ticket> {
+  async addOnTicket(slug: string, id: string, input: { title: string; body: string; start?: boolean }): Promise<Ticket> {
     const src = this.store.getTicket(slug, id);
     if (!src) throw new Error(`ticket ${id} not found`);
     const title = input.title.trim();
@@ -1892,7 +2024,7 @@ export class Board {
       title, body: input.body, status: "backlog", mode: "auto",
       ...(src.tags?.length ? { tags: src.tags } : {}), ...(src.important ? { important: true } : {}),
     });
-    const patch: Partial<Ticket> = { followUpOf: src.id };
+    const patch: Partial<Ticket> = { addOnOf: src.id };
     if (was.status === "review" && src.branch && !src.workdir) patch.startFrom = src.branch;
     this.patch(slug, t.id, patch);
     if (shaping && src.reopenedFrom && !this.isRunning(slug, id)) {
@@ -2108,6 +2240,14 @@ export class Board {
         // Replies waiting for a slot keep waiting: dispatch() below starts them first.
         // Tickets waiting for their auto huddle stay put: the huddle (or a freed slot) wakes them.
         if (t.status !== "in_progress" || t.slotWait || t.autoHuddle || this.isRunning(p.slug, t.id)) continue;
+        if (t.followUpRun) {
+          // A follow-up wake was cut off: continue it as a follow-up, and the card goes back where it was.
+          this.store.addComment(p.slug, t.id, "ai", "Follow-up interrupted by daemon restart; resuming.");
+          const returnTo = t.followUpRun.returnTo;
+          this.patch(p.slug, t.id, { status: returnTo, lastActivity: null });
+          this.start(p.slug, t.id, { text: interruptedPrompt(), mode: "act", raw: true, returnTo, followUp: true });
+          continue;
+        }
         if (t.plan?.awaiting && planActive(t.plan)) {
           // A planner wake-up was cut off: wake it again with the children's current state.
           this.store.addComment(p.slug, t.id, "ai", "Planner interrupted by daemon restart; waking it again.");

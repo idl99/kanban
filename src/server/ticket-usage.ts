@@ -219,7 +219,7 @@ export class UsageCache {
 
 // ---------- per-ticket runs ----------
 
-export type RunKind = "work" | "planning" | "chat" | "reply" | "run";
+export type RunKind = "work" | "planning" | "chat" | "reply" | "follow-up" | "run";
 
 export interface TicketRun {
   run: number;

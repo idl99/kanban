@@ -871,3 +871,41 @@ test("one-time jobs: schedule, list, update, run now, and runs manage only their
   r = await fetch(`${url}/nope1234`);
   expect(r.status).toBe(404);
 });
+
+test("follow-ups: a run sets and stops its own ticket's only; the user's Stop, seen and chat", async () => {
+  const path = tempDir("ck-plain-");
+  const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Follow", path }))).json()) as any;
+  const tickets = `${base}/api/profiles/${p.slug}/tickets`;
+  const send = (u: string, b: unknown, run?: string, method = "POST") =>
+    fetch(u, { method, headers: { "content-type": "application/json", ...(run ? { "x-ckanban-run": run } : {}) }, body: JSON.stringify(b) });
+  const t = (await (await send(tickets, { title: "Pitch" })).json()) as any;
+  const other = (await (await send(tickets, { title: "Other" })).json()) as any;
+  const run = `${p.slug}/${t.id}`;
+  const fu = `${tickets}/${t.id}/follow-up`;
+
+  let r = await send(`${tickets}/${other.id}/follow-up`, { after: "1d", note: "x" }, run);
+  expect(r.status).toBe(403);
+  r = await send(fu, { after: "0.5m", note: "x" }, run);
+  expect(r.status).toBe(400);
+  expect(((await r.json()) as any).error).toContain("at least 1 minute");
+  r = await send(fu, { after: "1d", note: "Check Gmail" }, run);
+  expect(r.status).toBe(201);
+  expect(((await r.json()) as any).followUp).toMatchObject({ note: "Check Gmail", cancelOnReply: true });
+  // Follow up now and seen are the user's.
+  expect((await send(`${fu}/now`, {}, run)).status).toBe(403);
+  expect((await send(`${tickets}/${t.id}/seen`, {}, run)).status).toBe(403);
+  r = await send(`${tickets}/${t.id}/seen`, {});
+  expect(((await r.json()) as any).seenAt).toBeString();
+  // Claude stops with a reason; the card shows it.
+  expect((await send(fu, {}, run, "DELETE")).status).toBe(400);
+  r = await send(fu, { reason: "No reply after 2 nudges" }, run, "DELETE");
+  expect(((await r.json()) as any).followUpStopped).toMatchObject({ reason: "No reply after 2 nudges" });
+  // The user's chat message cancels a cancel-on-reply follow-up.
+  await send(fu, { after: "1d", note: "Check again" }, run);
+  await send(`${tickets}/${t.id}/chat`, { text: "they replied by phone" });
+  expect(store.getTicket(p.slug, t.id)!.followUp).toBeNull();
+  // The user's Stop.
+  await send(fu, { after: "1d", note: "Check again" }, run);
+  r = await send(fu, {}, undefined, "DELETE");
+  expect(((await r.json()) as any).followUp).toBeNull();
+});

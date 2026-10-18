@@ -46,6 +46,11 @@ function parseTicket(raw: string): Ticket {
   if (!m) throw new Error("missing frontmatter");
   const meta = YAML.parse(m[1]);
   if (!meta || typeof meta !== "object" || !meta.id) throw new Error("invalid frontmatter");
+  // Add-ons were saved as followUpOf before "follow-up" came to mean a timed wake (FollowUp).
+  if ("followUpOf" in meta) {
+    const { followUpOf, ...rest } = meta;
+    return { ...rest, ...(followUpOf && !rest.addOnOf ? { addOnOf: followUpOf } : {}), body: m[2] ?? "" } as Ticket;
+  }
   return { ...meta, body: m[2] ?? "" } as Ticket;
 }
 

@@ -161,8 +161,8 @@ export interface Ticket {
   /** When the branch was made: conversation entries before this are the copied history. */
   branchPoint?: BranchPoint | null;
   /** Ticket this one follows up (a new requirement on a ticket that already ran). Not a plan parent. */
-  followUpOf?: string | null;
-  /** Branch the first worktree starts from instead of the base branch (a follow-up of a ticket still in Review). */
+  addOnOf?: string | null;
+  /** Branch the first worktree starts from instead of the base branch (an add-on to a ticket still in Review). */
   startFrom?: string | null;
   /** Where the ticket was before a chat or the user moved it from Review/Done back to Planning or Backlog. */
   reopenedFrom?: Pick<Ticket, "status" | "outcome"> | null;
@@ -186,6 +186,16 @@ export interface Ticket {
   important?: boolean;
   /** The auto huddle this ticket's run started or waits for; the card stays In Progress until it ends. */
   autoHuddle?: AutoHuddle | null;
+  /** Claude comes back to this ticket at followUp.dueAt: the board wakes the same conversation (see followup.ts). */
+  followUp?: FollowUp | null;
+  /** Follow-ups set, woken, cancelled and replied to, oldest first (last FOLLOW_UP_LOG_KEEP kept); Claude sees it on every wake. */
+  followUpLog?: FollowUpLogEntry[];
+  /** A follow-up wake is running: a restart that cuts it off resumes it as a follow-up and puts the card back in returnTo. */
+  followUpRun?: { returnTo: Status } | null;
+  /** Claude decided to stop following up (cancel_follow_up with a reason): the card says so until a new follow-up is set. */
+  followUpStopped?: { at: string; reason: string } | null;
+  /** When the user last opened this ticket on the board (the follow-up wake prompt tells Claude). */
+  seenAt?: string | null;
   /** Set with outcome "limit": when the limit resets and whether the board sends "continue" then (see limit.ts). */
   limit?: LimitHit | null;
   /** Per-run spending cap for this ticket, overriding the board's: a positive amount, 0 for none. Missing/null: the board's. */
@@ -205,6 +215,33 @@ export interface Ticket {
   createdAt: string;
   updatedAt: string;
   body: string;
+}
+
+/** A pending follow-up: at dueAt the board wakes the ticket's conversation with the note (followup.ts). */
+export interface FollowUp {
+  dueAt: string;
+  /** Why, and what to do then; written by Claude for its future self, shown on the card. */
+  note: string;
+  /** A message the user types in the ticket chat cancels it. */
+  cancelOnReply: boolean;
+  setAt: string;
+  /** Seen more than FOLLOW_UP_LATE_MS late (computer asleep, board off): not woken; it waits for the user. */
+  missedAt?: string | null;
+}
+
+export interface FollowUpLogEntry {
+  at: string;
+  /** set / woke: Claude set one / the board woke it. cancelled: the user stopped it or Claude stopped following up.
+   *  replied: the user wrote in the chat while one was pending. missed: it was too late to wake. */
+  kind: "set" | "woke" | "cancelled" | "replied" | "missed";
+  /** set: due time. woke: when it was due. */
+  dueAt?: string;
+  note?: string;
+  /** Who cancelled it, and why. */
+  by?: "user" | "claude" | "reply";
+  /** woke: the run's number in the activity log, and its cost once it ended. */
+  run?: number;
+  costUsd?: number;
 }
 
 /** A run hit the Claude usage/spend limit. */
@@ -382,6 +419,8 @@ export interface QueuedMessage {
   slash?: "prompt" | "local";
   /** From the ticket's own auto huddle (findings, the budget brake) or a freed auto-huddle slot: sent as-is, run as its work. */
   hostWake?: boolean;
+  /** The board's follow-up wake (followup.ts): sent as-is; the card goes back to its column afterwards. */
+  followUp?: boolean;
 }
 
 export interface Comment {

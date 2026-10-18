@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { basename, isAbsolute, join, normalize } from "node:path";
 import { runArtifactJob, type ArtifactJob, type ArtifactOutcome } from "./artifact";
 import { ConflictError, recoveryFor, type Board } from "./board";
+import { FollowUpError } from "./followup";
 import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
 import type { Bus, BusEvent } from "./events";
 import { listCommands } from "./commands";
@@ -1090,6 +1091,39 @@ export function createServer(deps: ServerDeps) {
       const until = new Date(Date.now() + hours * 3600_000).toISOString();
       return json(view(profile, board.setSnooze(slug, id, { until, key: snoozeKey(t, session, att, huddle) })));
     }
+    // Follow-ups (followup.ts): a ticket's own Claude sets one (follow_up) or stops it (cancel_follow_up, with a reason);
+    // the user's card offers Follow up now (POST .../follow-up/now) and Stop following up (DELETE).
+    if (action === "follow-up") {
+      const caller = req.headers.get(RUN_HEADER);
+      if (caller && (caller !== `${slug}/${id}` || req.headers.get(HUDDLE_HEADER))) {
+        throw new HttpError(403, "a run can only set or stop follow-ups on its own ticket");
+      }
+      try {
+        if (m === "POST" && parts[5] === "now") {
+          if (caller) throw new HttpError(403, "Follow up now is the user's button; set a follow-up with follow_up instead");
+          return json(view(profile, await board.wakeFollowUp(slug, id, { manual: true })), 202);
+        }
+        if (parts.length > 5) throw new HttpError(404, "not found");
+        if (m === "POST") {
+          const b = (await body(req)) ?? {};
+          const opt = (k: string) => (b[k] === undefined || b[k] === null ? null : String(b[k]));
+          if (b.cancelOnReply !== undefined && typeof b.cancelOnReply !== "boolean") throw new HttpError(400, "cancelOnReply must be true or false");
+          return json(view(profile, board.setFollowUp(slug, id, { after: opt("after"), at: opt("at"), note: opt("note"), cancelOnReply: b.cancelOnReply })), 201);
+        }
+        if (m === "DELETE") {
+          const b = (await body(req).catch(() => ({}))) ?? {};
+          return json(view(profile, board.cancelFollowUp(slug, id, caller ? "claude" : "user", b.reason === undefined ? null : String(b.reason))));
+        }
+      } catch (e) {
+        if (e instanceof FollowUpError) throw new HttpError(400, e.message);
+        throw e;
+      }
+    }
+    // The user opened the ticket (the follow-up wake prompt says when).
+    if (action === "seen" && m === "POST") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user's board marks a ticket seen");
+      return json(view(profile, board.markSeen(slug, id)));
+    }
     if (action === "usage" && m === "GET") {
       // The usage endpoint rate-limits: a ticket view reuses an answer up to 5 minutes old.
       const plan = await usage.get(5 * 60_000);
@@ -1255,7 +1289,7 @@ export function createServer(deps: ServerDeps) {
           }
           if (what === "ticket") {
             const body = `${l.rule}\n\n**Why:** ${l.mistake}${l.evidence ? `\n\n**What the user said:** "${l.evidence}"` : ""}`;
-            const nt = await board.followUpTicket(slug, id, { title: l.title, body });
+            const nt = await board.addOnTicket(slug, id, { title: l.title, body });
             return { action: what, at, ticketId: nt.id };
           }
           return { action: what, at };
@@ -1298,6 +1332,8 @@ export function createServer(deps: ServerDeps) {
       if (!text) throw new HttpError(400, "text is required");
       // A message from a run never hands the user's rights on to the run it starts.
       const t = await board.chat(slug, id, text, { fromPlanner: !!(planner || requester) });
+      // A message the user typed (not a slash command) reached Claude: a pending follow-up hears about it, and stops if it was set to.
+      if (!req.headers.get(RUN_HEADER) && !text.startsWith("/")) board.userReplied(slug, id);
       if (requester) store.addComment(slug, id, "ai", `Message sent ${byRequest(requester)}.`);
       return json(view(profile, t), 202);
     }
@@ -1353,12 +1389,12 @@ export function createServer(deps: ServerDeps) {
         throw new HttpError(400, (e as Error).message);
       }
     }
-    // Follow-up: a new ticket for a new requirement on this one, which keeps its title and description (the user's click).
-    if (m === "POST" && action === "follow-up") {
-      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "follow-ups are created by the user's click on a proposal card; use the propose_ticket tool");
+    // Add-on: a new ticket for a new requirement on this one, which keeps its title and description (the user's click).
+    if (m === "POST" && action === "add-on") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "add-on tickets are created by the user's click on a proposal card; use the propose_ticket tool");
       const b = await body(req);
       try {
-        const t = await board.followUpTicket(slug, id, { title: String(b.title ?? ""), body: String(b.body ?? ""), start: !!b.start });
+        const t = await board.addOnTicket(slug, id, { title: String(b.title ?? ""), body: String(b.body ?? ""), start: !!b.start });
         return json(view(profile, t), 201);
       } catch (e) {
         throw new HttpError(400, (e as Error).message);

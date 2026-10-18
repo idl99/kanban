@@ -19,7 +19,7 @@ const fixture: RecallRow[] = [
   row("t_old", "CSV export breaks on commas", { status: "in_progress", body: "Quote fields in the CSV export.", lastRunAt: "2026-09-01T10:00:00Z" }),
 ];
 
-const me = { id: "t_me", title: "CSV export: include ticket tags", body: "The CSV export should add a tags column.", parentId: null, followUpOf: null };
+const me = { id: "t_me", title: "CSV export: include ticket tags", body: "The CSV export should add a tags column.", parentId: null, addOnOf: null };
 
 test("words drops stop words, short words and numbers, and folds plurals", () => {
   expect(words("Add the tickets to 2 boards, and export CSVs")).toEqual(["ticket", "board", "export", "csv"]);
@@ -44,7 +44,7 @@ test("pickRelated leaves out the ticket itself and its children, and always puts
     row("t_child", "CSV export tags column header", { parentId: "t_me" }),
     row("t_plan", "Plan: board data exports", { status: "planning", runCount: 0 }),
   ];
-  const ids = pickRelated({ ...me, parentId: "t_plan", followUpOf: "t_dark" }, rows).map((r) => r.ticket.id);
+  const ids = pickRelated({ ...me, parentId: "t_plan", addOnOf: "t_dark" }, rows).map((r) => r.ticket.id);
   expect(ids.slice(0, 2)).toEqual(["t_plan", "t_dark"]);
   expect(ids).not.toContain("t_me");
   expect(ids).not.toContain("t_child");

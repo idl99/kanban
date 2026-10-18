@@ -191,10 +191,10 @@ test("planning and Review/Done chats can propose new tickets, first runs can't",
   expect(refine.indexOf("`propose_tickets` tool")).toBeLessThan(refine.indexOf("<ckanban-tickets>"));
   expect(refine).toContain("Only if the ckanban tools aren't available");
   expect(refine).not.toContain("ckanban-stay");
-  const act = chatPrompt(t, "create a follow-up ticket", "act", "/o");
+  const act = chatPrompt(t, "create an add-on ticket", "act", "/o");
   expect(act).toContain("`propose_tickets` tool");
   expect(act).toContain("list_tickets");
-  expect(act).toContain("follow-up tickets from this ticket");
+  expect(act).toContain("add-on tickets from this ticket");
   expect(act).toContain("<ckanban-stay/>");
   expect(firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o" })).not.toContain("ckanban-tickets");
 });

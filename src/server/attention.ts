@@ -60,6 +60,9 @@ export function attentionFor(
   t: Ticket, s: SessionSummary | null, running: boolean,
   o: { createdTitles?: Set<string>; managed?: boolean; planComplete?: boolean; huddle?: HostHuddle | null } = {},
 ): Attention | null {
+  // A follow-up the board saw too late to wake (computer asleep, board off) waits for the user in any column: Claude
+  // meant to come back, and only the user can say whether that still makes sense.
+  if (t.followUp?.missedAt && !running) return { kind: "blocked", label: "Missed follow-up", since: t.followUp.missedAt };
   // Done means accepted as-is; Backlog means parked. Neither waits on the user, whatever the session holds.
   if (t.status === "done") return null;
   const since = lastChange(t, s);

@@ -231,8 +231,26 @@ body.show-hints .sortable-card:not(:focus) .key-hint.card-keys { display: none; 
 }
 .badge.running { background: var(--accent-soft); color: var(--accent); }
 .badge.ok { background: var(--ok-soft); color: var(--ok); }
-.badge.follow-up { display: inline-block; background: var(--info-soft); color: var(--info); border: 0; font-family: inherit; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-span.badge.follow-up { cursor: default; }
+.badge.add-on { display: inline-block; background: var(--info-soft); color: var(--info); border: 0; font-family: inherit; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+span.badge.add-on { cursor: default; }
+.badge.follow-up { background: var(--info-soft); color: var(--info); border: 1px solid transparent; font-family: inherit; cursor: pointer; }
+.badge.follow-up:hover:not(:disabled) { border-color: var(--info); }
+.badge.follow-up.missed { background: var(--warn-soft); color: var(--warn); }
+.badge.follow-up-stopped { background: var(--surface-2); color: var(--muted); white-space: normal; max-width: 100%; }
+.follow-up-menu {
+  position: fixed; z-index: 100; width: 340px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; padding: 14px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16); cursor: default;
+}
+.follow-up-menu h3 { margin: 0 0 2px; font-size: 13.5px; }
+.follow-up-menu .fu-when { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
+.follow-up-menu .fu-note { background: var(--surface-2); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; margin-bottom: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.follow-up-menu .fu-note b { font-weight: 600; }
+.follow-up-menu .fu-hist { font-size: 12px; color: var(--muted); margin: 0 0 12px; padding: 0; list-style: none; }
+.follow-up-menu .fu-hist li { padding: 3px 0; border-top: 1px solid var(--border); }
+.follow-up-menu .fu-hist li:first-child { border-top: 0; }
+.follow-up-menu .fu-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.follow-up-menu .fu-cost { font-size: 12px; color: var(--muted); margin-left: auto; }
+.follow-up-menu .fu-foot { font-size: 11.5px; color: var(--muted); margin-top: 8px; }
 .badge.blocked { background: var(--warn-soft); color: var(--warn); }
 .badge.failed { background: var(--err-soft); color: var(--err); }
 .badge.stopped { background: var(--surface-2); color: var(--muted); }

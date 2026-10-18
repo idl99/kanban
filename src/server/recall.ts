@@ -54,9 +54,9 @@ const worked = (r: RecallRow) => isDoneish(r) || r.ticket.runCount > 0;
  * Up to RECALL_MAX tickets related to t: its parent and the ticket it follows up first, then the best word matches
  * (Done/Review before the rest, then by score, recent first on ties). Leaves out t itself and its own children.
  */
-export function pickRelated(t: Pick<Ticket, "id" | "title" | "body" | "parentId" | "followUpOf">, rows: RecallRow[]): RecallRow[] {
+export function pickRelated(t: Pick<Ticket, "id" | "title" | "body" | "parentId" | "addOnOf">, rows: RecallRow[]): RecallRow[] {
   const others = rows.filter((r) => r.ticket.id !== t.id && r.ticket.parentId !== t.id);
-  const pinnedIds = [t.parentId, t.followUpOf].filter((x): x is string => !!x);
+  const pinnedIds = [t.parentId, t.addOnOf].filter((x): x is string => !!x);
   const pinned = pinnedIds.map((id) => others.find((r) => r.ticket.id === id)).filter((r): r is RecallRow => !!r);
   const pool = others.filter((r) => !pinnedIds.includes(r.ticket.id) && worked(r));
   const query = weights(t.title, t.body);
@@ -93,7 +93,7 @@ function line(r: RecallRow, summaryChars: number): string {
 }
 
 /** The "What we did before" section for t's prompt, at most RECALL_CHARS long; "" when nothing related turns up. */
-export function recallBlock(t: Pick<Ticket, "id" | "title" | "body" | "parentId" | "followUpOf">, rows: RecallRow[]): string {
+export function recallBlock(t: Pick<Ticket, "id" | "title" | "body" | "parentId" | "addOnOf">, rows: RecallRow[]): string {
   const picked = pickRelated(t, rows);
   if (!picked.length) return "";
   const head = `# What we did before on this board

@@ -39,6 +39,7 @@ import type { HuddleSeed, TeamRequest } from "./Team";
 import { StarToggle } from "./StarToggle";
 import { usePhone } from "./usePhone";
 import { toast } from "./toast";
+import { FollowUpChip } from "./FollowUpChip";
 
 // v2: widths saved under the old 80% default are dropped once so the new default shows.
 const WIDTH_KEY = "ckanban.panelWidth.v2";
@@ -231,8 +232,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const children = tickets.filter((t) => t.parentId === ticket.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const branchedFrom = ticket.branchedFrom ? tickets.find((t) => t.id === ticket.branchedFrom) : undefined;
   const branches = tickets.filter((t) => t.branchedFrom === ticket.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const followUpOf = ticket.followUpOf ? tickets.find((t) => t.id === ticket.followUpOf) : undefined;
-  const followUps = tickets.filter((t) => t.followUpOf === ticket.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const addOnOf = ticket.addOnOf ? tickets.find((t) => t.id === ticket.addOnOf) : undefined;
+  const addOns = tickets.filter((t) => t.addOnOf === ticket.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const siblings = ticket.parentId ? tickets.filter((t) => t.parentId === ticket.parentId && t.id !== ticket.id) : [];
   const deps = (ticket.dependsOn ?? []).map((ref) => siblings.find((s) => s.id === ref || s.planKey === ref) ?? ref);
   const [title, setTitle] = useState(ticket.title);
@@ -253,6 +254,10 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
     // A card badge or Start huddle shows the current round; a dock row its own.
     setHuddlePick(tabRequest.huddleId ?? null);
   }, [tabRequest?.n]);
+  // Opening the ticket tells a follow-up's Claude the user looked (the server writes it at most every 5 minutes).
+  useEffect(() => {
+    api.markSeen(slug, ticket.id).catch(() => {});
+  }, [slug, ticket.id]);
   const huddleState = useHuddle(slug, ticket.id, huddlePick);
   const huddle = huddleState.latest;
   // The Plan tab exists only while the ticket has children; Changes while it has a worktree, or it ran in the board's
@@ -580,24 +585,30 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             </span>
           </div>
         )}
-        {ticket.followUpOf && (
+        {(ticket.followUp || ticket.followUpStopped) && (
           <div className="field-row">
-            <span className="field-key" title="This ticket is a new requirement on that one, which keeps its own title and description">Follow-up of</span>
-            {followUpOf ? (
+            <span className="field-key" title="Claude comes back to this ticket by itself at that time">Follow-up</span>
+            <span><FollowUpChip slug={slug} ticket={ticket} onError={onError} /></span>
+          </div>
+        )}
+        {ticket.addOnOf && (
+          <div className="field-row">
+            <span className="field-key" title="This ticket is a new requirement on that one, which keeps its own title and description">Add-on to</span>
+            {addOnOf ? (
               <span>
-                <button className="link-btn ticket-link" onClick={() => onOpenTicket(followUpOf.id)}>{followUpOf.title}</button>
-                <span className="muted small"> ({COLUMNS.find((c) => c.id === followUpOf.status)?.label ?? followUpOf.status})</span>
+                <button className="link-btn ticket-link" onClick={() => onOpenTicket(addOnOf.id)}>{addOnOf.title}</button>
+                <span className="muted small"> ({COLUMNS.find((c) => c.id === addOnOf.status)?.label ?? addOnOf.status})</span>
               </span>
             ) : (
               <span className="muted small">Original ticket was deleted</span>
             )}
           </div>
         )}
-        {followUps.length > 0 && (
+        {addOns.length > 0 && (
           <div className="field-row">
-            <span className="field-key" title="New requirements on this ticket, each in its own ticket">Follow-ups</span>
+            <span className="field-key" title="New requirements on this ticket, each in its own ticket">Add-ons</span>
             <span className="dep-list">
-              {followUps.map((f) => <button key={f.id} className="link-btn ticket-link" onClick={() => onOpenTicket(f.id)}>{f.title}</button>)}
+              {addOns.map((f) => <button key={f.id} className="link-btn ticket-link" onClick={() => onOpenTicket(f.id)}>{f.title}</button>)}
             </span>
           </div>
         )}

@@ -129,7 +129,7 @@ interface Tool {
 export interface ToolContext {
   client: Pick<BoardClient,
     | "listProfiles" | "listTickets" | "getTicket" | "createTicket" | "updateTicket" | "deleteTicket" | "chat" | "stop" | "listComments"
-    | "comment" | "reportBug" | "listSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "runSchedule"
+    | "comment" | "reportBug" | "setFollowUp" | "cancelFollowUp" | "listSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "runSchedule"
     | "scheduleHistory" | "cronPreview" | "listJobs" | "createJob" | "updateJob" | "jobAction" | "adopt" | "planAction" | "huddleRead" | "huddlePost" | "huddleMode" | "huddleAdd" | "huddleFindings"
     | "huddleStatus" | "huddleCloseRequest" | "startAutoHuddle"
     | "listHuddlePresets" | "saveHuddlePreset" | "deleteHuddlePreset" | "listHuddleTemplates" | "huddleBrief" | "huddleProposeTeammate">;
@@ -677,7 +677,7 @@ const PLANNING_TOOLS: Tool[] = [
     description:
       "Board planning chat only: propose an improved title and markdown description for this ticket. " +
       "The board shows it as a card; the user clicks Apply to replace the ticket's title and description " +
-      "(on a ticket that already ran, Create follow-up makes a new ticket linked to it instead). " +
+      "(on a ticket that already ran, Create add-on ticket makes a new ticket linked to it instead). " +
       "Write the description self-contained (## Goal, ## Context, ## Scope, ## Requirements, ## Acceptance criteria, ## Open questions): " +
       "Claude works on it later without this chat. Nothing is created or changed by the call.",
     inputSchema: {
@@ -775,7 +775,7 @@ const PLANNING_TOOLS: Tool[] = [
   {
     name: "propose_tickets",
     description:
-      "Board ticket chat (any column): propose new tickets, e.g. splitting the work or follow-ups, linked to this ticket as their parent. Call list_tickets first to avoid duplicates. " +
+      "Board ticket chat (any column): propose new tickets, e.g. splitting the work or add-ons, linked to this ticket as their parent. Call list_tickets first to avoid duplicates. " +
       "The board shows one card per ticket; the user clicks Create to add it to Backlog, linked to this ticket. " +
       "Each description must be self-contained (goal, context with relevant files, acceptance criteria). " +
       "key is a short unique name; dependsOn lists keys that must be finished first: give one to tickets that build on each other or likely edit the same files. " +
@@ -1386,6 +1386,61 @@ export const TOOLS: Tool[] = [
       if (!fresh.length) return `${t.id} already has ${tags.map((g) => `#${g}`).join(" ")}; nothing to suggest.`;
       const u = await ctx.client.updateTicket(slug, id, { suggestedTags: [...(t.suggestedTags ?? []), ...fresh] }, ctx.env[RUN_ENV]);
       return `Suggested ${fresh.map((g) => `#${g}`).join(" ")} on ${u.id}: the user keeps or drops them on the board.`;
+    },
+  },
+  {
+    name: "follow_up",
+    description:
+      "Come back to the ticket you are working on later: at that time the board wakes this same conversation (your board run's or its chat's) " +
+      "with your note and what happened since (user messages, whether the user opened the card, earlier follow-ups and their cost), so you can check and act. " +
+      "Use it whenever the work ends waiting on someone or something outside: a reply to an email, a person, a deploy, a file, a review; or when the user asks you to check back. " +
+      "Pick the time a person would (minutes for a deploy, hours for a colleague, a day or more for a customer). One follow-up per ticket: a new call replaces the pending one. " +
+      "Never use Claude Code's own timers (ScheduleWakeup, CronCreate) for this: they stop when the run ends. The card shows \"Follows up <when>\" with your note.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        after: { type: "string", description: "Delay from now: \"30m\", \"4h\", \"2d\", \"1d 6h\". Give after or at." },
+        at: { type: "string", description: "Exact time in this computer's local time: \"2026-10-20 09:00\" (or ISO with a timezone). Give after or at." },
+        note: { type: "string", description: "For your future self, shown on the card: why you come back and what to check or do then, e.g. \"Check Gmail for Michie's reply; if none by Thu, draft a short nudge for the user to approve.\"" },
+        cancelOnReply: { type: "boolean", description: "A message the user types in this ticket's chat cancels it (default true). Set false when the user's messages don't change what you wait for." },        profile: PROFILE,
+      },
+      required: ["note"],
+    },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      const own = runTicketId(ctx);
+      if (!own) throw new ClientError("follow_up works inside a board run or ticket chat, on its own ticket");
+      const slug = await slugFor(args, ctx);
+      const input: { after?: string; at?: string; note: string; cancelOnReply?: boolean } = { note: str(args, "note")! };
+      const after = str(args, "after", false);
+      const at = str(args, "at", false);
+      if (after) input.after = after;
+      if (at) input.at = at;
+      if (typeof args?.cancelOnReply === "boolean") input.cancelOnReply = args.cancelOnReply;
+      const t = await ctx.client.setFollowUp(slug, own, input, ctx.env[RUN_ENV]);
+      const f = t.followUp!;
+      return `Follow-up set: the board wakes this conversation at ${localTime(f.dueAt)} (local time).${f.cancelOnReply ? " It is cancelled if the user writes in this chat first." : ""}`;
+    },
+  },
+  {
+    name: "cancel_follow_up",
+    description:
+      "Stop following up on the ticket you are working on: cancels its pending follow-up, and the card shows \"Stopped following up: <reason>\". " +
+      "Call it when there is nothing more to follow up on (it is finished, nobody is reading, or you have nudged enough).",
+    inputSchema: {
+      type: "object",
+      properties: { reason: { type: "string", description: "One line the user reads on the card, e.g. \"2 nudges, no reply since Monday\"." }, profile: PROFILE },
+      required: ["reason"],
+    },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      const own = runTicketId(ctx);
+      if (!own) throw new ClientError("cancel_follow_up works inside a board run or ticket chat, on its own ticket");
+      const slug = await slugFor(args, ctx);
+      await ctx.client.cancelFollowUp(slug, own, str(args, "reason")!, ctx.env[RUN_ENV]);
+      return "Stopped following up. The card says so with your reason.";
     },
   },
   {

@@ -55,7 +55,7 @@ export function resetText(iso: string | null, now = Date.now()): string | null {
 
 // ---------- per-ticket usage (Usage tab) ----------
 
-export type RunKind = "work" | "planning" | "chat" | "reply" | "run";
+export type RunKind = "work" | "planning" | "chat" | "reply" | "follow-up" | "run";
 
 /** What the agents of a ticket's huddles spent (src/server/ticket-usage.ts TeammateUsage). */
 export interface TeammateUsage {
@@ -104,5 +104,5 @@ export function modelName(id: string | null): string {
 }
 
 export const RUN_KIND_LABEL: Record<RunKind, string> = {
-  work: "Work run", planning: "Planning chat", chat: "Chat", reply: "Reply to a ticket", run: "Run",
+  work: "Work run", planning: "Planning chat", chat: "Chat", reply: "Reply to a ticket", "follow-up": "Follow-up", run: "Run",
 };
