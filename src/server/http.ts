@@ -70,6 +70,8 @@ export interface ServerDeps {
   huddles?: Huddles;
   /** Restart the daemon once no run is active (POST /api/restart); missing when not running as the daemon. */
   restart?: () => { running: number; alreadyPending: boolean };
+  /** The daemon keeps the Mac awake for active work now (GET /api/awake); missing: never. */
+  awake?: () => boolean;
   /** Runs `gh` for bug reports (tests pass a fake). */
   gh?: GhRunner;
   /** Claude plan usage for the header pill (tests pass a fake). */
@@ -688,6 +690,7 @@ export function createServer(deps: ServerDeps) {
         return json({ ...r, repo });
       }
     }
+    if (parts[0] === "awake" && parts.length === 1 && m === "GET") return json({ held: deps.awake?.() ?? false });
     if (parts[0] === "restart" && parts.length === 1) {
       if (m === "GET") return json(board.restartState());
       if (m === "POST") {
@@ -769,6 +772,7 @@ export function createServer(deps: ServerDeps) {
         if (b.setupCommand !== undefined) next.setupCommand = String(b.setupCommand ?? "").trim();
         if (b.cleanupCommand !== undefined) next.cleanupCommand = String(b.cleanupCommand ?? "").trim();
         if (b.autoHuddles !== undefined) next.autoHuddles = !!b.autoHuddles;
+        if (b.keepAwake !== undefined) next.keepAwake = !!b.keepAwake;
         if (b.runCapUsd !== undefined) {
           if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can change the board's spending cap");
           next.runCapUsd = capValue(b.runCapUsd, true) || null;

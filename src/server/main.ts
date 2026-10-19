@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { cleanupTmuxLeftovers } from "./artifact";
+import { StayAwake } from "./awake";
 import { Board } from "./board";
 import { Bus } from "./events";
 import { createServer } from "./http";
@@ -20,6 +21,7 @@ import { SessionCache, startSessionWatcher } from "./session";
 import { ShellManager } from "./shell";
 import { TerminalWatcher } from "./terminals";
 import { defaultRoot, Store } from "./store";
+import { keepAwakeOn } from "./types";
 import { VERSION } from "./version";
 import { WEB_ASSETS } from "./web-assets.gen";
 import { detectMissing } from "./worktree-setup";
@@ -61,8 +63,12 @@ export async function startDaemon(): Promise<void> {
   const huddles = new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
+  const awake = new StayAwake({
+    wanted: () => board.busyBoards().some((slug) => keepAwakeOn(store.getProfile(slug))),
+    onChange: (held) => bus.emit({ type: "awake.updated", held }),
+  });
   const remotePort = remoteListenPort(port, config.remotePort);
-  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, jobs, huddles, assets: WEB_ASSETS, restart, notifier, push });
+  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, jobs, huddles, assets: WEB_ASSETS, restart, awake: () => awake.held(), notifier, push });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   board.recover();
   huddles.recover();
@@ -81,6 +87,7 @@ export async function startDaemon(): Promise<void> {
   const stopMcp = mcp.start();
   // After recover(): what already waits when the daemon starts doesn't notify again.
   const stopNotifier = notifier.start();
+  const stopAwake = awake.start();
 
   const shutdown = async () => {
     console.log("ckanban shutting down");
@@ -95,6 +102,7 @@ export async function startDaemon(): Promise<void> {
     shells.killAll();
     stopMcp();
     stopNotifier();
+    stopAwake();
     await Promise.all([board.shutdown(), huddles.shutdown()]);
     server.stop(true);
     server.remoteServer?.stop(true);

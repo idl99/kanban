@@ -164,8 +164,8 @@ const WHOLE_ACTION = "send the whole action (kind and all its fields), not only 
 /** Fires one-time jobs. Each fire is marked running before it starts, so a second tick or a restart never fires it again. */
 export class JobRunner {
   private queue: Promise<unknown> = Promise.resolve();
-  /** Commands still running (they don't hold up the queue). */
-  private inflight = new Set<Promise<void>>();
+  /** Commands still running (they don't hold up the queue), with their board. */
+  private inflight = new Map<Promise<void>, string>();
   /** Stops each running command's process group (daemon shutdown). */
   private stops = new Set<() => void>();
   private now: () => Date;
@@ -173,7 +173,7 @@ export class JobRunner {
   constructor(private board: Board, private store: Store, private bus: Bus, private o: JobRunnerOptions = {}) {
     this.now = o.now ?? (() => new Date());
     // A pending restart waits for running commands, so it doesn't cut them off.
-    board.onRestartBusy(() => this.inflight.size);
+    board.onRestartBusy(() => [...this.inflight.values()]);
     // A deleted ticket's jobs that haven't run yet go with it.
     bus.on((e) => {
       if (e.type === "ticket.deleted") void this.dropSource(e.profile, e.id);
@@ -409,14 +409,14 @@ export class JobRunner {
       if (stop) this.stops.delete(stop);
       this.board.restartWorkChanged();
     });
-    this.inflight.add(tracked);
+    this.inflight.set(tracked, slug);
     return running;
   }
 
   /** Resolves once every command started so far has finished (tests). */
   async whenIdle(): Promise<void> {
     await this.queue;
-    while (this.inflight.size) await Promise.all([...this.inflight]);
+    while (this.inflight.size) await Promise.all([...this.inflight.keys()]);
   }
 
   /**

@@ -232,6 +232,7 @@ test("a pending restart waits for huddle agents mid-turn and holds new agent run
   board.requestRestart(() => void (restarted = true), 20_000);
   expect(board.restartState()).toMatchObject({ pending: true });
   expect(board.restartState().waiting).toBeGreaterThan(0);
+  expect(new Set(board.busyBoards())).toEqual(new Set(["p"]));
   await Bun.sleep(250);
   expect(restarted).toBe(false);
   await until(() => restarted, 10_000);

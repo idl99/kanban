@@ -34,6 +34,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
   const [saving, setSaving] = useState(false);
   const [model, setModel] = useState(profile?.model ?? "");
   const [autoHuddles, setAutoHuddles] = useState(profile?.autoHuddles !== false);
+  const [keepAwake, setKeepAwake] = useState(profile?.keepAwake !== false);
   const [capText, setCapText] = useState(capInputText(profile?.runCapUsd));
   const cap = parseCap(capText);
   const capError = cap === undefined ? "An amount in $, e.g. 5 (empty: no cap)" : null;
@@ -100,7 +101,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
     try {
       const p = profile
         ? await api.updateProfile(profile.slug, {
-          name, path, maxParallel, model: model || null, autoHuddles, runCapUsd: cap || null, artifacts, stallMinutes, workspace,
+          name, path, maxParallel, model: model || null, autoHuddles, keepAwake, runCapUsd: cap || null, artifacts, stallMinutes, workspace,
           // A file typed but not yet added with Enter still counts.
           copyFiles: newFile.trim() && !copyFiles.includes(newFile.trim()) ? [...copyFiles, newFile.trim()] : copyFiles,
           setupCommand: setupCommand.trim(), cleanupCommand: cleanupCommand.trim(), setupDetected: detected,
@@ -249,6 +250,15 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
                 Auto huddles
                 <span className="muted small">
                   When you're away, Claude starts a review huddle on its own before landing ⭐ important or risky work ($20 cap, one at a time per board).
+                </span>
+              </span>
+            </label>
+            <label className="check-row board-switch">
+              <input type="checkbox" checked={keepAwake} onChange={(e) => setKeepAwake(e.target.checked)} />
+              <span>
+                Keep this Mac awake while Claude is working
+                <span className="muted small">
+                  While this board's tickets, chats, huddles or jobs are working, the Mac doesn't go to sleep, so they keep going when you step away. The screen can still turn off. It sleeps as usual once they finish. Mac only.
                 </span>
               </span>
             </label>

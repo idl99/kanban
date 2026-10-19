@@ -248,7 +248,7 @@ export class Board {
   /** A restart waits for active runs to finish: no new run starts until then (see requestRestart). */
   private restartPending = false;
   /** Other work a restart waits for besides board runs (huddle agents mid-turn), see onRestartBusy. */
-  private restartBusy: (() => number)[] = [];
+  private restartBusy: (() => string[])[] = [];
   /** Each board's open huddles by host ticket (see onHostHuddles); none until Huddles registers. */
   private hostHuddleStates: (slug: string) => Map<string, HostHuddle> = () => new Map();
   private sessionExists: (id: string) => boolean;
@@ -2190,7 +2190,6 @@ export class Board {
     this.patch(r.slug, r.id, { interrupted: i, lastActivity: null, runStartedAt: null });
   }
 
-  /** Count more active work a restart waits for (e.g. huddle agents mid-turn). */
   /** Huddles tells the board about its host tickets' huddles, which change whether those tickets need the user. */
   onHostHuddles(f: (slug: string) => Map<string, HostHuddle>): void {
     this.hostHuddleStates = f;
@@ -2201,13 +2200,19 @@ export class Board {
     return this.hostHuddleStates(slug);
   }
 
-  onRestartBusy(busy: () => number): void {
+  /** Count more active work a restart waits for: busy() lists the board of each piece of work active now. */
+  onRestartBusy(busy: () => string[]): void {
     this.restartBusy.push(busy);
   }
 
   /** Board runs plus other active work a restart waits for. */
   private activeWork(): number {
-    return this.runs.size + this.restartBusy.reduce((n, f) => n + f(), 0);
+    return this.busyBoards().length;
+  }
+
+  /** The board of each piece of active work (runs, chat replies, huddle agents mid-turn, job commands), repeats included. */
+  busyBoards(): string[] {
+    return [...[...this.runs.values()].map((r) => r.slug), ...this.restartBusy.flatMap((f) => f())];
   }
 
   /**

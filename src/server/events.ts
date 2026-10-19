@@ -22,6 +22,8 @@ export type BusEvent =
   | { type: "snippets.updated" }
   /** A daemon restart is waiting for `waiting` active runs; nothing new starts until then. */
   | { type: "restart.updated"; pending: boolean; waiting: number }
+  /** The daemon started or stopped keeping the Mac awake for active work (awake.ts). */
+  | { type: "awake.updated"; held: boolean }
   /** A huddle's status, roster or findings changed. */
   | { type: "huddle.updated"; profile: string; huddle: HuddleView }
   /** A message was posted in a huddle. */

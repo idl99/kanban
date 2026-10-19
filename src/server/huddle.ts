@@ -281,7 +281,7 @@ export class Huddles {
   constructor(private store: Store, private board: Board, private bus: Bus, private opts: HuddleOptions) {
     this.sessionExists = opts.sessionExists ?? claudeSessionExists;
     // A pending restart waits for huddle agents mid-turn too.
-    board.onRestartBusy(() => this.busy());
+    board.onRestartBusy(() => this.busyBoards());
     // "Needs you" on a host ticket depends on its huddle (attention.ts).
     board.onHostHuddles((slug) => this.hostStates(slug));
     // A monitor-mode ticket session gets what came in while it worked once its run is over.
@@ -447,9 +447,9 @@ export class Huddles {
     return false;
   }
 
-  /** Huddle agents mid-turn (or starting): a pending restart waits for them. */
-  busy(): number {
-    return [...this.runs.values()].filter((r) => !r.idle && !r.stopRequested).length;
+  /** The board of each huddle agent mid-turn (or starting): a pending restart waits for them. */
+  busyBoards(): string[] {
+    return [...this.runs].filter(([, r]) => !r.idle && !r.stopRequested).map(([k]) => k.slice(0, k.indexOf("/")));
   }
 
   /** Doing something now: an agent mid-turn, or a ticket session with a run (its own work or a huddle reply). */

@@ -162,6 +162,8 @@ export interface Profile {
   setupDetected?: SetupDetection | null;
   /** Unattended runs start a review huddle themselves before landing important or risky work. Missing: on. */
   autoHuddles?: boolean;
+  /** While this board has work going, the daemon keeps the Mac from idle sleep. Missing: on. */
+  keepAwake?: boolean;
   /** Spending cap per run in USD for its tickets' work runs; missing/null: none. */
   runCapUsd?: number | null;
   artifacts?: boolean;
@@ -903,6 +905,7 @@ export type BusEvent =
   | { type: "schedule.updated"; profile: string; id: string; schedule: Omit<Schedule, "summary" | "active"> | null }
   | { type: "job.updated"; profile: string; id: string; job: Job | null }
   | { type: "restart.updated"; pending: boolean; waiting: number }
+  | { type: "awake.updated"; held: boolean }
   | { type: "huddle.updated"; profile: string; huddle: Huddle }
   | { type: "huddle.message"; profile: string; huddleId: string; message: HuddleMessage }
   | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number; contextTokens?: number }
@@ -1066,6 +1069,7 @@ export const api = {
   pushTest: (id: string, profile: string | null) => req<{ ok: boolean; error: string | null }>("POST", "/api/push/test", profile ? { id, profile } : { id }),
   pushVisible: (endpoint: string, visible: boolean) => req<{ ok: boolean }>("POST", "/api/push/visible", { endpoint, visible }),
   restartState: () => req<{ pending: boolean; waiting: number }>("GET", "/api/restart"),
+  awakeState: () => req<{ held: boolean }>("GET", "/api/awake"),
   bugDraft: (ref: { profile: string; ticketId: string } | null) =>
     req<{ blocks: BugBlock[]; screenshots: string[] }>("POST", "/api/bug-report/draft", ref ?? {}),
   reportBug: (input: { title: string; description: string; include: BugBlockId[]; profile?: string; ticketId?: string }) =>

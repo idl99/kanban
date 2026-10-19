@@ -29,6 +29,8 @@ export interface Profile {
    * Missing: on (see autoHuddlesOn).
    */
   autoHuddles?: boolean;
+  /** While this board has work going, keep the Mac from idle sleep (awake.ts). Missing: on (see keepAwakeOn). */
+  keepAwake?: boolean;
   /** Spending cap per run in USD (claude --max-budget-usd) for its tickets' work runs. Missing/null: none. */
   runCapUsd?: number | null;
   /** Runs are taught the claude.ai artifact helper (publish/read artifacts). Missing: off. */
@@ -46,6 +48,9 @@ export type Workspace = "worktree" | "folder";
 
 /** Board setting "Workspace": a worktree per ticket unless set to the project folder. */
 export const workspaceOf = (p: Pick<Profile, "workspace"> | null | undefined): Workspace => (p?.workspace === "folder" ? "folder" : "worktree");
+
+/** Board setting "Keep this Mac awake while Claude is working": on unless turned off. */
+export const keepAwakeOn = (p: Pick<Profile, "keepAwake"> | null | undefined): boolean => p?.keepAwake !== false;
 
 /** Board setting "Auto huddles": on unless turned off. */
 export const autoHuddlesOn = (p: Pick<Profile, "autoHuddles"> | null | undefined): boolean => p?.autoHuddles !== false;

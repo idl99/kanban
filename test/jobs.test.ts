@@ -350,6 +350,8 @@ test("a pending restart waits for a running command, and holds new ones", async 
   let restarted = false;
   board.requestRestart(() => (restarted = true), 5000);
   expect(board.restartState().waiting).toBe(1);
+  // The running command counts as work on its board (keeps the Mac awake, awake.ts).
+  expect(board.busyBoards()).toEqual(["p"]);
   now = at(14, 10, 2);
   await jobs.tick();
   expect(store.getJob("p", held.id)!.state).toBe("scheduled");

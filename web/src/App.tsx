@@ -319,9 +319,13 @@ export function App() {
   // A pending daemon restart holds new runs on every board: show it so queued cards don't look stuck.
   const [restart, setRestart] = useState({ pending: false, waiting: 0 });
   useEffect(() => { api.restartState().then(setRestart).catch(() => {}); }, []);
+  // The daemon keeps the Mac awake while work runs (board setting): said quietly in the running pill's tooltip.
+  const [awake, setAwake] = useState(false);
+  useEffect(() => { api.awakeState().then((s) => setAwake(s.held)).catch(() => {}); }, []);
 
   useEffect(() => onReconnect(() => {
     api.restartState().then(setRestart).catch(() => {});
+    api.awakeState().then((s) => setAwake(s.held)).catch(() => {});
     loadProfiles().catch(() => {});
     loadInbox();
     api.mcp().then(setMcp).catch(() => {});
@@ -480,6 +484,10 @@ export function App() {
         }
         if (e.type === "restart.updated") {
           setRestart({ pending: e.pending, waiting: e.waiting });
+          return;
+        }
+        if (e.type === "awake.updated") {
+          setAwake(e.held);
           return;
         }
         if (e.type === "profile.updated") {
@@ -744,8 +752,8 @@ export function App() {
           />
         )}
         {profile && (
-          <span className="pill" title={`${running.runs} ticket ${running.runs === 1 ? "run" : "runs"} active, ${running.slots} of ${profile.maxParallel} slots in use. Slots apply to ticket runs: at most ${profile.maxParallel} work at the same time on this board. Planning chats and replies to other tickets don't take a slot.${running.agents ? ` Huddle agents (${running.agents} working) run outside the slots.` : ""}`}>
-            {running.runs}/{profile.maxParallel} running{running.agents > 0 && <> · {running.agents} huddle {running.agents === 1 ? "agent" : "agents"}</>}{queued > 0 && <> · {queued} queued</>}
+          <span className="pill" title={`${running.runs} ticket ${running.runs === 1 ? "run" : "runs"} active, ${running.slots} of ${profile.maxParallel} slots in use. Slots apply to ticket runs: at most ${profile.maxParallel} work at the same time on this board. Planning chats and replies to other tickets don't take a slot.${running.agents ? ` Huddle agents (${running.agents} working) run outside the slots.` : ""}${awake ? " Keeping Mac awake until the work on your boards finishes." : ""}`}>
+            {running.runs}/{profile.maxParallel} running{running.agents > 0 && <> · {running.agents} huddle {running.agents === 1 ? "agent" : "agents"}</>}{queued > 0 && <> · {queued} queued</>}{awake && <> · keeping Mac awake</>}
           </span>
         )}
         <UsagePill state={usage} openRequest={usageRequest} />
