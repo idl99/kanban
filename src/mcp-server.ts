@@ -850,6 +850,11 @@ const ROSTER_ENTRY = {
       description: "shared: reads the host ticket's folder, read-only (review, QA). own: its own copy of the folder, where it may change files and then hand them in. Works on any project, with or without version history.",
     },
     lead: { type: "boolean", description: "May add participants and manage the findings list." },
+    host: {
+      type: "boolean",
+      description: "Runs the huddle instead of you (@main): hands out the tasks, chases the helpers, accepts or rejects hand-ins, writes the summary and tags @main only for decisions and the final report. " +
+        "One entry at most, count 1; it is made a lead. Templates and auto huddles default to their first lead.",
+    },
     canEdit: { type: "boolean", description: "May change files (then it works in its own copy and hands its changes in with huddle_hand_in). Default: the preset's (true for a free-text role with workspace own)." },
     prompt: { type: "string", description: "Instructions: with a preset, added to its prompt; with a free-text role, its whole job." },
     handle: { type: "string", description: "Handle for @mentions. Default: the preset or role." },
@@ -879,7 +884,7 @@ export function huddlePageText(p: HuddlePage, since?: number): string {
     "",
     `Participants (${h.participants.filter((x) => x.kind !== "human").length}/${h.maxParticipants}):`,
     ...h.participants.map((x) =>
-      `- @${x.handle}: ${x.role}${x.lead ? ", lead" : ""}, ${x.mode}, ${x.status}${x.statusReason ? ` (${x.statusReason})` : ""}${x.focus ? ` (focus: ${x.focus})` : ""}`),
+      `- @${x.handle}: ${x.role}${h.host === x.handle ? ", host (runs the huddle)" : ""}${x.lead ? ", lead" : ""}, ${x.mode}, ${x.status}${x.statusReason ? ` (${x.statusReason})` : ""}${x.focus ? ` (focus: ${x.focus})` : ""}`),
   ];
   if (h.quiet) lines.push("", `The huddle is quiet${h.idleSince ? ` since ${h.idleSince}` : ""}: nobody is working, no tag is unanswered and no finding is open.`);
   if (h.closeRequest) lines.push("", `@${h.closeRequest.by} asked the user to close the huddle: ${h.closeRequest.reason}`);
@@ -1248,6 +1253,7 @@ const HUDDLE_TOOLS: Tool[] = [
       }
       const h = r.huddle!;
       return `Auto huddle ${h.id} started (${r.template}${h.maxCostUsd !== undefined ? `, budget $${h.maxCostUsd.toFixed(2)}` : ""}) with ${h.participants.filter((p) => p.kind === "agent").map((p) => `@${p.handle}`).join(", ")}; you are @main. ` +
+        (h.host ? `@${h.host} hosts it: it hands out the tasks and sends you the final report. If it needs something only you know, brief it now in one huddle_post that tags @${h.host}. ` : "") +
         "Don't land yet: end your turn now with a short note. The board keeps the ticket In Progress and wakes you with the consolidated findings.";
     },
   },

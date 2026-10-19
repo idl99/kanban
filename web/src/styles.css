@@ -1897,6 +1897,8 @@ button.pill:hover { color: var(--text); }
 .roster-num { padding-top: 8px !important; }
 .roster .pill, .huddle-side .pill { font-size: 11px; padding: 1px 7px; }
 .pill.lead { background: var(--info-soft); color: var(--info); }
+.pill.host { background: var(--info); color: var(--bg); font-weight: 600; }
+button.pill.host-off { background: transparent; border: 1px dashed var(--border); }
 .roster input { font-size: 12px; padding: 3px 6px; border-radius: 6px; }
 .roster-count { width: 48px; }
 .roster-focus { width: 100%; min-width: 120px; }

@@ -1093,8 +1093,9 @@ function Roster({ slug, huddle: h, onError, viewing, onView }: {
             <div className="hd-p-name" title={role && !human ? `@${p.handle} · ${role}` : `@${p.handle}`}>
               <b>@{p.handle}</b>
               {role && <span className="hd-p-role"> · {role}</span>}
-              {p.handle === "main" && <span className="pill lead">coordinator</span>}
-              {p.lead && p.handle !== "main" && !human && <span className="pill lead">lead</span>}
+              {p.handle === "main" && <span className="pill lead">{h.host ? "ticket's session" : "coordinator"}</span>}
+              {h.host === p.handle && <span className="pill host" title={`Runs the huddle: hands out the tasks, accepts the hand-ins and tags @main only for decisions and the final report`}>host</span>}
+              {p.lead && p.handle !== "main" && h.host !== p.handle && !human && <span className="pill lead">lead</span>}
               {p.kind === "agent" && p.canEdit && <span className="pill" title="Works in its own copy of the folder and hands its changes in">changes files</span>}
             </div>
             <span className="hd-p-cost" title={human ? undefined : `What @${p.handle} spent in this huddle${p.liveCostUsd

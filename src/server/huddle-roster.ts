@@ -1,6 +1,6 @@
 // Huddle rosters and @mentions: plain helpers shared by the daemon (huddle.ts) and the MCP server.
 import { MAIN_PRESET } from "./huddle-presets";
-import type { HuddleMode, HuddleWorkspace } from "./types";
+import type { Huddle, HuddleMode, HuddleWorkspace } from "./types";
 
 export const DEFAULT_MAX_PARTICIPANTS = 8;
 /** Set on a huddle agent's claude process: "<huddle id>/<handle>/<token>". The token proves who is calling. */
@@ -13,6 +13,14 @@ export const SOURCE_HEADER = "x-ckanban-source";
 export const MAIN_HANDLE = "main";
 /** The user, posting from the board. */
 export const USER_HANDLE = "you";
+/**
+ * Who runs the huddle now: its host while the host can (not stopped, blocked, failed or done), else @main. The
+ * board sends this one the idle watchdog, the "wasn't woken" notes, the budget warnings and the hand-ins.
+ */
+export function activeHost(h: Pick<Huddle, "host" | "participants">): string {
+  const p = h.host ? h.participants.find((x) => x.handle === h.host) : undefined;
+  return p && (p.status === "idle" || p.status === "working") ? p.handle : MAIN_HANDLE;
+}
 /** Handles no participant can take. */
 export const RESERVED_HANDLES = new Set([MAIN_HANDLE, USER_HANDLE, "all", "system", "current"]);
 /** Agents that may not edit tracked files run without these tools. */
@@ -38,6 +46,8 @@ export interface RosterEntry {
   canEdit?: boolean;
   /** Handle (or handle prefix when count > 1). Default: the preset or role name. */
   handle?: string;
+  /** Runs the huddle instead of @main (a lead; one per huddle, count 1). Templates and auto huddles default to their first lead. */
+  host?: boolean;
   /** Extra instructions on top of the preset's. */
   prompt?: string;
 }
@@ -88,10 +98,11 @@ export function rosterEntryError(e: any, at = "", presets?: string[]): string | 
   for (const k of ["focus", "model", "handle", "prompt"]) {
     if (e[k] !== undefined && e[k] !== null && typeof e[k] !== "string") return `${at}${k} must be text`;
   }
-  for (const k of ["lead", "canEdit"]) {
+  for (const k of ["lead", "canEdit", "host"]) {
     if (e[k] !== undefined && typeof e[k] !== "boolean") return `${at}${k} must be true or false`;
   }
   if (isText(e.handle) && RESERVED_HANDLES.has(handleBase(e.handle))) return `${at}handle "${e.handle}" is reserved`;
+  if (e.host && (e.count ?? 1) > 1) return `${at}the host is one participant: count must be 1`;
   return null;
 }
 
@@ -102,6 +113,7 @@ export function rosterError(roster: unknown, max = DEFAULT_MAX_PARTICIPANTS, pre
     const err = rosterEntryError(e, `entry ${i + 1}: `, presets);
     if (err) return err;
   }
+  if (roster.filter((e: any) => e.host).length > 1) return "a huddle has one host: set host on one entry only";
   // The coordinator (@main) counts too.
   const total = 1 + roster.reduce((n: number, e: any) => n + (e.count ?? 1), 0);
   if (total > max) return `that is ${total} participants with @main, over the limit of ${max}`;

@@ -111,6 +111,9 @@ export function RosterEditor({ presets, draft, setDraft, tickets, hostId, max = 
     setDraft({ ...draft, rows: [...draft.rows, row] });
   };
   const invitable = tickets.filter((t) => t.id !== hostId && !draft.invites.includes(t.id));
+  const hosted = draft.rows.some((r) => r.host);
+  // One host per huddle: picking a row clears the others; picking it again clears it.
+  const setHost = (k: string) => setDraft({ ...draft, rows: draft.rows.map((r) => ({ ...r, host: r.key === k ? !r.host || undefined : undefined })) });
   return (
     <div className="roster">
       <table className="roster-table">
@@ -120,8 +123,8 @@ export function RosterEditor({ presets, draft, setDraft, tickets, hostId, max = 
         <tbody>
           {!hideMain && <tr>
             <td>
-              <b>@main</b> <span className="pill lead">coordinator</span>
-              <div className="roster-desc">this ticket's session · only one who edits code</div>
+              <b>@main</b> <span className="pill lead">{hosted ? "ticket's session" : "coordinator"}</span>
+              <div className="roster-desc">this ticket's session · {hosted ? "woken for decisions and the host's final report" : "only one who edits code"}</div>
             </td>
             <td className="roster-num">1</td>
             <td>
@@ -134,7 +137,7 @@ export function RosterEditor({ presets, draft, setDraft, tickets, hostId, max = 
           </tr>}
           {draft.rows.map((r) => {
             const p = r.preset ? byName.get(r.preset) : undefined;
-            const lead = r.lead ?? p?.lead;
+            const lead = r.host || (r.lead ?? p?.lead);
             const edits = r.canEdit ?? p?.canEdit ?? (r.workspace ?? p?.workspace) === "own";
             const count = r.count ?? 1;
             const handle = rowHandle(r);
@@ -147,7 +150,12 @@ export function RosterEditor({ presets, draft, setDraft, tickets, hostId, max = 
                     <input className="roster-role" value={r.role ?? ""} placeholder="Role, e.g. Accessibility tester" disabled={disabled} autoFocus={!r.role}
                       onChange={(e) => setRow(r.key, { role: e.target.value })} onKeyDown={enter} aria-label="Role" />
                   )}
-                  {lead && <> <span className="pill lead">lead</span></>}
+                  {lead && !r.host && <> <span className="pill lead">lead</span></>}
+                  {!hideMain && count === 1 && (lead || r.host) && (
+                    <> <button type="button" className={`pill ${r.host ? "host" : "host-off"}`} disabled={disabled} aria-pressed={!!r.host}
+                      title={r.host ? "Runs the huddle instead of @main. Click to let @main run it." : "Make this lead the host: it runs the huddle, so @main is only woken for decisions and the final report"}
+                      onClick={() => setHost(r.key)}>{r.host ? "host" : "make host"}</button></>
+                  )}
                   <div className="roster-desc">
                     {r.preset ? `preset: ${p?.role ?? r.preset}` : "custom role"}
                     {lead ? " · can add agents" : ""}

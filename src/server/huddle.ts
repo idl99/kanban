@@ -20,6 +20,13 @@
 // after a new message. It is a sweep from the huddle's times, so it carries over a daemon restart, and it pauses while
 // the daemon shuts down or a restart is pending.
 //
+// Host: a huddle may have one lead that runs it (h.host; templates and auto huddles default to their first lead), so
+// @main, which holds the ticket's whole context, doesn't spend turns on the room. While the host can act (activeHost),
+// the idle watchdog, the "wasn't woken" notes, the budget warnings, blocked notes, ping-pong notes and hand-ins go to
+// it instead of @main; @main still wakes on a direct tag (the host's final report) and the user still closes. When the
+// host is stopped, blocked or fails, @main takes its place again and a system note says so (when the host is done,
+// @main takes it quietly: the host's final report already tagged @main).
+//
 // Lifecycle: @main or a lead writes outputs/huddles/<id>/summary.md and asks the user to close (huddle_close); only
 // the user closes, or the host ticket moving to Done does. Closing removes the agents' clean own worktrees and the
 // read-only agents' snapshots. A huddle closed without a summary gets one: @main is asked to write it, or, when the
@@ -44,7 +51,7 @@ import { claudeSessionExists, type Board } from "./board";
 import type { Bus } from "./events";
 import { addWorktree, branchExists, hasCommits, NO_HOOKS, removeWorktree, run as git, worktreeDir } from "./git";
 import {
-  DEFAULT_MAX_PARTICIPANTS, handleBase, HUDDLE_AGENT_ENV, LEGACY_SUMMARY_FILE, MAIN_HANDLE, NO_EDIT_TOOLS, parseMentions, RESERVED_HANDLES,
+  activeHost, DEFAULT_MAX_PARTICIPANTS, handleBase, HUDDLE_AGENT_ENV, LEGACY_SUMMARY_FILE, MAIN_HANDLE, NO_EDIT_TOOLS, parseMentions, RESERVED_HANDLES,
   REVIEW_HUDDLE_HEADING, reviewHuddleRequest, rosterEntryError, rosterError, summaryFile, USER_HANDLE, type RosterEntry,
 } from "./huddle-roster";
 import {
@@ -440,6 +447,7 @@ export class Huddles {
     h.learnings = was.learnings;
     // So do hand-ins: an agent can't accept its own changes or edit what it handed in.
     h.handIns = was.handIns;
+    h.host = was.host;
     for (const k of ["posts", "sinceUser", "idleNudged"] as const) {
       if ((was[k] ?? 0) > (h[k] ?? 0)) h[k] = was[k];
     }
@@ -451,7 +459,7 @@ export class Huddles {
     // Not from inside this read: it may be part of an update that saves after it.
     queueMicrotask(() => {
       if (this.store.getHuddle(slug, h.id)) {
-        this.system(slug, h.id, "Huddle file edited outside the board. Changes there to lead, canEdit, the limits, the status, the costs, the participants, the learnings, the hand-ins or the copies of the folder were ignored; only the board changes them.");
+        this.system(slug, h.id, "Huddle file edited outside the board. Changes there to lead, canEdit, the host, the limits, the status, the costs, the participants, the learnings, the hand-ins or the copies of the folder were ignored; only the board changes them.");
       }
     });
     return h;
@@ -875,11 +883,33 @@ export class Huddles {
   /** Read, change and save a huddle in one step (nothing else runs in between), then tell the UI. */
   private update(slug: string, hid: string, fn: (h: Huddle) => void): Huddle {
     const h = this.get(slug, hid);
+    const before = h.host && h.status === "live" ? activeHost(h) : null;
+    const was = h.participants.find((x) => x.handle === h.host)?.status;
     fn(h);
     h.updatedAt = nowIso();
     this.save(slug, h);
     this.bus.emit({ type: "huddle.updated", profile: slug, huddle: this.view(slug, h) });
+    const after = h.host && h.status === "live" ? activeHost(h) : null;
+    // After the caller's own note (stopped, failed…), so the room reads in order.
+    if (before && after && before !== after && !this.shuttingDown) queueMicrotask(() => this.hostMoved(slug, hid, after, was));
     return h;
+  }
+
+  /**
+   * The host stopped, blocked or failed, so @main runs the huddle again and is tagged; or the host is back. A host
+   * turning done (its final report already tagged @main) or waking from done gets no note. was: its status before.
+   * Checked again here, in case it changed since.
+   */
+  private hostMoved(slug: string, hid: string, now: string, was?: string) {
+    const h = this.load(slug, hid);
+    const p = h?.participants.find((x) => x.handle === h.host);
+    if (!h || !p || h.status !== "live" || activeHost(h) !== now) return;
+    if (now === p.handle) return void (was !== "done" && this.system(slug, hid, `@${p.handle} is back and runs the huddle again.`));
+    if (p.status === "done") return;
+    const why = p.statusReason || (p.status === "failed" ? p.error : null);
+    this.system(slug, hid,
+      `@${p.handle} (the host) is ${p.status}${why ? `: ${why}` : ""}. @main runs the huddle again: the idle watchdog, the notes, the budget warnings and the hand-ins go to @main until @${p.handle} is back.`,
+      [MAIN_HANDLE]);
   }
 
   /** What an agent's turn in progress cost so far (≈); 0 between turns. */
@@ -993,10 +1023,13 @@ export class Huddles {
       const ps = this.expand(e, h.participants.map((p) => p.handle), presets, true, host.status === "planning");
       h.participants.push(...ps);
       agents.push(...ps);
+      if (e.host) h.host = ps[0].handle;
     }
+    // Templates and auto huddles run with a host by default: their first lead.
+    if (!h.host && (tpl || opts.auto)) h.host = agents.find((p) => p.lead)?.handle ?? null;
     this.save(slug, h);
     this.bus.emit({ type: "huddle.updated", profile: slug, huddle: this.view(slug, h) });
-    this.system(slug, h.id, `${opts.auto ? "Auto huddle" : "Huddle"} started on ticket ${hostId} "${host.title}"${opts.auto ? ` by its own run (${opts.auto.trigger ? `${opts.auto.trigger}: ` : ""}${opts.auto.reason})` : ""}${tpl ? ` from template ${tpl.label}` : ""} with ${agents.map((p) => `@${p.handle} (${p.role})`).join(", ")}. @main coordinates. Budget ${money(maxCostUsd)}${budgetNote}.`);
+    this.system(slug, h.id, `${opts.auto ? "Auto huddle" : "Huddle"} started on ticket ${hostId} "${host.title}"${opts.auto ? ` by its own run (${opts.auto.trigger ? `${opts.auto.trigger}: ` : ""}${opts.auto.reason})` : ""}${tpl ? ` from template ${tpl.label}` : ""} with ${agents.map((p) => `@${p.handle} (${p.role})`).join(", ")}. ${h.host ? `@${h.host} hosts: it hands out the tasks, accepts the hand-ins and sends @main the final report.` : "@main coordinates."} Budget ${money(maxCostUsd)}${budgetNote}.`);
     for (const p of agents) this.kickoff(slug, h.id, p.handle);
     return this.get(slug, h.id);
   }
@@ -1140,9 +1173,10 @@ export class Huddles {
       const asked = e.workspace ?? preset?.workspace ?? "shared";
       const canEdit = !readOnly && (e.canEdit ?? preset?.canEdit ?? asked === "own");
       const workspace = readOnly ? "shared" : canEdit ? "own" : asked;
-      const lead = grant && (e.lead ?? preset?.lead ?? false);
+      // The host runs the room, so it is a lead.
+      const lead = grant && (!!e.host || (e.lead ?? preset?.lead ?? false));
       // Leads watch every message: an entry made a lead without a mode is monitor; an explicit mode wins.
-      const mode = e.mode ?? (lead && e.lead ? "monitor" : preset?.mode ?? (lead ? "monitor" : "tagged"));
+      const mode = e.mode ?? (lead && (e.lead || e.host) ? "monitor" : preset?.mode ?? (lead ? "monitor" : "tagged"));
       out.push({
         handle, role: e.role?.trim() || preset?.role || base, preset: e.preset?.trim() ?? null,
         prompt: [preset?.prompt, e.prompt?.trim()].filter(Boolean).join("\n\n") || `Help with the ticket as ${e.role}.`,
@@ -1177,7 +1211,8 @@ export class Huddles {
         "Don't work around the limit: ask the user (tag @you) to raise it or stop someone.");
     }
     // Only the user makes leads; a lead or @main may add helpers that change files (they hand their changes in).
-    const added = this.expand(e, h.participants.map((p) => p.handle), presets, by.kind === "human", this.store.getTicket(slug, h.hostTicket)?.status === "planning");
+    // The host is named when the huddle starts.
+    const added = this.expand({ ...e, host: undefined }, h.participants.map((p) => p.handle), presets, by.kind === "human", this.store.getTicket(slug, h.hostTicket)?.status === "planning");
     this.update(slug, hid, (x) => {
       x.participants.push(...added);
     });
@@ -1299,8 +1334,11 @@ export class Huddles {
     if (this.get(slug, hid).handIns?.some((x) => x.id === id)) throw new HuddleError(409, "another hand-in came in at the same moment; hand in again");
     const hi: HandIn = { id, from: p.handle, summary: text, files, status: "waiting", at: nowIso() };
     this.update(slug, hid, (x) => void (x.handIns ??= []).push(hi));
+    // The host decides (unless it handed this in itself), else @main.
+    const host = activeHost(h);
+    const decider = host === p.handle ? MAIN_HANDLE : host;
     const m = this.append(slug, hid, p.handle,
-      `${text}\n\nHand-in ${id}: ${handInFiles(files)}. @${MAIN_HANDLE}: accept or reject it with huddle_review_changes.`,
+      `${text}\n\nHand-in ${id}: ${handInFiles(files)}. @${decider}: accept or reject it with huddle_review_changes.`,
       "handin", h.participants.map((x) => x.handle), false, undefined, id);
     if (this.get(slug, hid).status === "live" && this.brakes(slug, hid, p, m)) this.route(slug, hid, m);
     return hi;
@@ -1345,7 +1383,8 @@ export class Huddles {
     if (!conflicts.length) {
       set({ status: "accepted", ...decided });
       const n = hi.files.length;
-      const tell = by.handle === MAIN_HANDLE ? "" : ` @${MAIN_HANDLE}: they are in your folder now.`;
+      // With a host running the room, @main hears about them in the host's final report.
+      const tell = by.handle === MAIN_HANDLE || activeHost(this.get(slug, hid)) !== MAIN_HANDLE ? "" : ` @${MAIN_HANDLE}: they are in your folder now.`;
       this.system(slug, hid, `@${by.handle} accepted @${hi.from}'s changes (${hi.id}): ${n} file${n === 1 ? "" : "s"} now in the ticket's folder.${tell}`, tell ? [MAIN_HANDLE] : []);
       return this.get(slug, hid).handIns!.find((y) => y.id === hi.id)!;
     }
@@ -1449,6 +1488,8 @@ export class Huddles {
     const p = h.participants.find((x) => x.handle === by.handle)!;
     if (p.status === "stopped") throw new HuddleError(409, `@${p.handle} was stopped by the user`);
     const why = reason?.trim() || null;
+    // The host blocking itself: the note that @main runs the huddle again says why (see hostMoved).
+    const wasHost = h.status === "live" && !!h.host && activeHost(h) === p.handle;
     if (status === "active") {
       if (!settled(p)) return p;
       this.updateP(slug, hid, p.handle, { status: this.working(slug, h, p) ? "working" : "idle", statusReason: null });
@@ -1459,7 +1500,7 @@ export class Huddles {
       const n = proposed.length;
       const learned = n ? `${why ? "." : ""} It proposed ${n} lesson${n === 1 ? "" : "s"} for future huddles; the user reviews ${n === 1 ? "it" : "them"} under Learnings.` : "";
       if (status === "done") this.system(slug, hid, `@${p.handle} is done${why ? `: ${why}` : "."}${learned}`);
-      else this.system(slug, hid, `@${p.handle} is blocked: ${why}`, [isCoordinator(h, p) ? USER_HANDLE : MAIN_HANDLE]);
+      else if (!wasHost) this.system(slug, hid, `@${p.handle} is blocked: ${why}`, [isCoordinator(h, p) ? USER_HANDLE : activeHost(h)]);
     }
     return this.get(slug, hid).participants.find((x) => x.handle === p.handle)!;
   }
@@ -1513,7 +1554,9 @@ export class Huddles {
     const pair = [...new Set(last.map((m) => m.from))];
     if (pair.length !== 2 || pair.includes(USER_HANDLE) || last.some((m, i) => i && m.from === last[i - 1].from)) return;
     if (h.held && pair.every((x) => h.held!.includes(x))) return;
-    const leads = h.participants.filter((p) => p.lead && p.kind !== "human" && p.status !== "stopped" && !pair.includes(p.handle)).map((p) => p.handle);
+    const host = activeHost(h);
+    const leads = host !== MAIN_HANDLE && !pair.includes(host) ? [host]
+      : h.participants.filter((p) => p.lead && p.kind !== "human" && p.status !== "stopped" && !pair.includes(p.handle)).map((p) => p.handle);
     const tag = leads.length ? leads : [USER_HANDLE];
     this.update(slug, hid, (x) => void (x.held = pair));
     this.system(slug, hid,
@@ -1549,7 +1592,9 @@ export class Huddles {
     }
     if (spent >= max * BUDGET_WARN && !h.budgetWarned) {
       this.update(slug, hid, (x) => void (x.budgetWarned = true));
-      const leads = h.participants.filter((p) => p.lead && p.kind !== "human" && p.status !== "stopped").map((p) => p.handle);
+      // A host running the room wraps it up; @main isn't woken for it.
+      const hosted = activeHost(h) !== MAIN_HANDLE;
+      const leads = h.participants.filter((p) => p.lead && p.kind !== "human" && p.status !== "stopped" && !(hosted && p.handle === MAIN_HANDLE)).map((p) => p.handle);
       this.system(slug, hid,
         `${leads.map((x) => `@${x}`).join(" ")}${leads.length ? ": t" : "T"}he huddle has spent ${money(spent)} of its ${money(max)} budget (${Math.round((spent / max) * 100)}%). ` +
         "Wrap up: send the consolidated findings now and only start what is needed; at 100% every run stops.", leads);
@@ -1568,8 +1613,9 @@ export class Huddles {
   }
 
   /**
-   * A tag didn't wake its target because it is done, blocked or stopped: say so in a system note that tags @main (the
-   * user, when the target is @main), once per target and sender until the target wakes. A held pair already has a note.
+   * A tag didn't wake its target because it is done, blocked or stopped: say so in a system note that tags the host
+   * or @main (the user, when the target is @main), once per target and sender until the target wakes. A held pair
+   * already has a note.
    */
   private noteUnwoken(slug: string, hid: string, p: HuddleParticipant, from: string) {
     const h = this.get(slug, hid);
@@ -1581,7 +1627,7 @@ export class Huddles {
       x.unwoken ??= {};
       x.unwoken[p.handle] = [...(x.unwoken[p.handle] ?? []), from];
     });
-    const to = p.handle === MAIN_HANDLE ? USER_HANDLE : MAIN_HANDLE;
+    const to = p.handle === MAIN_HANDLE ? USER_HANDLE : activeHost(h);
     const who = cur.status === "stopped" ? "only the user can restart it" : `@${to} or a lead can wake it`;
     this.system(slug, hid, `@${p.handle} is ${cur.status} and wasn't woken by @${from}'s tag; ${who}.`, [to]);
   }
@@ -1618,8 +1664,8 @@ export class Huddles {
   }
 
   /**
-   * The idle watchdog (see the header): wakes @main in each live huddle that has sat idle for HUDDLE_IDLE_MS since
-   * someone other than @main or the user spoke last. now: for tests.
+   * The idle watchdog (see the header): wakes the host, or @main, in each live huddle that has sat idle for
+   * HUDDLE_IDLE_MS since someone other than @main, the user or that host spoke last. now: for tests.
    */
   idleSweep(now = Date.now()): void {
     if (this.shuttingDown || this.board.isRestartPending()) return;
@@ -1635,7 +1681,8 @@ export class Huddles {
     if (!h || h.status !== "live") return;
     const msgs = this.store.readHuddleMessages(slug, hid);
     const last = msgs.findLast((m) => m.kind !== "system");
-    if (!last || last.from === MAIN_HANDLE || last.from === USER_HANDLE || last.seq <= (h.idleNudged ?? 0)) return;
+    const to = activeHost(h);
+    if (!last || last.from === MAIN_HANDLE || last.from === USER_HANDLE || last.from === to || last.seq <= (h.idleNudged ?? 0)) return;
     const times = [h.updatedAt, msgs.at(-1)?.ts, ...h.participants.map((p) => p.idleAt)].filter((t): t is string => !!t).map((t) => Date.parse(t));
     if (now - Math.max(...times) < HUDDLE_IDLE_MS) return;
     const ps = h.participants.filter((p) => p.kind !== "human");
@@ -1647,7 +1694,7 @@ export class Huddles {
     }
     this.update(slug, hid, (x) => void (x.idleNudged = last.seq));
     const mins = Math.round(HUDDLE_IDLE_MS / 60_000);
-    this.system(slug, hid, `Huddle idle for ${mins} min since #${last.seq} (last: @${last.from}). Check who should act, or ask the user to close it.`, [MAIN_HANDLE]);
+    this.system(slug, hid, `Huddle idle for ${mins} min since #${last.seq} (last: @${last.from}). Check who should act, or ask the user to close it.`, [to]);
   }
 
   /** Start the idle watchdog's sweep (the daemon, after recover()). */
@@ -1910,7 +1957,8 @@ export class Huddles {
     const resume = !!p.sessionStarted && this.sessionExists(sessionId);
     if (!p.sessionId) this.updateP(slug, hid, handle, { sessionId });
     const outputDir = this.store.huddleOutputsDir(slug, h.hostTicket, handle);
-    const system = huddleAgentSystemPrompt(h, p, host as Ticket, outputDir, dir, profile.baseBranch, this.lessonsFor(slug, p.preset));
+    const summary = join(this.store.outputsDir(slug, h.hostTicket), summaryFile(hid));
+    const system = huddleAgentSystemPrompt(h, p, host as Ticket, outputDir, dir, profile.baseBranch, this.lessonsFor(slug, p.preset), summary);
     const args = buildArgs(sessionId, resume, p.model ?? profile.model, p.canEdit ? [] : NO_EDIT_TOOLS.split(","), mcpConfig(), system);
     let lastWrite = 0;
     let started = resume;

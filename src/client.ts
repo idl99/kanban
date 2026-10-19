@@ -199,6 +199,8 @@ export interface HuddleInfo {
   brief?: { text: string; by: string; at: string } | null;
   /** Changes helpers handed in. */
   handIns?: HandIn[];
+  /** The lead that runs the huddle instead of @main, if any. */
+  host?: string | null;
 }
 
 /** A lesson an agent proposes when it turns done: a rule worth reusing, its evidence, and where it applies. */

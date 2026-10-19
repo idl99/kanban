@@ -1,7 +1,7 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { helperCommand } from "./artifact";
-import { huddleLine, REVIEW_HUDDLE_HEADING, reviewHuddleRequest, summaryFile } from "./huddle-roster";
+import { activeHost, huddleLine, REVIEW_HUDDLE_HEADING, reviewHuddleRequest, summaryFile } from "./huddle-roster";
 import { AUTO_REVIEW_READ_ONLY, PLAN_REVIEW } from "./huddle-templates";
 import { MOCKUPS_DIR } from "./mockups";
 import type { RepoKind } from "./git";
@@ -163,7 +163,7 @@ const AUTO_HUDDLE_WHEN = `Most work lands without a review huddle. Start one onl
   If every risk you see is already covered by a specific requirement in the ticket (e.g. "disable PDF scripting", "keep the sandbox header", "check the file's bytes"), don't huddle: check each of those points yourself, with a test or by reading the code, and list in your result what you checked and how. Huddle only for a risk the ticket doesn't already pin down.`;
 
 /** How a run builds its own huddle roster for the change (no fixed template). */
-const BUILD_ROSTER = `build a \`roster\` for this change. Pick roles that fit the risk: existing teammates where they fit (\`list_huddle_presets\` lists them, e.g. reviewer, security, qa; \`blast-radius\` when a small diff touches shared code or a data format, \`breaker\` for risky logic), otherwise one-off roles with \`role\` + \`prompt\`. Each prompt says what to check in this change and starts with "${AUTO_REVIEW_READ_ONLY}". Keep it small: usually 2-4 helpers, never more than the participant cap. With 2 or more, add a lead (e.g. \`qa-lead\`) who sends @main one consolidated list; a single helper reports to @main directly. The board pins the MUST/SHOULD/COULD report format.`;
+const BUILD_ROSTER = `build a \`roster\` for this change. Pick roles that fit the risk: existing teammates where they fit (\`list_huddle_presets\` lists them, e.g. reviewer, security, qa; \`blast-radius\` when a small diff touches shared code or a data format, \`breaker\` for risky logic), otherwise one-off roles with \`role\` + \`prompt\`. Each prompt says what to check in this change and starts with "${AUTO_REVIEW_READ_ONLY}". Keep it small: usually 2-4 helpers, never more than the participant cap. With 2 or more, add a lead (e.g. \`qa-lead\`) who sends @main one consolidated list: it hosts the huddle (hands out the tasks, accepts hand-ins), so you are woken only for decisions and its final report. A single helper reports to @main directly. The board pins the MUST/SHOULD/COULD report format.`;
 
 /** The section above, when the board has auto huddles on or the ticket asks for a review huddle (else nothing). */
 const autoSection = (t: Pick<Ticket, "important" | "body">, on?: boolean, repo?: RepoKind) =>
@@ -571,7 +571,7 @@ ${RESULT_RULE}`)}`;
 
 function rosterLines(h: Huddle): string {
   return h.participants
-    .map((p) => `- @${p.handle}: ${p.role}${p.kind === "ticket-main" && p.handle === "main" ? " (coordinator)" : ""}${p.lead ? ", lead" : ""}${p.kind === "agent" && p.canEdit ? ", changes files (hands them in)" : ""}, ${p.mode} mode${p.status === "stopped" ? ", stopped" : ""}${p.focus ? `; focus: ${p.focus}` : ""}`)
+    .map((p) => `- @${p.handle}: ${p.role}${p.kind === "ticket-main" && p.handle === "main" ? (h.host ? " (the ticket's own session)" : " (coordinator)") : ""}${h.host === p.handle ? ", host (runs the huddle)" : ""}${p.lead ? ", lead" : ""}${p.kind === "agent" && p.canEdit ? ", changes files (hands them in)" : ""}, ${p.mode} mode${p.status === "stopped" ? ", stopped" : ""}${p.focus ? `; focus: ${p.focus}` : ""}`)
     .join("\n");
 }
 
@@ -635,7 +635,7 @@ export function hostDescription(text: string | undefined): string {
  * user saved from past huddles for this role (see lessonsSection), "" when there are none.
  */
 export function huddleAgentSystemPrompt(
-  h: Huddle, p: HuddleParticipant, host: Ticket, outputDir: string, workdir: string, baseBranch?: string, lessons = "",
+  h: Huddle, p: HuddleParticipant, host: Ticket, outputDir: string, workdir: string, baseBranch?: string, lessons = "", summary = `outputs/${summaryFile(h.id)}`,
 ): string {
   const snap = p.snapshot;
   const copy = p.copy;
@@ -651,8 +651,10 @@ export function huddleAgentSystemPrompt(
 - Review target: ${snap.branch ? `the commits of ${snap.branch}` : "the host's commits"}${baseBranch ? ` on top of ${baseBranch} (\`git diff ${baseBranch}...${snap.sha}\`)` : ""}, at ${snap.sha}${p.focus ? `, focused on: ${p.focus}` : ""}.
 - You see committed code only; ask @main to commit WIP.` : ""}`;
   return `# Huddle
-You are @${p.handle} (${p.role}) in a huddle: a shared message room where several Claude sessions work together on ticket ${host.id} "${host.title}". @main is that ticket's own session and coordinates; @you is the user.
-
+You are @${p.handle} (${p.role}) in a huddle: a shared message room where several Claude sessions work together on ticket ${host.id} "${host.title}". ${h.host ? `@main is that ticket's own session and decides for the ticket; @${h.host} hosts the huddle (runs the room)` : "@main is that ticket's own session and coordinates"}; @you is the user.
+${h.host === p.handle ? `
+${hostSection(h, summary)}
+` : ""}
 ## The ticket (${host.id} "${host.title}")
 ${hostDescription(host.body)}
 
@@ -668,7 +670,7 @@ ${p.prompt}${p.focus ? `\n\nFocus: ${p.focus}` : ""}
 - One result post per wake: when your part is done, post your result once, tag who needs it (usually your lead or @main), and end your turn. When your whole job is finished, post it with status done; when you can't go on, set status blocked with the reason. Done means your job is finished. Don't mark yourself done while you wait for others; just end your turn. Leads are woken by any tag. You are woken again when someone tags you${p.mode === "monitor" ? ", and in monitor mode new messages also arrive between your turns" : ""}.
 - When a lead asks several of you to agree on something, the owner the lead named posts it; the others reply only to object.
 - Stay in your focus. If someone already said what you would, +1 it by number (e.g. "+1 #12") instead of repeating it.
-- Don't tag @main for small things; leads collect findings and send @main one consolidated list.
+- ${h.host && h.host !== p.handle ? `@${h.host} hosts this huddle: take your tasks from it and report to it, not to @main. Tag @main only when @${h.host} asks you to.` : "Don't tag @main for small things; leads collect findings and send @main one consolidated list."}
 - Lessons: when you turn done (\`huddle_status\` or \`huddle_post\` with status done), you may add \`lessons\`: up to 3 \`{text, evidence, scope}\` worth reusing in future huddles of your role. Write each as a short rule (max 200 characters), give evidence (a message #n or a file), and set scope general (any repo) or repo (only this one). The user reviews them and alone decides what future agents are told; none is fine, and better than a weak one.
 - Teammates: if the work clearly needs a role no teammate covers (\`list_huddle_presets\`), propose it with \`propose_teammate\` (name, prompt, a one-line why). It goes to the huddle's Learnings and only the user saves it; carry on meanwhile.
 
@@ -679,6 +681,27 @@ ${huddleTools(h)}
 ${rosterLines(h)}
 
 ${lessons ? `${lessons}\n\n` : ""}Huddle id: ${h.id}. Working folder: ${workdir}`;
+}
+
+/** The host's job (see Huddle.host): run the room so @main keeps its turns for the ticket. summary: where the summary goes. */
+function hostSection(h: Huddle, summary: string): string {
+  return `## You host this huddle
+You run the room, so @main (the ticket's own session, which holds the ticket's whole context) keeps its turns for the ticket. @main sleeps until someone tags it.
+- Start by giving each helper one clear task: one post that tags each helper with what to do, what to report and that it reports to you. Keep the goal and the decisions in the pinned brief (\`huddle_brief\`) and the findings list current (\`huddle_findings\`).
+- Chase helpers that go quiet or drift from their task. The board sends you, not @main, the idle watchdog, the notes about tags that woke nobody, blocked helpers, ping-pong pairs and the budget warnings.
+- Hand-ins come to you: check each one (read its files, run what helps), then accept or reject it with \`huddle_review_changes\`, with a reason when you reject. Accepted files land in the ticket's folder.
+- Tag @main only for a decision that needs the ticket's context (what the ticket wants, a trade-off the brief doesn't settle) or when the work is finished. Never for progress, small questions or single hand-ins.
+- Before you tag @main, pin one consolidated report (in the brief, or the findings list kept current) so @main reads it in one place.
+- When the work is finished: write the summary to ${summary} (what was decided, the findings and their state, the hand-ins accepted and rejected, what is left to do), pin the consolidated report, then tag @main once with it (MUST first, the hand-ins you accepted, what @main should do) and set status done with that post. Don't call \`huddle_close\`: after acting on your report, @main closes the huddle or asks the user to.
+- If you stop, get blocked or fail, @main runs the huddle until you are back.`;
+}
+
+/** What @main's huddle prompt says about the host: it runs the room, so @main briefs, answers when tagged and otherwise ends its turn. */
+function hostedMain(h: Huddle): string {
+  if (!h.host) return "";
+  const p = h.participants.find((x) => x.handle === h.host);
+  if (activeHost(h) !== h.host) return `@${h.host} hosts this huddle but is ${p?.status ?? "gone"}, so you run the huddle until it is back.\n`;
+  return `@${h.host} hosts this huddle: it hands out the tasks, chases the helpers, accepts or rejects their hand-ins and writes the summary, so you don't run the room. Brief it when it needs something only you know, answer when you are tagged, and otherwise end your turn without posting. If @${h.host} stops, is blocked or fails, the board tells you and you run the huddle again.\n`;
 }
 
 /** First message of a huddle agent's run, or the messages that woke it. */
@@ -700,11 +723,13 @@ export function huddleMainPrompt(h: Huddle, p: HuddleParticipant, digest: string
   const coordinator = p.handle === "main";
   if (coordinator && h.auto) return autoHuddleMainPrompt(h, p, digest, committed);
   if (coordinator && planning) return planReviewMainPrompt(h, p, digest);
+  const hosted = coordinator && !!h.host && activeHost(h) === h.host;
+  const commitRule = committed ? " Reviewers and QA see only committed code (a snapshot of your branch's HEAD), so commit your work in progress before you tag them, and mention the commit sha." : " This folder has no commits, so everyone reads the files in it directly: say which files you changed when you tag them.";
   return `${digest}
 
-${context("Huddle messages", `(Messages from huddle ${h.id}, where you are @${p.handle}${coordinator ? ", the coordinator" : ""}. Participants:
+${context("Huddle messages", `(Messages from huddle ${h.id}, where you are @${p.handle}${coordinator ? (h.host ? ", the ticket's own session" : ", the coordinator") : ""}. Participants:
 ${rosterLines(h)}
-${coordinator && p.prompt ? `Your role as coordinator: ${p.prompt}\n` : ""}Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there.${coordinator ? " You may edit the code; helpers that change files work in their own copies and hand their changes in: accept or reject each hand-in with `huddle_review_changes` (accepted files land in your folder, not yet committed: check and commit them with your work). Let a read-only helper change files with `huddle_allow_changes` when it should fix what it found." + (committed ? " Reviewers and QA see only committed code (a snapshot of your branch's HEAD), so commit your work in progress before you tag them, and mention the commit sha." : " This folder has no commits, so everyone reads the files in it directly: say which files you changed when you tag them.") + " Keep the pinned findings current with `huddle_findings`, and add participants with `huddle_add_participant` if needed (capped; ask the user when it's full). When the huddle's work is done, write the summary to outputs/" + summaryFile(h.id) + " in your outputs folder and ask the user to close it with `huddle_close`." : ""}
+${coordinator ? hostedMain(h) : ""}${coordinator && p.prompt && !hosted ? `Your role as coordinator: ${p.prompt}\n` : ""}Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there.${hosted ? " You may edit the code; hand-ins the host accepts land in your folder, not yet committed: check and commit them with your work." + commitRule + ` When @${h.host} sends the final report: act on it, reply once in the huddle, then ask the user to close the huddle with \`huddle_close\` (the host writes the summary to outputs/${summaryFile(h.id)} in your outputs folder; write it yourself if it is missing).` : coordinator ? " You may edit the code; helpers that change files work in their own copies and hand their changes in: accept or reject each hand-in with `huddle_review_changes` (accepted files land in your folder, not yet committed: check and commit them with your work). Let a read-only helper change files with `huddle_allow_changes` when it should fix what it found." + commitRule + " Keep the pinned findings current with `huddle_findings`, and add participants with `huddle_add_participant` if needed (capped; ask the user when it's full). When the huddle's work is done, write the summary to outputs/" + summaryFile(h.id) + " in your outputs folder and ask the user to close it with `huddle_close`." : ""}
 ${DIGEST_RULE} Don't post only to acknowledge, and tag only who must act.
 If you were in the middle of work, carry on with it afterwards and keep following the instructions you were given for that run, including how to end it. Otherwise just act on these messages and end your turn.)
 ${huddleTools(h)}`, { huddle: h.id })}`;
@@ -717,13 +742,13 @@ ${huddleTools(h)}`, { huddle: h.id })}`;
 function planReviewMainPrompt(h: Huddle, p: HuddleParticipant, digest: string): string {
   return `${digest}
 
-${context("Huddle messages", `(Messages from huddle ${h.id}, a plan review of this ticket while it is in Planning, where you are @main, the coordinator. Participants:
+${context("Huddle messages", `(Messages from huddle ${h.id}, a plan review of this ticket while it is in Planning, where you are @main, ${h.host ? "the ticket's own session" : "the coordinator"}. Participants:
 ${rosterLines(h)}
-${p.prompt ? `Your role as coordinator: ${p.prompt}\n` : ""}Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there. Nobody edits the project here, you included: planning never changes files.
+${hostedMain(h)}${p.prompt && !h.host ? `Your role as coordinator: ${p.prompt}\n` : ""}Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there. Nobody edits the project here, you included: planning never changes files.
 What to do:
 - Findings not in yet: end your turn with a short note; the board wakes you again.
-- Findings in: tell the user in your chat reply, in plain words, what the review found and what you would change. Then send an updated ticket with \`propose_ticket\` that takes the findings you agree with into account; the user still clicks Apply. Say which findings you left out and why.
-- Then write the huddle summary to outputs/${summaryFile(h.id)} in your outputs folder and ask the user to close the huddle with \`huddle_close\`.
+- Findings in${h.host ? ` (the report from @${h.host})` : ""}: tell the user in your chat reply, in plain words, what the review found and what you would change. Then send an updated ticket with \`propose_ticket\` that takes the findings you agree with into account; the user still clicks Apply. Say which findings you left out and why.
+- Then ${h.host ? `check the huddle summary is in outputs/${summaryFile(h.id)} in your outputs folder (@${h.host} writes it; write it yourself if it is missing)` : `write the huddle summary to outputs/${summaryFile(h.id)} in your outputs folder`} and ask the user to close the huddle with \`huddle_close\`.
 ${DIGEST_RULE} Don't post only to acknowledge, and tag only who must act.)
 ${huddleTools(h)}`, { huddle: h.id })}`;
 }
@@ -735,13 +760,13 @@ ${huddleTools(h)}`, { huddle: h.id })}`;
 function autoHuddleMainPrompt(h: Huddle, p: HuddleParticipant, digest: string, committed: boolean): string {
   return `${digest}
 
-${context("Huddle messages", `(Messages from your auto huddle ${h.id} (${h.template ?? "custom roster"}; reason: ${h.auto?.reason ?? ""}), where you are @main, the coordinator. Participants:
+${context("Huddle messages", `(Messages from your auto huddle ${h.id} (${h.template ?? "custom roster"}; reason: ${h.auto?.reason ?? ""}), where you are @main, ${h.host ? "the ticket's own session" : "the coordinator"}. Participants:
 ${rosterLines(h)}
-Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there. ${committed ? "Reviewers and QA see only committed code, so commit before you tag them." : "This folder has no commits, so reviewers read its files directly: say which files you changed when you tag them."}
+${hostedMain(h)}Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there. ${committed ? "Reviewers and QA see only committed code, so commit before you tag them." : "This folder has no commits, so reviewers read its files directly: say which files you changed when you tag them."}
 What to do:
 - Findings not in yet: end your turn with a short note; the board wakes you again.
-- Fix every MUST finding${committed ? " and commit" : ""}, then ask the same reviewer for ONE short re-check (tag them${committed ? " with the commit sha" : ", naming the files you changed"}) and end your turn.
-- Re-check passed (or no MUST findings): ${committed ? "land the work as the ticket's instructions say" : "finish as the ticket's instructions say"}, write the huddle summary to outputs/${summaryFile(h.id)} in your outputs folder, close the huddle with \`huddle_close\` (an auto huddle closes at once), and end with the result line. List the SHOULD and COULD findings in the summary.
+- Fix every MUST finding${committed ? " and commit" : ""}, then ask ${h.host ? `@${h.host} for ONE short re-check by the same reviewer (tag @${h.host}` : "the same reviewer for ONE short re-check (tag them"}${committed ? " with the commit sha" : ", naming the files you changed"}) and end your turn.
+- Re-check passed (or no MUST findings): ${committed ? "land the work as the ticket's instructions say" : "finish as the ticket's instructions say"}, write the huddle summary to outputs/${summaryFile(h.id)} in your outputs folder${h.host ? ` (or complete the one @${h.host} wrote)` : ""}, close the huddle with \`huddle_close\` (an auto huddle closes at once), and end with the result line. List the SHOULD and COULD findings in the summary.
 - The huddle stopped at its budget with MUST findings open: do NOT land; end with status "blocked" and say how many MUST findings are open.
 ${DIGEST_RULE} Don't post only to acknowledge.)
 ${huddleTools(h)}

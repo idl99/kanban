@@ -97,7 +97,7 @@ export const BUILTIN_TEMPLATES: HuddleTemplate[] = [
           "Keep to ideas that fit the project's scale; report the top 5 with effort and benefit.",
       },
       {
-        handle: "facilitator", preset: "facilitator",
+        handle: "facilitator", preset: "facilitator", host: true,
         prompt: "Run the rounds the brief sets; when they are over, send @main the final ranked list.",
       },
     ],
@@ -122,7 +122,7 @@ export const BUILTIN_TEMPLATES: HuddleTemplate[] = [
           "Name missing checks for the main paths and edge cases. Report to @skeptic, not @main.",
       },
       {
-        handle: "skeptic", role: "Skeptic", lead: true, mode: "monitor",
+        handle: "skeptic", role: "Skeptic", lead: true, mode: "monitor", host: true,
         prompt: PLAN_REVIEW_READ + "Look for gaps, edge cases, risks and simpler ways to reach the same goal. Then collect the others' findings, " +
           "de-duplicate them, pin them with huddle_findings and send @main one list, MUST first.",
       },
@@ -138,7 +138,7 @@ export const BUILTIN_TEMPLATES: HuddleTemplate[] = [
     roster: [
       { preset: "reviewer", prompt: AUTO_REVIEW_READ + "Review the change for correctness: bugs, edge cases, missing tests." },
       { preset: "qa", prompt: AUTO_REVIEW_READ + "Test the change: run the tests and try the user-facing paths it touches." },
-      { preset: "qa-lead", prompt: AUTO_REVIEW_LEAD },
+      { preset: "qa-lead", host: true, prompt: AUTO_REVIEW_LEAD },
     ],
   },
   {
@@ -153,7 +153,7 @@ export const BUILTIN_TEMPLATES: HuddleTemplate[] = [
       { handle: "security", preset: "security", prompt: AUTO_REVIEW_READ + "Review the change for security and data risks." },
       { handle: "blast-radius", preset: "blast-radius", prompt: AUTO_REVIEW_READ + "Find what the change breaks outside the diff and prove the fact it is safe because of." },
       { preset: "qa", count: 2, prompt: AUTO_REVIEW_READ + "Test the change: run the tests and try the paths it touches; the QA lead splits the areas." },
-      { preset: "qa-lead", prompt: AUTO_REVIEW_LEAD },
+      { preset: "qa-lead", host: true, prompt: AUTO_REVIEW_LEAD },
     ],
   },
 ];

@@ -640,6 +640,12 @@ export interface Huddle {
   template?: string | null;
   /** Started by the host ticket's unattended run (start_huddle), with its reason; @main may close it itself. */
   auto?: { reason: string } | null;
+  /**
+   * Handle of the lead that runs the huddle (the host): it gets the idle watchdog, the "wasn't woken" notes, the budget
+   * warnings and the hand-ins instead of @main, while it isn't stopped, blocked, failed or done (see activeHost).
+   * Null or missing: @main runs it.
+   */
+  host?: string | null;
   /** Lessons agents proposed when they turned done; only the user saves them as role notes (see huddle-notes.ts). */
   learnings?: HuddleLearning[];
   /** Changes helpers handed in from their copies, oldest first. */

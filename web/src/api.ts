@@ -646,6 +646,8 @@ export interface RosterEntry {
   lead?: boolean;
   canEdit?: boolean;
   handle?: string;
+  /** Runs the huddle instead of @main (one entry, count 1; made a lead). */
+  host?: boolean;
   prompt?: string;
 }
 
@@ -756,6 +758,8 @@ export interface Huddle {
   stopReason?: "budget" | "messages" | "loop" | null;
   /** @main or a lead asked the user to close the huddle (its summary is in the host's outputs). */
   closeRequest?: { by: string; at: string; reason: string } | null;
+  /** The lead that runs the huddle instead of @main (it gets the idle nudges, notes and hand-ins); null: @main runs it. */
+  host?: string | null;
   /** Live, nobody working, no unanswered tags, no open findings; idleSince: the last message or turn. */
   quiet?: boolean;
   idleSince?: string | null;
