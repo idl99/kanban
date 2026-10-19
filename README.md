@@ -7,6 +7,10 @@
 <p align="center"><b>Kanban for Claude Code.</b> Drop a ticket into Ready and a headless Claude Code session picks it up, does the work and moves it to Review, with a GitHub PR when it changed code.</p>
 
 <p align="center">
+  <a href="https://buymeacoffee.com/leoawesome"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?style=for-the-badge&logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a>
+</p>
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/board-dark.webp">
     <img src="docs/assets/screenshots/board.webp" alt="The ckanban board: Backlog, Planning, In Progress, Review and Done columns with tickets Claude is working on">
@@ -130,6 +134,9 @@ Design: `docs/superpowers/specs/2026-09-29-claude-kanban-design.md`.
 
 ---
 
-If ckanban saves you time, you can [buy me a coffee ☕](https://buymeacoffee.com/leoawesome).
+<p align="center">
+  ckanban is free and open source. If it saves you time, a coffee keeps it going ☕<br><br>
+  <a href="https://buymeacoffee.com/leoawesome"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" height="50"></a>
+</p>
 
 Made by Leo. MIT License, see [LICENSE](LICENSE).
