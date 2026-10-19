@@ -972,7 +972,7 @@ export class Huddles {
     };
     const agents: HuddleParticipant[] = [];
     for (const e of roster) {
-      const ps = this.expand(e, h.participants.map((p) => p.handle), presets);
+      const ps = this.expand(e, h.participants.map((p) => p.handle), presets, true, host.status === "planning");
       h.participants.push(...ps);
       agents.push(...ps);
     }
@@ -1103,7 +1103,8 @@ export class Huddles {
 
   /** Participants made from one roster entry, with handles not in `taken`. */
   /** grant: the user is adding them, so the entry's lead and canEdit apply (see addParticipants). */
-  private expand(e: RosterEntry, taken: string[], presets: Map<string, HuddlePreset>, grant = true): HuddleParticipant[] {
+  /** readOnly: the host ticket is in Planning, which never changes the project, so everyone reads in the shared workspace. */
+  private expand(e: RosterEntry, taken: string[], presets: Map<string, HuddlePreset>, grant = true, readOnly = false): HuddleParticipant[] {
     const preset = e.preset ? presets.get(e.preset.trim()) : undefined;
     const count = e.count ?? 1;
     const base = handleBase(e.handle?.trim() || e.preset?.trim() || e.role!);
@@ -1116,7 +1117,7 @@ export class Huddles {
         handle = `${base}-${n}`;
       }
       used.add(handle);
-      const workspace = e.workspace ?? preset?.workspace ?? "shared";
+      const workspace = readOnly ? "shared" : e.workspace ?? preset?.workspace ?? "shared";
       const lead = grant && (e.lead ?? preset?.lead ?? false);
       // Leads watch every message: an entry made a lead without a mode is monitor; an explicit mode wins.
       const mode = e.mode ?? (lead && e.lead ? "monitor" : preset?.mode ?? (lead ? "monitor" : "tagged"));
@@ -1155,7 +1156,7 @@ export class Huddles {
         "Don't work around the limit: ask the user (tag @you) to raise it or stop someone.");
     }
     // Only the user hands out rights: participants an agent or @main adds can't manage the huddle or edit files.
-    const added = this.expand(e, h.participants.map((p) => p.handle), presets, by.kind === "human");
+    const added = this.expand(e, h.participants.map((p) => p.handle), presets, by.kind === "human", this.store.getTicket(slug, h.hostTicket)?.status === "planning");
     this.update(slug, hid, (x) => {
       x.participants.push(...added);
     });
@@ -1593,7 +1594,8 @@ export class Huddles {
       // Its own auto huddle wakes the host as unattended work on the ticket (it ends with a result line and lands).
       const own = this.store.getTicket(slug, p.ticketId!)?.autoHuddle;
       const hostWake = !!h.auto && isCoordinator(h, p) && own?.state === "live" && own.huddleId === h.id;
-      this.board.chat(slug, p.ticketId!, huddleMainPrompt(h, p, u.digest, this.board.committed(slug)), hostWake ? { hostWake } : { peer: true }).catch((e) => {
+      const planning = this.store.getTicket(slug, p.ticketId!)?.status === "planning";
+      this.board.chat(slug, p.ticketId!, huddleMainPrompt(h, p, u.digest, this.board.committed(slug), planning), hostWake ? { hostWake } : { peer: true }).catch((e) => {
         u.undo();
         this.system(slug, hid, `Couldn't reach @${handle}: ${(e as Error).message}`);
       });

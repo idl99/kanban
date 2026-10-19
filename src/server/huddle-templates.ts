@@ -47,6 +47,13 @@ export const AUTO_REVIEW_FINDINGS =
   "evidence required. SHOULD/COULD are listed in the ticket's result, not fixed now.";
 const AUTO_REVIEW_REPORT = `${AUTO_REVIEW_FINDINGS} Workers report to @qa-lead, who sends @main one list.`;
 
+/** The template a Planning chat proposes when the user asks to review the plan before any work starts. */
+export const PLAN_REVIEW = "plan-review";
+/** Planning never changes the project, so plan reviewers only read (Huddles.create also keeps them read-only). */
+const PLAN_REVIEW_READ =
+  "Review the plan, not code changes: the latest ticket Claude proposed in the ticket's chat if there is one, otherwise the ticket's description. " +
+  "Read the project to check it, but never edit, create or delete files, and don't run commands that change anything: planning never changes the project. ";
+
 /** Pinned brief of an auto huddle the run built its own roster for (no template): its budget and report format. */
 export function customReviewBrief(budget: number): string {
   return [
@@ -92,6 +99,32 @@ export const BUILTIN_TEMPLATES: HuddleTemplate[] = [
       {
         handle: "facilitator", preset: "facilitator",
         prompt: "Run the rounds the brief sets; when they are over, send @main the final ranked list.",
+      },
+    ],
+  },
+  {
+    name: PLAN_REVIEW,
+    label: "Plan review",
+    description: "Before any work starts, a small read-only squad checks the proposed ticket against the real project: what's missing, what's risky, whether the checks can be tested. Findings go back to the planning chat.",
+    rounds: null,
+    maxCostUsd: 5,
+    report: "One finding per line: [MUST|SHOULD|COULD] plan section - problem - the change to make in the ticket. MUST = the plan as written would build the wrong thing, " +
+      "miss something that has to change, or can't be checked; give evidence (file:line, or the line of the plan). Workers report to @skeptic, who sends @main one list.",
+    roster: [
+      {
+        handle: "codebase", role: "Codebase checker",
+        prompt: PLAN_REVIEW_READ + "Check the plan against the real project: do the files, functions and flows it names exist and work as it says? " +
+          "Is anything that will have to change left out? Report to @skeptic, not @main.",
+      },
+      {
+        handle: "qa", role: "QA voice",
+        prompt: PLAN_REVIEW_READ + "Check the acceptance criteria: is each one concrete, and could someone outside test it and tell pass from fail? " +
+          "Name missing checks for the main paths and edge cases. Report to @skeptic, not @main.",
+      },
+      {
+        handle: "skeptic", role: "Skeptic", lead: true, mode: "monitor",
+        prompt: PLAN_REVIEW_READ + "Look for gaps, edge cases, risks and simpler ways to reach the same goal. Then collect the others' findings, " +
+          "de-duplicate them, pin them with huddle_findings and send @main one list, MUST first.",
       },
     ],
   },

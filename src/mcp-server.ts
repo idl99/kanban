@@ -6,7 +6,7 @@ import {
 } from "./client";
 import { BUILTIN_PRESETS, MAIN_PRESET, presetLine, presetName } from "./server/huddle-presets";
 import { HUDDLE_AGENT_ENV, huddleLine, PROPOSED_MAX_COST_USD, proposedBudget, rosterEntryError, rosterError } from "./server/huddle-roster";
-import { BUILTIN_TEMPLATES, templateLine } from "./server/huddle-templates";
+import { BUILTIN_TEMPLATES, PLAN_REVIEW, templateLine } from "./server/huddle-templates";
 import { normalizeTags } from "./server/tags";
 import { teammateProposal } from "./server/teammate-proposal";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -92,10 +92,11 @@ function tagsList(args: any, key = "tags"): string[] | undefined {
   return normalizeTags(args[key]);
 }
 
-/** Why propose_huddle is refused in Planning, and what to do instead (see REVIEW_HUDDLE_FORMAT in prompts.ts). */
-const PLANNING_HUDDLE =
-  "this ticket's work hasn't started (Backlog or Planning), so no huddle starts before it: put it in the proposed ticket's description as a \"## Review huddle\" section " +
-  "(Template: auto-review or another template, or a short roster; what it should check; Budget: ~$N). The ticket's run does the work first, then starts that huddle itself.";
+/** Why propose_huddle is refused in Backlog, and what to do instead (see REVIEW_HUDDLE_FORMAT in prompts.ts). */
+const BACKLOG_HUDDLE =
+  "this ticket is in Backlog, so no huddle starts before its work: put it in the proposed ticket's description as a \"## Review huddle\" section " +
+  "(Template: auto-review or another template, or a short roster; what it should check; Budget: ~$N). The ticket's run does the work first, then starts that huddle itself. " +
+  `Only in Planning, and only when the user asks for one, can the chat propose a ${PLAN_REVIEW} huddle that reviews the plan.`;
 
 /** The ticket a board run belongs to ("<profile>/<ticket id>" in CKANBAN_TICKET), or null outside runs. */
 function runTicketId(ctx: ToolContext): string | null {
@@ -1092,7 +1093,8 @@ const HUDDLE_TOOLS: Tool[] = [
       `Or give a template (a whole roster with its rules: rounds, budget, report format; built-in: ${BUILTIN_TEMPLATES.map((t) => t.name).join(", ")}; list_huddle_presets lists the board's) ` +
       "and leave out roster to use the template's. " +
       "When the user names a budget (e.g. \"budget 80 usd\"), pass it as maxCostUsd so the card starts with it. " +
-      "Refused while the ticket is in Backlog or Planning: there, write the huddle into the proposed ticket as a \"## Review huddle\" section instead, so the ticket's run does the work first and starts the huddle after it.",
+      "Refused while the ticket is in Backlog: there, write the huddle into the proposed ticket as a \"## Review huddle\" section instead, so the ticket's run does the work first and starts the huddle after it. " +
+      `In Planning, propose one only when the user's own message asks for it: a plan review (template ${PLAN_REVIEW}), read-only, whose findings come back to the chat.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -1107,10 +1109,11 @@ const HUDDLE_TOOLS: Tool[] = [
     async run(args, ctx) {
       // The board's presets, when the daemon is reachable; otherwise only the shape is checked here and the daemon checks names at Start.
       const slug = await slugFor(args, ctx).catch(() => null);
-      // In Backlog or Planning the work hasn't started: a huddle started now would run alongside the ticket's own run once it starts.
+      // In Backlog the work hasn't started: a huddle started now would run alongside the ticket's own run once it starts.
+      // Planning may review the plan (read-only, see Huddles.create) when the user asks.
       const own = runTicketId(ctx);
       const host = slug && own ? await ctx.client.getTicket(slug, own).catch(() => null) : null;
-      if (host?.status === "planning" || host?.status === "backlog") throw new ClientError(PLANNING_HUDDLE);
+      if (host?.status === "backlog") throw new ClientError(BACKLOG_HUDDLE);
       if (proposedBudget(args?.maxCostUsd) === null) throw new ClientError("maxCostUsd must be a positive amount in USD. Fix it and call propose_huddle again.");
       const names = slug ? await ctx.client.listHuddlePresets(slug).then((ps) => ps.map((p) => p.name), () => undefined) : undefined;
       const template = typeof args?.template === "string" && args.template.trim() ? args.template.trim() : null;

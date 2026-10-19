@@ -8,7 +8,7 @@ import { Bus } from "../src/server/events";
 import { createServer } from "../src/server/http";
 import { AUTO_MAX_COST_USD, Huddles, summaryFile } from "../src/server/huddle";
 import { reviewHuddleRequest } from "../src/server/huddle-roster";
-import { chatPrompt, firstRunPrompt, freshSessionPrompt, planningPrompt, resumePrompt } from "../src/server/prompts";
+import { chatPrompt, firstRunPrompt, freshSessionPrompt, huddleMainPrompt, planningPrompt, resumePrompt } from "../src/server/prompts";
 import { Store } from "../src/server/store";
 import { autoHuddlesOn, type Profile, type Ticket } from "../src/server/types";
 import { makeRepo, tempDir } from "./helpers";
@@ -446,20 +446,44 @@ test("a ticket that asks for a review huddle: its run starts it after the work, 
   expect(firstRunPrompt(ticket(plain.id), { repo: "remote" as const, outputDir: "/o", autoHuddles: false })).not.toContain("start_huddle");
 });
 
-test("Planning: the chat writes the huddle into the ticket; propose_huddle is refused there and works after Planning", async () => {
+test("Planning: the chat writes the huddle into the ticket; a plan review only when the user asks; Backlog refuses propose_huddle", async () => {
   const t = await board.createTicket("p", { title: "Login", body: "Do it", status: "backlog" });
   store.updateTicket("p", t.id, { status: "planning" });
   const refine = chatPrompt(ticket(t.id), "I want a huddle", "refine", "/o");
   expect(refine).toContain("## Review huddle");
   expect(refine).toContain("Budget: ~$N");
+  // The plan review is only for when the user asks, never offered unprompted.
+  expect(refine).toContain("only when the user's own message in this chat asks for the plan to be reviewed");
+  expect(refine).toContain("Never offer or propose one on your own initiative");
+  expect(refine).toContain("template `plan-review`");
+  expect((await callTool("propose_huddle", { template: "plan-review", reason: "review the plan" }, runCtx(t.id))).isError).toBeUndefined();
+  // Backlog chats are refused: the work hasn't started there and the user hasn't shaped the plan yet.
+  store.updateTicket("p", t.id, { status: "backlog" });
   const r = await callTool("propose_huddle", { template: "auto-review" }, runCtx(t.id));
   expect(r.isError).toBe(true);
   expect(text(r)).toContain("## Review huddle");
-  // Backlog chats too: the work hasn't started there either.
-  store.updateTicket("p", t.id, { status: "backlog" });
-  expect((await callTool("propose_huddle", { template: "auto-review" }, runCtx(t.id))).isError).toBe(true);
   store.updateTicket("p", t.id, { status: "review" });
   expect((await callTool("propose_huddle", { template: "auto-review" }, runCtx(t.id))).isError).toBeUndefined();
+});
+
+test("a huddle on a Planning ticket only reads, and its findings ask @main for an updated ticket", async () => {
+  const t = await board.createTicket("p", { title: "Login", body: "Do it", status: "backlog" });
+  store.updateTicket("p", t.id, { status: "planning" });
+  // Even an editing engineer in its own copy is made a reader in the shared folder while planning.
+  const h = huddles.create("p", t.id, [], { template: "plan-review" });
+  const agents = h.participants.filter((p) => p.kind === "agent");
+  expect(agents.map((p) => p.handle)).toEqual(["codebase", "qa", "skeptic"]);
+  expect(h.maxCostUsd).toBe(5);
+  for (const p of agents) expect(p).toMatchObject({ workspace: "shared", canEdit: false });
+  const main = h.participants.find((p) => p.handle === "main")!;
+  const added = huddles.addParticipants("p", h.id, h.participants.find((p) => p.kind === "human")!, { preset: "engineer", workspace: "own", canEdit: true });
+  expect(added[0]).toMatchObject({ workspace: "shared", canEdit: false });
+  // @main in Planning: nobody edits, findings become an updated ticket the user applies.
+  const prompt = huddleMainPrompt(h, main, "digest", true, true);
+  expect(prompt).toContain("plan review");
+  expect(prompt).toContain("Nobody edits the project here");
+  expect(prompt).toContain("propose_ticket");
+  expect(prompt).not.toContain("You may edit the code");
 });
 
 test("the UI asks before a run and the user's huddle work the same ticket at once", async () => {
