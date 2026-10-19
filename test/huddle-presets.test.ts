@@ -159,8 +159,8 @@ test("presets: saved through the MCP tool by the user, used by rosters, deleted 
   ]);
   huddles.savePreset("p", { name: "main", prompt: "Coordinate tersely." });
   const list = text(await callTool("list_huddle_presets", {}, ctx));
-  expect(list).toContain("- a11y: Accessibility tester (tagged, own worktree, model haiku; this board only)");
-  expect(list).toContain("- main: Coordinator (tagged, shared worktree, lead; built-in, changed on this board)");
+  expect(list).toContain("- a11y: Accessibility tester (tagged, own copy, reads only, model haiku; this board only)");
+  expect(list).toContain("- main: Coordinator (tagged, changes files in the ticket's folder, lead; built-in, changed on this board)");
 
   // propose_huddle knows the board's presets.
   expect((await callTool("propose_huddle", { roster: [{ preset: "a11y" }] }, ctx)).isError).toBeUndefined();

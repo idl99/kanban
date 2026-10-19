@@ -47,13 +47,13 @@ test("only leads, @main and the user can wake everyone with @all; quoted handles
   expect(heardBy("security").length).toBe(sec + 1);
 }, 20000);
 
-test("participants an agent adds can't be leads or edit", async () => {
+test("participants an agent adds can't be leads, but may change files in their own copy", async () => {
   const t = await host();
   const h = huddles.create("p", t.id, [{ preset: "qa-lead" }]);
   await idle();
   const r = await callTool("huddle_add_participant", { role: "Fixer", prompt: "Fix it", focus: "forms", lead: true, canEdit: true, workspace: "own" }, agentCtx(h, "qa-lead"));
   expect(r.isError).toBeUndefined();
-  expect(participant(h, "fixer")).toMatchObject({ lead: false, canEdit: false });
+  expect(participant(h, "fixer")).toMatchObject({ lead: false, canEdit: true, workspace: "own" });
   // The user still can.
   const [p] = huddles.addParticipants("p", h.id, you(h), { role: "Boss", prompt: "Lead", focus: "x", lead: true });
   expect(p.lead).toBe(true);

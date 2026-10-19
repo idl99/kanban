@@ -30,14 +30,14 @@ const noSubmit = (e: KeyboardEvent) => {
   if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) e.preventDefault();
 };
 
-/** A teammate's settings in plain words: "Wakes when @mentioned · reads only (shared worktree) · sonnet · built-in". */
+/** A teammate's settings in plain words: "Wakes when @mentioned · reads only · sonnet · built-in". */
 function metaText(p: HuddlePreset): string {
   const where = p.builtin ? "built-in" : p.source === "board" && !p.base ? "this board only" : "all boards";
   const changed = p.source === "board" && p.base ? "changed on this board" : p.source === "global" && p.builtin ? "changed for all boards" : null;
   if (p.name === MAIN) return ["The ticket's own session (@main)", p.mode === "tagged" ? "wakes when @mentioned" : "reads every message", where, changed].filter(Boolean).join(" · ");
   return [
     p.mode === "tagged" ? "Wakes when @mentioned" : "Reads every message",
-    p.workspace === "own" ? (p.canEdit ? "edits code (own worktree)" : "reads only (own worktree)") : "reads only (shared worktree)",
+    p.canEdit ? "changes files (own copy, hands them in)" : "reads only",
     p.lead && "lead: can add teammates",
     p.model ?? "board's model",
     where, changed,
@@ -385,9 +385,13 @@ function TeammateEditor({ slug, boardName, draft: initial, isNew, scope: initial
                 ...(draft.model && !MODELS.includes(draft.model) ? [{ value: draft.model, label: draft.model }] : [])]} />
           </label>
           <label>
-            Workspace
-            <Select ariaLabel="Workspace" value={draft.workspace} onChange={(v) => set({ workspace: v, canEdit: v === "own" ? draft.canEdit : false })}
-              options={[{ value: "shared", label: "Shared", hint: "reads only, in the ticket's worktree" }, { value: "own", label: "Own worktree", hint: "its own branch" }]} />
+            Files
+            <Select ariaLabel="Files" value={draft.canEdit ? "change" : "read"}
+              onChange={(v) => set(v === "change" ? { canEdit: true, workspace: "own" } : { canEdit: false, workspace: "shared" })}
+              options={[
+                { value: "read", label: "Reads only", hint: "for reviews: looks, doesn't change" },
+                { value: "change", label: "Changes files", hint: "in its own copy of the folder; hands the changes in" },
+              ]} />
           </label>
         </div>
       )}
@@ -400,9 +404,6 @@ function TeammateEditor({ slug, boardName, draft: initial, isNew, scope: initial
         {!main && (
           <div className="hp-checks">
             <label className="check-row"><input type="checkbox" checked={draft.lead} onChange={(e) => set({ lead: e.target.checked })} /> Lead (can add teammates)</label>
-            <label className="check-row" title={draft.workspace === "own" ? "" : "Only in its own worktree"}>
-              <input type="checkbox" checked={draft.canEdit} disabled={draft.workspace !== "own"} onChange={(e) => set({ canEdit: e.target.checked })} /> Can edit code
-            </label>
           </div>
         )}
       </div>

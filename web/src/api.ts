@@ -679,6 +679,22 @@ export interface HuddleParticipant {
   /** Read-only agent: the host branch and commit its snapshot shows. */
   snapshot?: { branch: string | null; sha: string } | null;
   sessionId?: string | null;
+  /** May change files: its own copy of the ticket's folder, once made. */
+  copy?: { kind: "git" | "folder"; dir: string; at: string } | null;
+}
+
+/** Changes a helper handed in from its copy (src/server/types.ts HandIn). */
+export interface HandIn {
+  id: string;
+  from: string;
+  summary: string;
+  files: { path: string; change: "added" | "changed" | "removed" }[];
+  status: "waiting" | "accepted" | "rejected" | "conflict";
+  at: string;
+  by?: string | null;
+  decidedAt?: string | null;
+  reason?: string | null;
+  conflicts?: string[];
 }
 
 /** One step of a huddle participant's session (src/server/huddle-session.ts SessionStep). */
@@ -754,6 +770,8 @@ export interface Huddle {
   learnings?: HuddleLearning[];
   /** Learnings waiting for review (they count in forYou). */
   learningsPending?: number;
+  /** Changes helpers handed in, oldest first. */
+  handIns?: HandIn[];
   /** Its summary, relative to the host ticket's outputs folder (huddles/<id>/summary.md, or the older huddle-summary.md); null while there is none. */
   summary?: string | null;
   createdAt: string;
@@ -795,9 +813,11 @@ export interface HuddleMessage {
   from: string;
   text: string;
   mentions: string[];
-  kind: "message" | "finding" | "system";
+  kind: "message" | "finding" | "system" | "handin";
   /** Where a post came in from: the board UI, the MCP server/CLI, or a request with neither header. */
   source?: "ui" | "mcp" | "none";
+  /** kind handin: the hand-in it shows. */
+  handIn?: string;
 }
 
 /** `?a=1&b=2` from the defined values ("" when none). */
@@ -1115,6 +1135,12 @@ export const api = {
     req<Huddle>("PATCH", `${hud(slug, id)}/participants/${encodeURIComponent(handle)}`, { mode }),
   stopHuddleParticipant: (slug: string, id: string, handle: string) =>
     req<Huddle>("POST", `${hud(slug, id)}/participants/${encodeURIComponent(handle)}/stop`),
+  /** Accept (into the ticket's folder) or reject changes a helper handed in. */
+  reviewHandIn: (slug: string, id: string, handInId: string, accept: boolean, reason = "") =>
+    req<HandIn>("POST", `${hud(slug, id)}/hand-ins/${encodeURIComponent(handInId)}/${accept ? "accept" : "reject"}`, { reason }),
+  /** Let a helper change files: it works in its own copy of the folder and hands its changes in. */
+  allowHuddleChanges: (slug: string, id: string, handle: string) =>
+    req<HuddleParticipant>("POST", `${hud(slug, id)}/participants/${encodeURIComponent(handle)}/allow-changes`, {}),
   /** A failed or stopped participant is idle again (and wakes now on a live huddle). */
   restartHuddleParticipant: (slug: string, id: string, handle: string) =>
     req<Huddle>("POST", `${hud(slug, id)}/participants/${encodeURIComponent(handle)}/restart`),

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resetTitle, scopeChip, usageText } from "../web/src/teamText";
 import {
-  applyProposedTemplate, applyTemplate, brakeLabel, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity, contextText, BIG_CONTEXT_TOKENS, participantRole, clampSideWidth, SIDE_DEFAULT,
+  applyProposedTemplate, applyTemplate, brakeLabel, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity, contextText, BIG_CONTEXT_TOKENS, participantRole, clampSideWidth, SIDE_DEFAULT, handInGroups, handInStatus,
 } from "../web/src/huddleText";
 import { mergeSteps, modelLabel, sessionMeta, sessionState, shortSession, toolIcon } from "../web/src/sessionText";
 
@@ -292,4 +292,19 @@ test("clampSideWidth: 240-520px, and the feed keeps 280px", () => {
   expect(clampSideWidth(900)).toBe(520);
   expect(clampSideWidth(500, 700)).toBe(420);
   expect(clampSideWidth(500, 400)).toBe(240);
+});
+
+test("hand-in cards say what changed and where it stands in plain words", () => {
+  const files = [
+    { path: "app.txt", change: "changed" as const }, { path: "logo.svg", change: "added" as const },
+    { path: "b.css", change: "changed" as const }, { path: "old.txt", change: "removed" as const },
+  ];
+  expect(handInGroups(files)).toEqual([["Changed", ["app.txt", "b.css"]], ["Added", ["logo.svg"]], ["Removed", ["old.txt"]]]);
+  expect(handInStatus({ files, status: "waiting" })).toContain("Waiting");
+  expect(handInStatus({ files, status: "accepted", by: "main" })).toBe("Accepted by @main: the changes are in the ticket's folder");
+  expect(handInStatus({ files, status: "rejected", by: "you", reason: "too big" })).toBe("Rejected by @you: too big");
+  expect(handInStatus({ files, status: "conflict", conflicts: ["app.txt"] })).toContain("also changed this file (app.txt). Nothing was changed");
+  for (const s of ["waiting", "accepted", "rejected", "conflict"] as const) {
+    expect(handInStatus({ files, status: s, by: "main", conflicts: ["a"] })).not.toMatch(/branch|worktree|commit|merge/i);
+  }
 });

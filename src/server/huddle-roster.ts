@@ -34,7 +34,7 @@ export interface RosterEntry {
   mode?: HuddleMode;
   workspace?: HuddleWorkspace;
   lead?: boolean;
-  /** May edit tracked files (only applies in its own worktree). Default: the preset's, else true for an own worktree. */
+  /** May change files, in its own copy (workspace becomes own). Default: the preset's, else true for workspace own. */
   canEdit?: boolean;
   /** Handle (or handle prefix when count > 1). Default: the preset or role name. */
   handle?: string;
@@ -142,5 +142,5 @@ export function huddleLine(m: { seq: number; from: string; text: string; kind: s
     .split(/\r\n|\r|\n|\u2028|\u2029/)
     .map((l, i) => (i ? "    " : "") + l.replace(/^(\s*)(\[#\d+\]|\(system\))/i, "$1\\$2"))
     .join("\n");
-  return m.kind === "system" ? `[#${m.seq}] (system) ${text}` : `[#${m.seq}] @${m.from}${m.kind === "finding" ? " (finding)" : ""}: ${text}`;
+  return m.kind === "system" ? `[#${m.seq}] (system) ${text}` : `[#${m.seq}] @${m.from}${m.kind === "finding" ? " (finding)" : m.kind === "handin" ? " (hand-in)" : ""}: ${text}`;
 }

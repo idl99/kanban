@@ -16,7 +16,7 @@ export interface HuddlePreset {
   mode: HuddleMode;
   /** May add participants and manage the findings list. A lead defaults to monitor mode and wakes on any tag, even when done. */
   lead: boolean;
-  /** May edit tracked files (only ever in its own worktree; a shared-workspace agent never edits). */
+  /** May change files: it then works in its own copy of the folder and hands its changes in (workspace is own). */
   canEdit: boolean;
   workspace: HuddleWorkspace;
 }
@@ -33,7 +33,7 @@ const MAX_PROMPT = 8000;
 export const BUILTIN_PRESETS: HuddlePreset[] = [
   {
     name: MAIN_PRESET, role: "Coordinator", model: null, mode: "tagged", lead: true, canEdit: true, workspace: "shared",
-    prompt: "Coordinate the huddle: split the work, decide what gets fixed, make the fixes in your worktree, and tell the user (@you) when the huddle's work is done.",
+    prompt: "Coordinate the huddle: split the work, decide what gets fixed, make the fixes in the ticket's folder, and tell the user (@you) when the huddle's work is done.",
   },
   {
     name: "reviewer", role: "Code reviewer", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared",
@@ -53,7 +53,14 @@ export const BUILTIN_PRESETS: HuddlePreset[] = [
   },
   {
     name: "engineer", role: "Engineer", model: null, mode: "tagged", lead: false, canEdit: true, workspace: "own",
-    prompt: "Implement the part of the work you are given in your own worktree and branch, with tests. Commit there and tell @main the branch and what changed.",
+    prompt: "Build the part of the work you are given in your own copy of the project, with tests, and run them. " +
+      "When it works, hand it in with huddle_hand_in and a one-line summary; @main or a lead accepts it into the ticket's work.",
+  },
+  {
+    name: "designer", role: "Designer", model: null, mode: "tagged", lead: false, canEdit: true, workspace: "own",
+    prompt: "Make the design changes you are given yourself, in your own copy of the project: layout, styles, wording on screen, icons and images " +
+      "(edit or create them with the tools you have, e.g. SVG by hand or an image tool installed on this computer). Check the result in the browser " +
+      "(Claude in Chrome) when there is something to look at. Then hand it in with huddle_hand_in and a one-line summary of what changed and why.",
   },
   {
     name: "security", role: "Security reviewer", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared",
@@ -132,15 +139,18 @@ export function presetFromInput(input: any, base?: HuddlePreset): HuddlePreset {
   // A lead watches every message unless a mode is given: a new lead, or one just made a lead, starts in monitor mode.
   const mode = input.mode ?? (lead && !base?.lead ? "monitor" : base?.mode ?? "tagged");
   if (mode !== "tagged" && mode !== "monitor") throw new Error("mode must be tagged or monitor");
-  const workspace = input.workspace ?? base?.workspace ?? "shared";
-  if (workspace !== "shared" && workspace !== "own") throw new Error("workspace must be shared or own");
+  const asked = input.workspace ?? base?.workspace ?? "shared";
+  if (asked !== "shared" && asked !== "own") throw new Error("workspace must be shared or own");
+  const canEdit = flag("canEdit") ?? (input.workspace === undefined ? base?.canEdit : undefined) ?? asked === "own";
+  // One that changes files always works in its own copy of the folder.
+  const workspace = canEdit && name !== MAIN_PRESET ? "own" : asked;
   // Omitted: keep the base's model; null or "": the board's.
   const model = input.model === undefined ? base?.model ?? null : text("model") || null;
   const role = text("role") || base?.role || name.split("-").map((w, i) => (i ? w : w[0].toUpperCase() + w.slice(1))).join(" ");
   return {
     name, role, prompt, model, mode, workspace,
     lead,
-    canEdit: flag("canEdit") ?? base?.canEdit ?? workspace === "own",
+    canEdit,
   };
 }
 
@@ -180,7 +190,9 @@ export function cleanPresets(v: unknown): HuddlePreset[] {
 
 /** One line per preset, for list_huddle_presets and tool descriptions. */
 export function presetLine(p: HuddlePresetView): string {
-  const tags = [p.mode, p.workspace === "own" ? "own worktree" : "shared worktree", p.lead && "lead", p.canEdit && p.workspace === "own" && "edits", p.model && `model ${p.model}`];
+  const access = p.name === MAIN_PRESET ? "changes files in the ticket's folder"
+    : p.canEdit ? "changes files in its own copy, hands them in" : p.workspace === "own" ? "own copy, reads only" : "reads only";
+  const tags = [p.mode, access, p.lead && "lead", p.model && `model ${p.model}`];
   const src = presetSourceText(p);
   return `- ${p.name}: ${p.role} (${tags.filter(Boolean).join(", ")}; ${src})${p.name === MAIN_PRESET ? " [the coordinator, @main; not for rosters]" : ""}\n  ${p.prompt}`;
 }

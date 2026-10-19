@@ -7,7 +7,7 @@ import type { HuddleTemplateView } from "./server/huddle-templates";
 import type { SetupOutcome } from "./server/worktree-setup";
 import { RUN_HEADER } from "./server/scheduler";
 import { defaultRoot, Store } from "./server/store";
-import { STATUSES, type HuddleFinding, type HuddleLearning, type HuddleMessage, type HuddleMode, type Status, type TicketMode } from "./server/types";
+import { STATUSES, type HandIn, type HuddleFinding, type HuddleLearning, type HuddleMessage, type HuddleMode, type Status, type TicketMode } from "./server/types";
 
 export class ClientError extends Error {}
 
@@ -197,6 +197,8 @@ export interface HuddleInfo {
   closeRequest?: { by: string; at: string; reason: string } | null;
   /** Pinned brief (goal, decisions). */
   brief?: { text: string; by: string; at: string } | null;
+  /** Changes helpers handed in. */
+  handIns?: HandIn[];
 }
 
 /** A lesson an agent proposes when it turns done: a rule worth reusing, its evidence, and where it applies. */
@@ -390,6 +392,14 @@ export class BoardClient {
   /** A huddle agent proposes a teammate: it waits under the huddle's Learnings until the user saves it. */
   huddleProposeTeammate = (slug: string, hid: string, input: Record<string, unknown>, c: HuddleCaller) =>
     this.req<HuddleLearning>("POST", `${this.h(slug, hid)}/teammates`, input, this.as(c));
+  /** A helper hands in what it changed in its own copy of the folder. */
+  huddleHandIn = (slug: string, hid: string, summary: string, c: HuddleCaller) => this.req<HandIn>("POST", `${this.h(slug, hid)}/hand-ins`, { summary }, this.as(c));
+  /** A lead, @main or the user accepts (into the ticket's folder) or rejects a hand-in. */
+  huddleReviewHandIn = (slug: string, hid: string, id: string, accept: boolean, reason: string, c: HuddleCaller) =>
+    this.req<HandIn>("POST", `${this.h(slug, hid)}/hand-ins/${encodeURIComponent(id)}/${accept ? "accept" : "reject"}`, { reason }, this.as(c));
+  /** A lead, @main or the user lets a helper change files. */
+  huddleAllowChanges = (slug: string, hid: string, handle: string, c: HuddleCaller) =>
+    this.req<HuddleParticipantInfo>("POST", `${this.h(slug, hid)}/participants/${encodeURIComponent(handle)}/allow-changes`, {}, this.as(c));
   /** Set the pinned brief ("" clears it). */
   huddleBrief = (slug: string, hid: string, text: string, c: HuddleCaller) => this.req<HuddleInfo>("PUT", `${this.h(slug, hid)}/brief`, { text }, this.as(c));
 }

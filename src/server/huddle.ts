@@ -27,14 +27,17 @@
 //
 // Workspaces: the shared worktree is the coordinator's. A read-only agent (shared, can't edit) works in a detached
 // snapshot worktree at the host branch's committed HEAD, reset at every wake, so its shell can't touch the
-// coordinator's files. The board remembers its own last save of the huddle file; an edit from outside can't raise
-// lead, canEdit or the limits (see guard).
+// coordinator's files. A helper that can change files works in its own copy of the host's folder (huddle-copies.ts),
+// on any project: a git worktree, or a plain copy when the folder has no commits. It hands its changes in
+// (huddle_hand_in); a lead, @main or the user accepts them into the host's folder or rejects them, and on a conflict
+// nothing is applied and the helper redoes the work on a fresh copy. The board remembers its own last save of the
+// huddle file; an edit from outside can't raise lead, canEdit or the limits, or move a copy (see guard).
 //
 // Brakes, so a huddle can't loop or overspend: it stops at maxCostUsd (agents' runs and @main's huddle replies; the
 // leads are warned at 80%) and at maxMessages; routing pauses after AGENT_ONLY_MAX messages without the user; two
 // participants answering each other PING_PONG times in a row stop waking each other and their lead is tagged.
-import { copyFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { summarizeEvent } from "./activity";
 import { mcpConfig } from "./agents";
 import { claudeSessionExists, type Board } from "./board";
@@ -56,6 +59,7 @@ import {
 import type { HostHuddle } from "./attention";
 import { huddleUsage, type Usage } from "./huddle-usage";
 import { isLevel, type Level, lowerLevels } from "./layers";
+import { accept as acceptHandIn, handIn as saveHandIn, handInDir as handInSaved, keepUnhanded, keptDir, makeFolderCopy, makeGitCopy, readState, removeCopy, unhanded } from "./huddle-copies";
 import { autoHuddleSlotPrompt, autoHuddleStoppedPrompt, huddleAgentPrompt, huddleAgentSystemPrompt, huddleDigest, huddleMainPrompt } from "./prompts";
 import { buildArgs, MONITOR_IDLE_MS, startRun, type RunHandle } from "./runner";
 import { addHuddleSpend } from "./spend";
@@ -64,7 +68,7 @@ import { contextTokens, messageCost } from "./ticket-usage";
 import { proposalPreset, teammateProposal, type TeammateProposal } from "./teammate-proposal";
 import { AUTO_HUDDLE_TRIGGERS, autoHuddlesOn, isAutoHuddleTrigger } from "./types";
 import type {
-  Huddle, HuddleFinding, HuddleLearning, HuddleMessage, HuddleMessageKind, HuddleMode, HuddleParticipant, HuddleSource, HuddleStopReason, Profile, Ticket,
+  HandIn, Huddle, HuddleFinding, HuddleLearning, HuddleMessage, HuddleMessageKind, HuddleMode, HuddleParticipant, HuddleSource, HuddleStopReason, Profile, Ticket,
 } from "./types";
 import { newId, nowIso } from "./util";
 
@@ -201,6 +205,12 @@ export function fallbackSummary(h: Huddle, msgs: HuddleMessage[], outputs: strin
     "",
     ...(h.findings.length ? h.findings.map(finding) : ["None pinned."]),
     "",
+    ...(h.handIns?.length ? [
+      "## Changes handed in",
+      "",
+      ...h.handIns.map((x) => `- ${x.id} from @${x.from}: ${x.summary} (${handInFiles(x.files)}): ${x.status}${x.by ? ` by @${x.by}` : ""}${x.reason ? ` (${x.reason})` : ""}`),
+      "",
+    ] : []),
     "## Last word from the leads",
     "",
     ...(last.length ? last.flatMap(({ p, m }) => [`### @${p.handle} (#${m!.seq})`, "", m!.text.trim(), ""]) : ["No lead posted.", ""]),
@@ -416,6 +426,10 @@ export class Huddles {
       if (!before.lead) p.lead = false;
       if (!before.canEdit) p.canEdit = false;
       p.kind = before.kind;
+      // Where its folders are: the board removes and remakes them, so a file edit can't point them elsewhere.
+      p.copy = before.copy;
+      p.worktree = before.worktree;
+      p.branch = before.branch;
       // Spend only goes up, so a lowered cost can't get under the budget brake.
       if ((before.costUsd ?? 0) > (p.costUsd ?? 0)) p.costUsd = before.costUsd;
     }
@@ -424,6 +438,8 @@ export class Huddles {
     h.stopReason = was.stopReason;
     // Proposed lessons only change through the board: an agent can't reword or save one by editing the file.
     h.learnings = was.learnings;
+    // So do hand-ins: an agent can't accept its own changes or edit what it handed in.
+    h.handIns = was.handIns;
     for (const k of ["posts", "sinceUser", "idleNudged"] as const) {
       if ((was[k] ?? 0) > (h[k] ?? 0)) h[k] = was[k];
     }
@@ -435,7 +451,7 @@ export class Huddles {
     // Not from inside this read: it may be part of an update that saves after it.
     queueMicrotask(() => {
       if (this.store.getHuddle(slug, h.id)) {
-        this.system(slug, h.id, "Huddle file edited outside the board. Changes there to lead, canEdit, the limits, the status, the costs, the participants or the learnings were ignored; only the board changes them.");
+        this.system(slug, h.id, "Huddle file edited outside the board. Changes there to lead, canEdit, the limits, the status, the costs, the participants, the learnings, the hand-ins or the copies of the folder were ignored; only the board changes them.");
       }
     });
     return h;
@@ -900,7 +916,9 @@ export class Huddles {
   }
 
   /** known: handles that can be mentioned (plus "all" when allowAll). System messages mention only `known`, given as is. */
-  private append(slug: string, hid: string, from: string, text: string, kind: HuddleMessageKind, known: string[], allowAll = false, source?: HuddleSource): HuddleMessage {
+  private append(
+    slug: string, hid: string, from: string, text: string, kind: HuddleMessageKind, known: string[], allowAll = false, source?: HuddleSource, handIn?: string,
+  ): HuddleMessage {
     let seq = 0;
     this.update(slug, hid, (h) => {
       seq = h.seq = h.seq + 1;
@@ -909,7 +927,7 @@ export class Huddles {
       if (p && p.cursor === seq - 1) p.cursor = seq;
     });
     const mentions = kind === "system" ? known : parseMentions(text).filter((m) => (m === "all" ? allowAll : known.includes(m)));
-    const m: HuddleMessage = { id: `m_${newId()}`, seq, ts: nowIso(), from, text, mentions, kind, ...(source ? { source } : {}) };
+    const m: HuddleMessage = { id: `m_${newId()}`, seq, ts: nowIso(), from, text, mentions, kind, ...(source ? { source } : {}), ...(handIn ? { handIn } : {}) };
     this.store.appendHuddleMessage(slug, hid, m);
     this.bus.emit({ type: "huddle.message", profile: slug, huddleId: hid, message: m });
     return m;
@@ -1101,9 +1119,11 @@ export class Huddles {
     });
   }
 
-  /** Participants made from one roster entry, with handles not in `taken`. */
-  /** grant: the user is adding them, so the entry's lead and canEdit apply (see addParticipants). */
-  /** readOnly: the host ticket is in Planning, which never changes the project, so everyone reads in the shared workspace. */
+  /**
+   * Participants made from one roster entry, with handles not in `taken`. grant: the user is adding them, so the
+   * entry's lead applies (see addParticipants). readOnly: the host ticket is in Planning, which never changes the
+   * project, so everyone reads in the shared workspace. One that can change files always works in its own copy.
+   */
   private expand(e: RosterEntry, taken: string[], presets: Map<string, HuddlePreset>, grant = true, readOnly = false): HuddleParticipant[] {
     const preset = e.preset ? presets.get(e.preset.trim()) : undefined;
     const count = e.count ?? 1;
@@ -1117,7 +1137,9 @@ export class Huddles {
         handle = `${base}-${n}`;
       }
       used.add(handle);
-      const workspace = readOnly ? "shared" : e.workspace ?? preset?.workspace ?? "shared";
+      const asked = e.workspace ?? preset?.workspace ?? "shared";
+      const canEdit = !readOnly && (e.canEdit ?? preset?.canEdit ?? asked === "own");
+      const workspace = readOnly ? "shared" : canEdit ? "own" : asked;
       const lead = grant && (e.lead ?? preset?.lead ?? false);
       // Leads watch every message: an entry made a lead without a mode is monitor; an explicit mode wins.
       const mode = e.mode ?? (lead && e.lead ? "monitor" : preset?.mode ?? (lead ? "monitor" : "tagged"));
@@ -1126,8 +1148,7 @@ export class Huddles {
         prompt: [preset?.prompt, e.prompt?.trim()].filter(Boolean).join("\n\n") || `Help with the ticket as ${e.role}.`,
         ...(e.focus?.trim() ? { focus: e.focus.trim() } : {}),
         model: e.model?.trim() || preset?.model || null, mode, lead,
-        // Only an agent in its own worktree may edit: the shared worktree is the coordinator's.
-        canEdit: grant && workspace === "own" && (e.canEdit ?? preset?.canEdit ?? true), workspace, sessionId: null, status: "idle", kind: "agent", cursor: 0, joinedAt: nowIso(), token: newId() + newId(),
+        canEdit, workspace, sessionId: null, status: "idle", kind: "agent", cursor: 0, joinedAt: nowIso(), token: newId() + newId(),
       });
     }
     return out;
@@ -1155,7 +1176,7 @@ export class Huddles {
       throw new HuddleError(409, `the huddle is full: ${this.nonHuman(h)} of ${h.maxParticipants} participants${room > 0 ? `, room for ${room} more` : ""}. ` +
         "Don't work around the limit: ask the user (tag @you) to raise it or stop someone.");
     }
-    // Only the user hands out rights: participants an agent or @main adds can't manage the huddle or edit files.
+    // Only the user makes leads; a lead or @main may add helpers that change files (they hand their changes in).
     const added = this.expand(e, h.participants.map((p) => p.handle), presets, by.kind === "human", this.store.getTicket(slug, h.hostTicket)?.status === "planning");
     this.update(slug, hid, (x) => {
       x.participants.push(...added);
@@ -1228,6 +1249,127 @@ export class Huddles {
       this.system(slug, hid, `@${by.handle} resolved finding ${f.id}.`);
     } else throw new HuddleError(400, "action must be add, resolve or list");
     return this.get(slug, hid).findings;
+  }
+
+  // ---- Changes helpers hand in from their own copies (see huddle-copies.ts) ----
+
+  /**
+   * A lead, @main or the user lets a helper change files: from its next run it works in its own copy of the folder
+   * (made then) with the edit tools, and hands its changes in. Not in Planning, which never changes the project.
+   */
+  allowChanges(slug: string, hid: string, by: HuddleParticipant, handle: string): HuddleParticipant {
+    const h = this.get(slug, hid);
+    this.assertOpen(h);
+    if (!canManage(h, by)) throw new HuddleError(403, "only a lead, @main or the user can let a helper change files; ask them in the huddle");
+    const p = h.participants.find((x) => x.handle === handle.replace(/^@/, "").trim());
+    if (!p || p.kind !== "agent") throw new HuddleError(404, `no helper @${handle} (only helpers the huddle runs get a copy of the folder)`);
+    if (this.store.getTicket(slug, h.hostTicket)?.status === "planning") throw new HuddleError(409, "the ticket is in Planning, which never changes files; nobody in this huddle changes them");
+    if (by.kind === "agent" && by.handle === p.handle) throw new HuddleError(403, "you can't give yourself the right to change files; ask @main or another lead");
+    if (p.canEdit) return p;
+    // Its session worked in the host's folder (no snapshot there): a new one starts in the copy, reading the huddle again.
+    const moved = !p.worktree && !!p.sessionStarted;
+    this.updateP(slug, hid, p.handle, { canEdit: true, workspace: "own", ...(moved ? { sessionId: null, sessionStarted: false, cursor: 0 } : {}) });
+    // Its edit tools and copy come with a new run: a session kept open between turns ends at its next pause.
+    this.runs.get(this.key(slug, hid, p.handle))?.handle?.endWhenIdle();
+    this.system(slug, hid, `@${by.handle} let @${p.handle} change files. @${p.handle}: you now work in your own copy of the folder; do the work there and hand it in with huddle_hand_in.`, [p.handle]);
+    return this.get(slug, hid).participants.find((x) => x.handle === p.handle)!;
+  }
+
+  /**
+   * A helper hands in what it changed in its copy, with a one-line summary: the files are saved aside as they are
+   * now, a card goes in the chat and @main is tagged to accept or reject them. One waits at a time per helper.
+   */
+  async handIn(slug: string, hid: string, by: HuddleParticipant, summary: string): Promise<HandIn> {
+    const h = this.get(slug, hid);
+    this.assertOpen(h);
+    if (by.kind !== "agent") throw new HuddleError(400, "only helpers hand in changes; yours are in the ticket's folder already");
+    const p = h.participants.find((x) => x.handle === by.handle)!;
+    if (!p.canEdit) throw new HuddleError(403, "you can't change files in this huddle; ask @main or a lead to let you (huddle_allow_changes)");
+    if (!p.copy || !existsSync(p.copy.dir)) throw new HuddleError(409, "you have no copy of the folder yet; it is made when your next run starts");
+    if (p.copy.fresh) throw new HuddleError(409, "your copy is out of date after a conflict; finish this turn without changing files: your fresh copy comes at your next turn");
+    const text = summary.trim().replace(/\s+/g, " ");
+    if (!text) throw new HuddleError(400, "summary is required: one line on what you changed");
+    if (text.length > HANDIN_SUMMARY_MAX) throw new HuddleError(400, `the summary is ${text.length} characters, over the limit of ${HANDIN_SUMMARY_MAX}; keep it to one line`);
+    const waiting = (h.handIns ?? []).find((x) => x.from === p.handle && x.status === "waiting");
+    if (waiting) throw new HuddleError(409, `your hand-in ${waiting.id} still waits for a decision; wait for it (you are tagged), then hand in again`);
+    const id = `c${(h.handIns?.length ?? 0) + 1}`;
+    const files = await saveHandIn(p.copy.dir, p.copy.kind, id);
+    if (!files.length) throw new HuddleError(409, "nothing changed in your copy since your last hand-in (or since it was made); nothing was handed in");
+    // Another hand-in may have been recorded while the files were saved.
+    if (this.get(slug, hid).handIns?.some((x) => x.id === id)) throw new HuddleError(409, "another hand-in came in at the same moment; hand in again");
+    const hi: HandIn = { id, from: p.handle, summary: text, files, status: "waiting", at: nowIso() };
+    this.update(slug, hid, (x) => void (x.handIns ??= []).push(hi));
+    const m = this.append(slug, hid, p.handle,
+      `${text}\n\nHand-in ${id}: ${handInFiles(files)}. @${MAIN_HANDLE}: accept or reject it with huddle_review_changes.`,
+      "handin", h.participants.map((x) => x.handle), false, undefined, id);
+    if (this.get(slug, hid).status === "live" && this.brakes(slug, hid, p, m)) this.route(slug, hid, m);
+    return hi;
+  }
+
+  /**
+   * A lead, @main or the user accepts a hand-in (its files go into the host ticket's folder) or rejects it (the
+   * helper is told why). When the host's folder changed some of the same files since the helper's copy was made,
+   * nothing is applied: the hand-in is a conflict, the helper gets a fresh copy and is asked to redo the work.
+   */
+  async reviewHandIn(slug: string, hid: string, by: HuddleParticipant, id: string, accept: boolean, reason = ""): Promise<HandIn> {
+    const h = this.get(slug, hid);
+    this.assertOpen(h);
+    if (!canManage(h, by)) throw new HuddleError(403, "only a lead, @main or the user accepts or rejects changes");
+    const pending = () => {
+      const x = (this.get(slug, hid).handIns ?? []).find((y) => y.id === id.trim());
+      if (!x) throw new HuddleError(404, `no hand-in ${id} in huddle ${hid}`);
+      if (x.status !== "waiting") throw new HuddleError(409, `hand-in ${x.id} was already ${x.status}`);
+      return x;
+    };
+    const hi = pending();
+    if (by.kind === "agent" && by.handle === hi.from) throw new HuddleError(403, "you can't accept or reject your own hand-in; @main or another lead decides");
+    const why = reason.trim().replace(/\s+/g, " ").slice(0, 500);
+    const decided = { by: by.handle, decidedAt: nowIso(), reason: why || null };
+    const set = (patch: Partial<HandIn>) => this.update(slug, hid, (x) => void Object.assign(x.handIns!.find((y) => y.id === hi.id)!, patch));
+    if (!accept) {
+      set({ status: "rejected", ...decided });
+      this.system(slug, hid, `@${by.handle} rejected @${hi.from}'s changes (${hi.id})${why ? `: ${why}` : "."} Nothing was changed in the ticket's folder.`, [hi.from]);
+      return this.get(slug, hid).handIns!.find((y) => y.id === hi.id)!;
+    }
+    if (this.store.getTicket(slug, h.hostTicket)?.status === "planning") throw new HuddleError(409, "the ticket is in Planning, which never changes files");
+    const helper = h.participants.find((x) => x.handle === hi.from);
+    if (!helper?.copy) throw new HuddleError(409, `@${hi.from}'s copy of the folder is gone, so its changes can't be brought in`);
+    const host = await this.board.ensureSession(slug, h.hostTicket);
+    pending();
+    let conflicts: string[];
+    try {
+      conflicts = acceptHandIn(host.dir, helper.copy.dir, hi.id, hi.files).conflicts;
+    } catch (e) {
+      throw new HuddleError(500, `couldn't bring in the changes, so nothing was changed: ${(e as Error).message}`);
+    }
+    if (!conflicts.length) {
+      set({ status: "accepted", ...decided });
+      const n = hi.files.length;
+      const tell = by.handle === MAIN_HANDLE ? "" : ` @${MAIN_HANDLE}: they are in your folder now.`;
+      this.system(slug, hid, `@${by.handle} accepted @${hi.from}'s changes (${hi.id}): ${n} file${n === 1 ? "" : "s"} now in the ticket's folder.${tell}`, tell ? [MAIN_HANDLE] : []);
+      return this.get(slug, hid).handIns!.find((y) => y.id === hi.id)!;
+    }
+    set({ status: "conflict", conflicts, ...decided, reason: null });
+    // A fresh copy from the host's folder as it is now; failing that, the helper's next run makes one.
+    // Mid-turn, the helper may still be changing its copy: the fresh copy comes with its next run instead.
+    const run = this.runs.get(this.key(slug, hid, helper.handle));
+    run?.handle?.endWhenIdle();
+    let fresh = !run || run.idle;
+    if (fresh) {
+      try {
+        await this.copyFor(slug, this.get(slug, hid), helper, host.dir, host.isGit && (await hasCommits(host.dir)));
+      } catch (e) {
+        fresh = false;
+        console.error(`couldn't make a fresh copy for @${helper.handle}`, e);
+      }
+    }
+    if (!fresh) this.updateP(slug, hid, helper.handle, { copy: { ...helper.copy, fresh: true } });
+    const files = conflicts.length > 8 ? `${conflicts.slice(0, 8).join(", ")} and ${conflicts.length - 8} more` : conflicts.join(", ");
+    this.system(slug, hid,
+      `@${hi.from}'s changes (${hi.id}) weren't brought in: the ticket's folder also changed ${files} since @${hi.from}'s copy was made. Nothing was changed. ` +
+      `@${hi.from}: your copy ${fresh ? "is now a fresh copy of the ticket's folder" : "becomes a fresh copy of the ticket's folder at your next turn, so finish this turn without changing files"}; redo your change there and hand it in again (what you handed in is saved in ${handInSaved(helper.copy.dir, hi.id)}).`,
+      [hi.from]);
+    return this.get(slug, hid).handIns!.find((y) => y.id === hi.id)!;
   }
 
   /**
@@ -1685,29 +1827,45 @@ export class Huddles {
   }
 
   /**
-   * Where an agent works: (workspace own) a worktree of its own off the host's branch; a read-only agent, a detached
-   * snapshot of the host's HEAD (see snapshot); anyone else the host ticket's worktree. In a repo with no commits yet
-   * there is nothing to branch or snapshot, so everyone works in the host's folder (as the host ticket does).
+   * Where an agent works: (workspace own) its own copy of the host's folder (see copyFor); a read-only agent, a
+   * detached snapshot of the host's HEAD (see snapshot); anyone else the host ticket's folder. In a repo with no
+   * commits there is nothing to snapshot, so read-only agents read the host's folder (as the host ticket does).
    */
   private async workspace(slug: string, h: Huddle, p: HuddleParticipant): Promise<string> {
     const host = await this.board.ensureSession(slug, h.hostTicket);
     const committed = host.isGit && (await hasCommits(host.dir));
     if (p.workspace === "shared") return isSnapshot(p) && committed ? this.snapshot(slug, h, p, host.dir) : host.dir;
+    // An older huddle's own worktree carries on as it was.
+    if (!p.copy && p.branch && p.worktree && existsSync(p.worktree)) return p.worktree;
+    if (p.copy && !p.copy.fresh && existsSync(p.copy.dir) && readState(p.copy.dir)) return p.copy.dir;
+    return this.copyFor(slug, h, p, host.dir, committed);
+  }
+
+  /**
+   * Make (or make again) an agent's own copy of the host's folder: a git worktree on its own branch at the host
+   * folder as it is now (uncommitted work included) when the repo has commits, else a plain copy of the folder.
+   * A read-only snapshot it had before it was allowed to change files makes way for it.
+   */
+  private async copyFor(slug: string, h: Huddle, p: HuddleParticipant, hostDir: string, committed: boolean): Promise<string> {
     const profile = this.store.getProfile(slug)!;
-    if (p.worktree && existsSync(p.worktree)) return p.worktree;
-    if (!committed) {
-      // A plain folder or a repo with no commits: nothing to branch from, so share the host's folder (as the host does).
-      const why = host.isGit ? "this repo has no commits yet. Make a first commit" : "this folder has no version history. Turn it on in the board's settings";
-      if (!p.sessionId) this.system(slug, h.id, `@${p.handle} works in the host's folder ${host.dir}, shared with @main, instead of a copy of its own: ${why} to give new agents their own copy.`);
-      return host.dir;
-    }
-    const t = this.store.getTicket(slug, h.hostTicket)!;
     const dir = agentDir(profile, h, p);
-    const branch = p.branch ?? `ck/${h.hostTicket}-${p.handle}`;
-    // A host working in the project folder itself has no branch of its own: start from what it has checked out.
-    const head = t.branch || t.workdir ? null : (await git(["git", "rev-parse", "HEAD"], host.dir)).stdout.trim();
-    await addWorktree(profile.path, dir, branch, t.branch ?? (head || profile.baseBranch));
-    this.updateP(slug, h.id, p.handle, { worktree: dir, branch });
+    if (p.worktree && !p.branch) {
+      if (existsSync(p.worktree)) await git(["git", "worktree", "remove", "--force", p.worktree], profile.path);
+      rmSync(p.worktree, { recursive: true, force: true });
+      await git(["git", "worktree", "prune"], profile.path);
+      this.updateP(slug, h.id, p.handle, { worktree: null, snapshot: null });
+    }
+    // Made again (after a conflict): whatever it changed and never handed in is saved first, so nothing is lost.
+    const cur = this.get(slug, h.id).participants.find((x) => x.handle === p.handle)?.copy;
+    if (cur && cur.dir === dir && existsSync(cur.dir)) {
+      const kept = await keepUnhanded(cur.dir, cur.kind, nowIso().replace(/[:.]/g, "-"));
+      if (kept) this.system(slug, h.id, `Saved the changes @${p.handle} never handed in to ${kept} before giving it a fresh copy of the folder, so nothing is lost.`);
+    }
+    const branch = committed ? `ck/${h.hostTicket}-${p.handle}` : null;
+    const repo = committed ? await mainRepo(hostDir) : null;
+    if (committed) await makeGitCopy(repo!, hostDir, dir, branch!);
+    else await makeFolderCopy(hostDir, dir);
+    this.updateP(slug, h.id, p.handle, { copy: { kind: committed ? "git" : "folder", dir, repo, branch, at: nowIso() } });
     return dir;
   }
 
@@ -1942,7 +2100,7 @@ export class Huddles {
       x.closedAt = nowIso();
       for (const p of x.participants) if (p.kind === "agent" && p.status === "working") p.status = "stopped";
     });
-    if (h.participants.some((p) => p.kind === "agent" && p.worktree)) this.chore(this.removeWorktrees(slug, hid));
+    if (h.participants.some((p) => p.kind === "agent" && (p.worktree || p.copy))) this.chore(this.removeWorktrees(slug, hid));
     if (h.auto) this.autoEnded(slug, hid, why ? "closed" : "user", why ?? "the user closed it");
     if (summarize) this.ensureSummary(slug, hid);
     return out;
@@ -2004,8 +2162,9 @@ export class Huddles {
   }
 
   /**
-   * After a close: remove each agent's own worktree and branch when nothing would be lost (no uncommitted changes,
-   * no commits the host's branch lacks); a system note lists the ones kept.
+   * After a close: remove the read-only snapshots, and each helper's copy of the folder when nothing would be lost
+   * (every change in it was handed in and none still waits for a decision); a system note lists the ones kept.
+   * Older huddles' own worktrees go when they have no uncommitted changes or commits the host's branch lacks.
    */
   private async removeWorktrees(slug: string, hid: string): Promise<void> {
     // The agents' runs were just stopped: let them end first.
@@ -2017,7 +2176,35 @@ export class Huddles {
     const removed: string[] = [];
     const kept: string[] = [];
     for (const p of h.participants) {
-      if (p.kind !== "agent" || !p.worktree) continue;
+      if (p.kind !== "agent") continue;
+      if (p.copy) {
+        const c = p.copy;
+        // Only the folder the board made for it: a stored path elsewhere is never removed.
+        if (c.dir !== agentDir(profile, h, p)) {
+          kept.push(`@${p.handle}: ${c.dir} (not where the board keeps copies, so it was left alone)`);
+          continue;
+        }
+        const mine = (h.handIns ?? []).filter((x) => x.from === p.handle);
+        const waiting = mine.some((x) => x.status === "waiting");
+        // Its last hand-in hit a conflict and was never redone: what it handed in stays saved.
+        const redo = mine.at(-1)?.status === "conflict";
+        let keep: string | null = waiting ? "changes it handed in still wait for a decision" : null;
+        try {
+          if (!keep && (await unhanded(c.dir, c.kind))) keep = "it has changes that were never handed in";
+          if (!keep) await removeCopy(c.dir, c.kind === "git" ? c.repo ?? profile.path : undefined, c.branch, redo);
+          if (!keep && redo) kept.push(`@${p.handle}: ${c.dir}.handins (changes that weren't brought in because of a conflict)`);
+        } catch (e) {
+          keep = `couldn't remove it: ${(e as Error).message}`;
+        }
+        if (existsSync(keptDir(c.dir))) kept.push(`@${p.handle}: ${keptDir(c.dir)} (changes saved before a fresh copy was made)`);
+        if (keep) kept.push(`@${p.handle}: ${c.dir} (${keep})`);
+        else {
+          removed.push(`@${p.handle}`);
+          this.updateP(slug, hid, p.handle, { copy: null });
+        }
+        continue;
+      }
+      if (!p.worktree) continue;
       if (!p.branch) {
         // A read-only snapshot: nothing in it is anyone's work, so it goes without a note.
         const r = existsSync(p.worktree) ? await git(["git", "worktree", "remove", "--force", p.worktree], profile.path) : null;
@@ -2033,8 +2220,8 @@ export class Huddles {
       }
     }
     const lines = [
-      ...(removed.length ? [`Removed the own worktrees of ${removed.join(", ")} (nothing uncommitted or unmerged).`] : []),
-      ...(kept.length ? ["Kept these own worktrees, so nothing is lost; merge or remove them yourself:", ...kept.map((k) => `- ${k}`)] : []),
+      ...(removed.length ? [`Removed the copies of the folder of ${removed.join(", ")} (all their changes were handed in).`] : []),
+      ...(kept.length ? ["Kept these copies of the folder, so nothing is lost; take what you need from them, then delete them yourself:", ...kept.map((k) => `- ${k}`)] : []),
     ];
     if (lines.length) this.system(slug, hid, lines.join("\n"));
   }
@@ -2103,6 +2290,15 @@ export class Huddles {
 
 export type StatusChange = "done" | "blocked" | "active";
 
+/** Longest one-line summary of a hand-in. */
+export const HANDIN_SUMMARY_MAX = 300;
+
+/** A hand-in's files in plain words: "changed logo.png, added styles/new.css, removed old.txt" (the first 20). */
+export function handInFiles(files: HandIn["files"], max = 20): string {
+  const shown = files.slice(0, max).map((f) => `${f.change} ${f.path}`).join(", ");
+  return files.length > max ? `${shown} and ${files.length - max} more` : shown;
+}
+
 /** A finding's first line, cut to FINDING_TITLE characters. */
 export function findingTitle(text: string): string {
   const line = text.trim().split("\n")[0].trim();
@@ -2112,6 +2308,12 @@ export function findingTitle(text: string): string {
 /** An agent's own or snapshot worktree: next to the board's worktree folder, so its startup sweep (one folder per ticket id) leaves it alone. */
 function agentDir(profile: Profile, h: Huddle, p: HuddleParticipant): string {
   return join(dirname(worktreeDir(profile, h.hostTicket)), `${h.hostTicket}.huddle`, p.handle);
+}
+
+/** The main checkout of the repo `dir` belongs to (the host's folder may be one of its worktrees, which can go away first). */
+async function mainRepo(dir: string): Promise<string> {
+  const common = (await git(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], dir)).stdout.trim();
+  return common && basename(common) === ".git" ? dirname(common) : dir;
 }
 
 /** Remove an agent's own worktree and branch; the reason it was kept instead, or null once removed. */

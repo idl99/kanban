@@ -49,31 +49,36 @@ test("the huddle closes when its host ticket moves to Done", async () => {
   await idle();
 }, 20000);
 
-test("closing removes clean own worktrees and their branches, and lists the ones kept", async () => {
+test("closing removes helpers' copies whose changes were all handed in, and lists the ones kept", async () => {
   const t = await host();
-  const h = huddles.create("p", t.id, [{ preset: "engineer", count: 3 }]);
+  const h = huddles.create("p", t.id, [{ preset: "engineer", count: 4 }]);
   await idle();
   const repo = store.getProfile("p")!.path;
-  const [a, b, c] = ["engineer-1", "engineer-2", "engineer-3"].map((x) => participant(h, x));
-  for (const p of [a, b, c]) expect(existsSync(p.worktree!)).toBe(true);
-  // engineer-2 left uncommitted work, engineer-3 committed work the host's branch doesn't have.
-  writeFileSync(join(b.worktree!, "wip.txt"), "wip");
-  writeFileSync(join(c.worktree!, "done.txt"), "done");
-  await git(c.worktree!, "add", ".");
-  await git(c.worktree!, "commit", "-qm", "work");
+  const [a, b, c, d] = ["engineer-1", "engineer-2", "engineer-3", "engineer-4"].map((x) => participant(h, x).copy!);
+  for (const x of [a, b, c, d]) expect(existsSync(x.dir)).toBe(true);
+  // engineer-2 changed a file and never handed it in; engineer-3 handed its change in and it was rejected;
+  // engineer-4's hand-in still waits for a decision.
+  writeFileSync(join(b.dir, "wip.txt"), "wip");
+  writeFileSync(join(c.dir, "done.txt"), "done");
+  writeFileSync(join(d.dir, "later.txt"), "later");
+  for (const x of ["engineer-3", "engineer-4"]) expect((await callTool("huddle_hand_in", { summary: "work" }, agentCtx(h, x))).isError).toBeUndefined();
+  await huddles.reviewHandIn("p", h.id, you(h), "c1", false, "not needed");
   huddles.close("p", h.id);
   await idle();
-  expect(existsSync(a.worktree!)).toBe(false);
-  expect((await git(repo, "branch", "--list", a.branch!)).trim()).toBe("");
-  expect(participant(h, "engineer-1").worktree).toBeNull();
-  expect(existsSync(b.worktree!)).toBe(true);
-  expect(existsSync(c.worktree!)).toBe(true);
-  expect((await git(repo, "branch", "--list", c.branch!)).trim()).not.toBe("");
+  for (const x of [a, c]) {
+    expect(existsSync(x.dir)).toBe(false);
+    expect((await git(repo, "branch", "--list", x.branch!)).trim()).toBe("");
+  }
+  expect(participant(h, "engineer-1").copy).toBeNull();
+  expect(existsSync(b.dir)).toBe(true);
+  expect(existsSync(d.dir)).toBe(true);
+  expect((await git(repo, "branch", "--list", b.branch!)).trim()).not.toBe("");
   const note = messages(h).at(-1)!.text;
-  expect(note).toContain("Removed the own worktrees of @engineer-1");
-  expect(note).toContain("@engineer-2");
-  expect(note).toContain("uncommitted changes");
-  expect(note).toContain("1 commit not on");
+  expect(note).toContain("Removed the copies of the folder of @engineer-1, @engineer-3");
+  expect(note).toContain("so nothing is lost");
+  expect(note).toContain(`@engineer-2: ${b.dir} (it has changes that were never handed in)`);
+  expect(note).toContain(`@engineer-4: ${d.dir} (changes it handed in still wait for a decision)`);
+  expect(note.replace(/\/\S+/g, "")).not.toMatch(/branch|worktree|commit|merge/i);
 }, 30000);
 
 test("done, blocked and quiet: a done agent only wakes for a lead, @main or the user", async () => {

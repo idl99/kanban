@@ -571,7 +571,7 @@ ${RESULT_RULE}`)}`;
 
 function rosterLines(h: Huddle): string {
   return h.participants
-    .map((p) => `- @${p.handle}: ${p.role}${p.kind === "ticket-main" && p.handle === "main" ? " (coordinator)" : ""}${p.lead ? ", lead" : ""}, ${p.mode} mode${p.status === "stopped" ? ", stopped" : ""}${p.focus ? `; focus: ${p.focus}` : ""}`)
+    .map((p) => `- @${p.handle}: ${p.role}${p.kind === "ticket-main" && p.handle === "main" ? " (coordinator)" : ""}${p.lead ? ", lead" : ""}${p.kind === "agent" && p.canEdit ? ", changes files (hands them in)" : ""}, ${p.mode} mode${p.status === "stopped" ? ", stopped" : ""}${p.focus ? `; focus: ${p.focus}` : ""}`)
     .join("\n");
 }
 
@@ -617,6 +617,7 @@ const huddleTools = (h: Huddle) => `- \`huddle_post\`: post a message. Tag who s
 - \`huddle_add_participant\`: leads and @main only, capped; if the huddle is full, ask the user instead of working around it.
 - \`huddle_status\`: say you are done (you then sleep until a lead, @main or the user tags you) or blocked (with the reason); \`huddle_post\` takes the same status with your last message. done means your job is finished. Don't mark yourself done while you wait for others; just end your turn. Leads are woken by any tag.
 - \`huddle_close\`: leads and @main, once the work is done: write outputs/${summaryFile(h.id)} in the host ticket's outputs first; it asks the user, who alone closes the huddle.
+- \`huddle_hand_in\`: helpers that change files hand in what they changed in their copy, with a one-line summary (the board finds the changed files). \`huddle_review_changes\`: leads and @main accept a hand-in (its files go into the ticket's folder) or reject it with a reason. \`huddle_allow_changes\`: leads and @main let a read-only helper change files.
 (ckanban MCP tools; if they are deferred, load them with ToolSearch first.)`;
 
 /** Characters of the host ticket's description a huddle agent's system prompt carries. */
@@ -637,11 +638,15 @@ export function huddleAgentSystemPrompt(
   h: Huddle, p: HuddleParticipant, host: Ticket, outputDir: string, workdir: string, baseBranch?: string, lessons = "",
 ): string {
   const snap = p.snapshot;
-  const edit = p.canEdit && p.workspace === "own" && !p.worktree
-    ? `You work in the host ticket's folder (${workdir}), shared with @main, because it has no version history to branch from yet. Tell @main before you change a file, and don't commit, push or switch branches.`
+  const copy = p.copy;
+  const edit = p.canEdit && !copy && p.branch
+    ? `You work in your own git worktree (${workdir}) on branch ${p.branch}: edit and commit there. Never push to or edit the host ticket's worktree.`
     : p.canEdit
-    ? `You work in your own git worktree (${workdir}) on branch ${p.branch ?? "(your branch)"}: edit and commit there. Never push to or edit the host ticket's worktree.`
-    : `You must NOT edit tracked files in this project (Edit, Write and NotebookEdit are disabled; don't change files through the shell either). You may run the app, tests and read-only commands. Put reports, notes and test scripts in your outputs folder: ${outputDir}. If you need a writable copy of the project (to install dependencies, build or run it), make it in a temporary folder (\`mktemp -d\`), never in the outputs folder, and delete it when done: the user reads every file in outputs from the board.${snap ? `
+    ? `You can change files: do the work itself, not only describe it (edit code and text, make or change images, run the app and fix what you find). You work in your own copy of the ticket's folder (${workdir}), made from it as it was when your copy was made; @main's later changes aren't in it. Never edit the ticket's own folder, and don't push or publish anything.${copy?.kind === "git" ? ` The copy has version history on its own branch ${copy.branch}; committing there is optional.` : ""}
+- When your change is ready (or a part of it that stands on its own), call \`huddle_hand_in\` with a one-line summary. The board finds the changed, added and removed files itself and posts them as a card; @main or a lead accepts them into the ticket's folder or rejects them. Hand in once per piece of work, then end your turn; you are tagged with the decision only when you need to act (a rejection or a conflict).
+- Conflict: when the ticket's folder changed some of the same files, nothing is applied and your copy is replaced by a fresh copy of the ticket's folder; redo your change there and hand it in again.
+- Put reports and notes in your outputs folder (${outputDir}), not in your copy: only changes to the project go in a hand-in.`
+    : `You must NOT edit tracked files in this project (Edit, Write and NotebookEdit are disabled; don't change files through the shell either). You may run the app, tests and read-only commands. If your job turns out to need file changes (you found something to fix), ask @main or your lead to let you change files (\`huddle_allow_changes\`) instead of only describing the fix. Put reports, notes and test scripts in your outputs folder: ${outputDir}. If you need a writable copy of the project (to install dependencies, build or run it), make it in a temporary folder (\`mktemp -d\`), never in the outputs folder, and delete it when done: the user reads every file in outputs from the board.${snap ? `
 - Your working folder is a read-only snapshot: a detached git worktree at the host branch ${snap.branch ?? "(detached)"}, commit ${snap.sha}. The board resets it to the host's latest commit at every wake, dropping any change made in it; never commit, push or switch branches there.
 - Review target: ${snap.branch ? `the commits of ${snap.branch}` : "the host's commits"}${baseBranch ? ` on top of ${baseBranch} (\`git diff ${baseBranch}...${snap.sha}\`)` : ""}, at ${snap.sha}${p.focus ? `, focused on: ${p.focus}` : ""}.
 - You see committed code only; ask @main to commit WIP.` : ""}`;
@@ -699,7 +704,7 @@ export function huddleMainPrompt(h: Huddle, p: HuddleParticipant, digest: string
 
 ${context("Huddle messages", `(Messages from huddle ${h.id}, where you are @${p.handle}${coordinator ? ", the coordinator" : ""}. Participants:
 ${rosterLines(h)}
-${coordinator && p.prompt ? `Your role as coordinator: ${p.prompt}\n` : ""}Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there.${coordinator ? " You may edit the code; the other agents can't (except in their own worktrees)." + (committed ? " Reviewers and QA see only committed code (a snapshot of your branch's HEAD), so commit your work in progress before you tag them, and mention the commit sha." : " This folder has no commits, so everyone reads the files in it directly: say which files you changed when you tag them.") + " Keep the pinned findings current with `huddle_findings`, and add participants with `huddle_add_participant` if needed (capped; ask the user when it's full). When the huddle's work is done, write the summary to outputs/" + summaryFile(h.id) + " in your outputs folder and ask the user to close it with `huddle_close`." : ""}
+${coordinator && p.prompt ? `Your role as coordinator: ${p.prompt}\n` : ""}Answer in the huddle with the ckanban \`huddle_post\` tool, tagging who should act; your chat reply is not posted there.${coordinator ? " You may edit the code; helpers that change files work in their own copies and hand their changes in: accept or reject each hand-in with `huddle_review_changes` (accepted files land in your folder, not yet committed: check and commit them with your work). Let a read-only helper change files with `huddle_allow_changes` when it should fix what it found." + (committed ? " Reviewers and QA see only committed code (a snapshot of your branch's HEAD), so commit your work in progress before you tag them, and mention the commit sha." : " This folder has no commits, so everyone reads the files in it directly: say which files you changed when you tag them.") + " Keep the pinned findings current with `huddle_findings`, and add participants with `huddle_add_participant` if needed (capped; ask the user when it's full). When the huddle's work is done, write the summary to outputs/" + summaryFile(h.id) + " in your outputs folder and ask the user to close it with `huddle_close`." : ""}
 ${DIGEST_RULE} Don't post only to acknowledge, and tag only who must act.
 If you were in the middle of work, carry on with it afterwards and keep following the instructions you were given for that run, including how to end it. Otherwise just act on these messages and end your turn.)
 ${huddleTools(h)}`, { huddle: h.id })}`;

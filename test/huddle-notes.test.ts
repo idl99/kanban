@@ -269,7 +269,7 @@ test("teammates: rosters and propose_huddle resolve presets through all three le
   huddles.savePreset("p", { name: "reviewer", prompt: "Review this repo." });
   const ctx: ToolContext = { client, cwd: "/", env: { CKANBAN_TICKET: `p/${t.id}` } };
   expect((await callTool("propose_huddle", { roster: [{ preset: "a11y" }, { preset: "researcher" }] }, ctx)).isError).toBeUndefined();
-  expect(text(await callTool("list_huddle_presets", {}, ctx))).toContain("- a11y: A11y (tagged, shared worktree, model haiku; all boards)");
+  expect(text(await callTool("list_huddle_presets", {}, ctx))).toContain("- a11y: A11y (tagged, reads only, model haiku; all boards)");
   const h = huddles.create("p", t.id, [{ preset: "a11y" }, { preset: "reviewer" }]);
   expect(participant(h, "a11y")).toMatchObject({ preset: "a11y", model: "haiku", prompt: "Check a11y." });
   expect(participant(h, "reviewer").prompt).toBe("Review this repo.");

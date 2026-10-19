@@ -8,7 +8,7 @@ test("a new teammate gets the daemon's defaults for what Claude left out", () =>
   expect(t).toEqual({ name: "wa-watcher", role: "Wa watcher", prompt: "Draft replies.", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared" });
   expect(teammateMeta({ ...t, model: "sonnet" })).toBe("Wakes when @mentioned · reads only · sonnet");
   expect(proposedTeammate({ name: "eng", prompt: "p", workspace: "own", why: "w" }).canEdit).toBe(true);
-  expect(teammateMeta(proposedTeammate({ name: "eng", prompt: "p", workspace: "own", lead: true, why: "w" }))).toBe("Wakes when @mentioned · edits code (own worktree) · lead · board's model");
+  expect(teammateMeta(proposedTeammate({ name: "eng", prompt: "p", workspace: "own", lead: true, why: "w" }))).toBe("Wakes when @mentioned · changes files (own copy, hands them in) · lead · board's model");
 });
 
 test("a change keeps the existing teammate's values and lists what differs", () => {

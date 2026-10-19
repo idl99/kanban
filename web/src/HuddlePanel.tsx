@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import {
-  api, type Huddle, type HuddleLearning, type HuddleMessage, type HuddleMode, type HuddleParticipant, type HuddlePreset, type Level, type TeammateProposal, type Ticket,
+  api, type HandIn, type Huddle, type HuddleLearning, type HuddleMessage, type HuddleMode, type HuddleParticipant, type HuddlePreset, type Level, type TeammateProposal, type Ticket,
 } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { draftKey, formKey } from "./drafts";
@@ -10,7 +10,7 @@ import {
 } from "./huddle";
 import { DEFAULT_MAX, draftError, RosterEditor, rosterDraft, startFromDraft, TemplatePicker, usePresets, useTemplates, type RosterDraft } from "./HuddleRoster";
 import { autoGrow } from "./autoGrow";
-import { applyTemplate, BRIEF_MAX, clampSideWidth, DEFAULT_BUDGET, participantRole, POST_MAX, SIDE_DEFAULT } from "./huddleText";
+import { applyTemplate, BRIEF_MAX, clampSideWidth, DEFAULT_BUDGET, handInGroups, handInStatus, participantRole, POST_MAX, SIDE_DEFAULT } from "./huddleText";
 import { CloseIcon, MoreIcon } from "./icons";
 import { KeyHint } from "./KeyHint";
 import { useLayer } from "./layers";
@@ -480,7 +480,7 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
       {adding && !closed && <AddAgent key={seed?.n} slug={slug} huddle={h} preset={addSeed ?? undefined} onDone={() => setAdding(false)} onError={onError} />}
       <div className={`huddle-body${side.dragging ? " resizing" : ""}`} ref={body} style={{ "--hd-side-w": `${side.width}px` } as React.CSSProperties}>
         {(!phone || pane === "chat") && <div className="huddle-feed">
-          <Feed huddle={h} state={state} handles={handles} scroller={log} onSeen={(seq) => run(api.huddleSeen(slug, h.id, seq))} />
+          <Feed slug={slug} huddle={h} state={state} handles={handles} scroller={log} onSeen={(seq) => run(api.huddleSeen(slug, h.id, seq))} onError={onError} />
           <Composer slug={slug} ticket={ticket} huddle={h} onError={onError} prefill={prefill} onPrefilled={() => setPrefill(null)} onOpenOutput={onOpenOutput} />
         </div>}
         {viewed && (
@@ -516,7 +516,7 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
       {confirm === "close" && (
         <ConfirmDialog title="Close the huddle?" confirmLabel="Close huddle" busyLabel="Closing…" onCancel={() => setConfirm(null)}
           onConfirm={async () => { await api.huddleAction(slug, h.id, "close"); setConfirm(null); }}>
-          <p>The huddle's runs stop and it becomes read-only; its history stays here. The ticket's own run keeps going. Clean agent worktrees are removed.</p>
+          <p>The huddle's runs stop and it becomes read-only; its history stays here. The ticket's own run keeps going. Helpers' copies of the folder are removed when all their changes were handed in.</p>
           {pending.length > 0 && (
             <div className="hd-close-learnings">
               <p>
@@ -717,8 +717,8 @@ function Learning({ slug, huddle: h, l, presets, onError }: { slug: string; hudd
 }
 
 /** The message feed: system lines, messages with @mention chips, finding highlights. Sticks to the bottom while you're there. */
-function Feed({ huddle: h, state, handles, scroller, onSeen }: {
-  huddle: Huddle; state: HuddleState; handles: string[]; scroller: RefObject<HTMLDivElement>; onSeen: (seq: number) => void;
+function Feed({ slug, huddle: h, state, handles, scroller, onSeen, onError }: {
+  slug: string; huddle: Huddle; state: HuddleState; handles: string[]; scroller: RefObject<HTMLDivElement>; onSeen: (seq: number) => void; onError: (m: string) => void;
 }) {
   const stick = useRef(true);
   const keep = useRef<number | null>(null);
@@ -770,7 +770,11 @@ function Feed({ huddle: h, state, handles, scroller, onSeen }: {
       {state.hasMore && <button className="btn ghost small load-earlier" onClick={earlier} disabled={loading}>{loading ? "Loading…" : "Load earlier"}</button>}
       {!state.messages.length && <div className="hd-sys">No messages yet.</div>}
       {state.messages.map((m) => (
-        <Message key={m.seq} m={m} p={byHandle.get(m.from)} handles={handles} forYou={h.status !== "closed" && isForYou(m, h.forYouSince ?? 0)} />
+        m.kind === "handin" ? (
+          <HandInCard key={m.seq} slug={slug} huddle={h} m={m} p={byHandle.get(m.from)} handles={handles} onError={onError} />
+        ) : (
+          <Message key={m.seq} m={m} p={byHandle.get(m.from)} handles={handles} forYou={h.status !== "closed" && isForYou(m, h.forYouSince ?? 0)} />
+        )
       ))}
     </div>
   );
@@ -798,6 +802,66 @@ function Message({ m, p, handles, forYou }: { m: HuddleMessage; p: HuddlePartici
         ) : (
           <Markdown text={m.text} handles={handles} />
         )}
+      </div>
+    </div>
+  );
+}
+
+/** Changes a helper handed in: who, what changed (files in plain words) and where it stands; the user can accept or reject it. */
+function HandInCard({ slug, huddle: h, m, p, handles, onError }: {
+  slug: string; huddle: Huddle; m: HuddleMessage; p: HuddleParticipant | undefined; handles: string[]; onError: (m: string) => void;
+}) {
+  const x: HandIn | undefined = h.handIns?.find((y) => y.id === m.handIn);
+  const [busy, setBusy] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState("");
+  const decide = async (accept: boolean) => {
+    setBusy(true);
+    try {
+      await api.reviewHandIn(slug, h.id, m.handIn!, accept, reason.trim());
+      setRejecting(false);
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const open = x?.status === "waiting" && h.status !== "closed";
+  return (
+    <div className="hd-msg">
+      <Avatar handle={m.from} />
+      <div className="hd-msg-body">
+        <div className="hd-msg-head">
+          <b>@{m.from}</b>
+          {p && <span className="muted">{p.role}</span>}
+          <time className="muted" dateTime={m.ts} title={fullTime(m.ts)}>· {clock(m.ts)}</time>
+        </div>
+        <div className={`hd-handin ${x?.status ?? "waiting"}`}>
+          <div className="hd-handin-tag">Changes handed in</div>
+          <Markdown text={x?.summary ?? m.text} handles={handles} />
+          {x && (
+            <ul className="hd-handin-files">
+              {handInGroups(x.files).map(([label, files]) => (
+                <li key={label}><span className="muted">{label}:</span> {files.join(", ")}</li>
+              ))}
+            </ul>
+          )}
+          {x && <div className={`hd-handin-status ${x.status}`}>{handInStatus(x)}</div>}
+          {open && !rejecting && (
+            <div className="hd-handin-actions">
+              <button className="btn small primary" disabled={busy} onClick={() => decide(true)}>Accept</button>
+              <button className="btn small" disabled={busy} onClick={() => setRejecting(true)}>Reject…</button>
+            </div>
+          )}
+          {open && rejecting && (
+            <div className="hd-handin-actions">
+              <input className="hd-handin-reason" autoFocus value={reason} placeholder="Why? The helper is told." aria-label="Why you reject it"
+                onChange={(e) => setReason(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && reason.trim()) decide(false); if (e.key === "Escape") setRejecting(false); }} />
+              <button className="btn small" disabled={busy || !reason.trim()} onClick={() => decide(false)}>Reject</button>
+              <button className="btn small ghost" disabled={busy} onClick={() => setRejecting(false)}>Cancel</button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1031,6 +1095,7 @@ function Roster({ slug, huddle: h, onError, viewing, onView }: {
               {role && <span className="hd-p-role"> · {role}</span>}
               {p.handle === "main" && <span className="pill lead">coordinator</span>}
               {p.lead && p.handle !== "main" && !human && <span className="pill lead">lead</span>}
+              {p.kind === "agent" && p.canEdit && <span className="pill" title="Works in its own copy of the folder and hands its changes in">changes files</span>}
             </div>
             <span className="hd-p-cost" title={human ? undefined : `What @${p.handle} spent in this huddle${p.liveCostUsd
               ? `, with ≈${money(p.liveCostUsd)} for the turn it is in now. That part is a live estimate: every step re-reads the whole conversation, so it climbs while @${p.handle} works and settles when the turn ends`
@@ -1041,6 +1106,10 @@ function Roster({ slug, huddle: h, onError, viewing, onView }: {
               <div className={`hd-p-st ${st}`}>
                 <span className={`hd-dot ${st}`} />
                 <span className="hd-p-st-text" title={detail}>{activity}</span>
+                {!closed && p.kind === "agent" && !p.canEdit && (
+                  <button className="link-btn hd-redo" title={`Let @${p.handle} change files: it gets its own copy of the folder and hands its changes in for you or @main to accept`}
+                    onClick={() => api.allowHuddleChanges(slug, h.id, p.handle).catch(fail)}>let it change files</button>
+                )}
                 {restartable && (
                   <button className="link-btn hd-redo" title={h.status === "live" ? `Restart @${p.handle}: it wakes now with what it hasn't read` : `Restart @${p.handle} when the huddle resumes`}
                     onClick={() => api.restartHuddleParticipant(slug, h.id, p.handle).catch(fail)}>restart</button>

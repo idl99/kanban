@@ -88,7 +88,7 @@ export const PLANNING_DISALLOWED_TOOLS = [
  * The board's huddle tools: they only touch the huddle, never files, so any run (a Planning chat too) can
  * coordinate its huddle.
  */
-const HUDDLE_TOOLS = new Set(["huddle_post", "huddle_read", "huddle_mode", "huddle_findings", "huddle_add_participant", "huddle_status", "huddle_close", "huddle_brief"].map((t) => `mcp__ckanban__${t}`));
+const HUDDLE_TOOLS = new Set(["huddle_post", "huddle_read", "huddle_mode", "huddle_findings", "huddle_add_participant", "huddle_status", "huddle_close", "huddle_brief", "huddle_hand_in", "huddle_review_changes", "huddle_allow_changes"].map((t) => `mcp__ckanban__${t}`));
 /**
  * Board tools a Planning chat may use when the user asks for it in their message, should Claude ask permission for
  * them. They never touch files; the daemon decides per call (Board.userRequestRights), so a Planning run without the

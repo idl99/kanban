@@ -1739,6 +1739,20 @@ export function createServer(deps: ServerDeps) {
       const { token: _t, ...p } = huddles.invite(slug, h.id, me, ticketId, typeof b.handle === "string" ? b.handle : undefined);
       return json(p, 201);
     }
+    // Changes helpers hand in from their own copies: the helper hands in; a lead, @main or the user accepts or rejects.
+    if (m === "POST" && action === "hand-ins" && !handle) {
+      const b = await body(req);
+      return json(await huddles.handIn(slug, h.id, me, typeof b.summary === "string" ? b.summary : ""), 201);
+    }
+    if (m === "POST" && action === "hand-ins" && handle && (sub === "accept" || sub === "reject") && !part) {
+      const b = await body(req);
+      return json(await huddles.reviewHandIn(slug, h.id, me, handle, sub === "accept", typeof b.reason === "string" ? b.reason : ""));
+    }
+    // A lead, @main or the user lets a helper change files (in its own copy of the folder).
+    if (m === "POST" && action === "participants" && handle && sub === "allow-changes" && !part) {
+      const { token: _t, ...p } = huddles.allowChanges(slug, h.id, me, handle);
+      return json(p);
+    }
     if (m === "POST" && action === "findings" && !handle) {
       const b = await body(req);
       const act = b.action === "add" || b.action === "resolve" ? b.action : "list";

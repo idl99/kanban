@@ -489,8 +489,48 @@ export type HuddleStatus = "live" | "stopped" | "closed";
 export type HuddleStopReason = "budget" | "messages" | "loop";
 /** tagged: sleeps until @mentioned. monitor: every new message reaches its live session at its next turn boundary. */
 export type HuddleMode = "tagged" | "monitor";
-/** shared: the host ticket's worktree. own: a new git worktree branched off the host ticket's branch. */
+/** shared: the host ticket's folder (read-only agents: a snapshot of it). own: a copy of its own (see huddle-copies.ts). */
 export type HuddleWorkspace = "shared" | "own";
+
+/**
+ * A helper's own copy of the host ticket's folder: a git worktree on its own branch (a repo with commits) or a plain
+ * copy of the folder. fresh: make it again from the host folder at the next run (after a conflict).
+ */
+export interface HelperCopy {
+  kind: "git" | "folder";
+  dir: string;
+  /** git: the repo the worktree belongs to, and its branch. */
+  repo?: string | null;
+  branch?: string | null;
+  at: string;
+  fresh?: boolean;
+}
+
+/** One file of a hand-in, with the sha1 of its bytes when the copy was made (base) and as handed in (hash); null: no such file. */
+export interface HandInFile {
+  path: string;
+  change: "added" | "changed" | "removed";
+  base: string | null;
+  hash: string | null;
+}
+
+/**
+ * Changes a helper handed in from its copy (huddle_hand_in). A lead, @main or the user accepts them (into the host
+ * ticket's folder) or rejects them; conflict: the host folder changed some of the same files, nothing was applied.
+ */
+export interface HandIn {
+  id: string;
+  from: string;
+  summary: string;
+  files: HandInFile[];
+  status: "waiting" | "accepted" | "rejected" | "conflict";
+  at: string;
+  /** Who accepted or rejected it, when, and why (reject). */
+  by?: string | null;
+  decidedAt?: string | null;
+  reason?: string | null;
+  conflicts?: string[];
+}
 /** done: finished its job, only a lead, @main or the user wakes it again. blocked: waiting on something (statusReason). */
 export type HuddleParticipantStatus = "working" | "idle" | "stopped" | "failed" | "done" | "blocked";
 /** agent: a headless session the huddle runs. ticket-main: a ticket's own session (the host's is @main). human: the user (@you). */
@@ -509,7 +549,7 @@ export interface HuddleParticipant {
   mode: HuddleMode;
   /** May add participants and manage findings. The coordinator (@main) always may. */
   lead: boolean;
-  /** May edit tracked files; only the coordinator (and agents in their own worktree) by default. */
+  /** May change files: the coordinator in the host's folder; an agent in its own copy (workspace own), handing them in. */
   canEdit: boolean;
   workspace: HuddleWorkspace;
   /**
@@ -520,6 +560,8 @@ export interface HuddleParticipant {
   branch?: string | null;
   /** Read-only snapshot: the host branch and the commit it shows (see huddle.ts snapshot()). */
   snapshot?: { branch: string | null; sha: string } | null;
+  /** May change files: its own copy of the host's folder, once made (older huddles: worktree and branch above). */
+  copy?: HelperCopy | null;
   /** Its own Claude session (agents only; a ticket-main uses its ticket's session). */
   sessionId: string | null;
   sessionStarted?: boolean;
@@ -600,6 +642,8 @@ export interface Huddle {
   auto?: { reason: string } | null;
   /** Lessons agents proposed when they turned done; only the user saves them as role notes (see huddle-notes.ts). */
   learnings?: HuddleLearning[];
+  /** Changes helpers handed in from their copies, oldest first. */
+  handIns?: HandIn[];
   createdAt: string;
   updatedAt: string;
   closedAt?: string | null;
@@ -629,7 +673,8 @@ export interface HuddleLearning {
   teammate?: TeammateProposal;
 }
 
-export type HuddleMessageKind = "message" | "finding" | "system";
+/** handin: a helper handed in changes (handIn: its id); the chat shows it as a card. */
+export type HuddleMessageKind = "message" | "finding" | "system" | "handin";
 /** Where a post came in from: the board UI, the MCP server or CLI (BoardClient), or a request with neither header (e.g. curl). */
 export type HuddleSource = "ui" | "mcp" | "none";
 
@@ -645,6 +690,8 @@ export interface HuddleMessage {
   kind: HuddleMessageKind;
   /** Posts only (system messages have none). */
   source?: HuddleSource;
+  /** kind handin: the hand-in's id. */
+  handIn?: string;
 }
 
 /** The spending cap a ticket's next work run gets (claude --max-budget-usd), or null for none. */

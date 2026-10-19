@@ -135,7 +135,7 @@ export function RosterEditor({ presets, draft, setDraft, tickets, hostId, max = 
           {draft.rows.map((r) => {
             const p = r.preset ? byName.get(r.preset) : undefined;
             const lead = r.lead ?? p?.lead;
-            const own = (r.workspace ?? p?.workspace) === "own";
+            const edits = r.canEdit ?? p?.canEdit ?? (r.workspace ?? p?.workspace) === "own";
             const count = r.count ?? 1;
             const handle = rowHandle(r);
             return (
@@ -151,7 +151,7 @@ export function RosterEditor({ presets, draft, setDraft, tickets, hostId, max = 
                   <div className="roster-desc">
                     {r.preset ? `preset: ${p?.role ?? r.preset}` : "custom role"}
                     {lead ? " · can add agents" : ""}
-                    {own ? " · own worktree" : ""}
+                    {edits ? " · changes files (own copy)" : ""}
                   </div>
                 </td>
                 <td>

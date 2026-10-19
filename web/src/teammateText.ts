@@ -30,7 +30,10 @@ const labelOf = (name: string) => name.split("-").map((w, i) => (i ? w : (w[0] ?
 
 /** The teammate the proposal would save: its fields over the existing teammate's (or the daemon's defaults for a new one). */
 export function proposedTeammate(p: Proposal, existing?: TeammateDraft | null): TeammateDraft {
-  const workspace = p.workspace ?? existing?.workspace ?? "shared";
+  const asked = p.workspace ?? existing?.workspace ?? "shared";
+  const canEdit = p.canEdit ?? (p.workspace === undefined ? existing?.canEdit : undefined) ?? asked === "own";
+  // As the daemon saves it: one that changes files works in its own copy.
+  const workspace = canEdit ? "own" : asked;
   return {
     name: p.name,
     role: p.role ?? existing?.role ?? labelOf(p.name),
@@ -38,14 +41,13 @@ export function proposedTeammate(p: Proposal, existing?: TeammateDraft | null): 
     model: p.model !== undefined ? p.model : existing?.model ?? null,
     mode: p.mode ?? existing?.mode ?? "tagged",
     lead: p.lead ?? existing?.lead ?? false,
-    canEdit: p.canEdit ?? existing?.canEdit ?? workspace === "own",
+    canEdit,
     workspace,
   };
 }
 
 const wakes = (m: TeammateDraft["mode"]) => (m === "tagged" ? "Wakes when @mentioned" : "Gets every message");
-const access = (t: Pick<TeammateDraft, "workspace" | "canEdit">) =>
-  t.workspace === "own" ? (t.canEdit ? "edits code (own worktree)" : "reads only (own worktree)") : "reads only";
+const access = (t: Pick<TeammateDraft, "workspace" | "canEdit">) => (t.canEdit ? "changes files (own copy, hands them in)" : "reads only");
 
 /** "Wakes when @mentioned · reads only · sonnet". */
 export function teammateMeta(t: TeammateDraft): string {

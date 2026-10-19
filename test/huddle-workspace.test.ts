@@ -1,6 +1,6 @@
 // Huddles: stopping, board slots and where agents work (worktrees, snapshots, plain folders).
 import { expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { callTool } from "../src/mcp-server";
 import { git, store, board, huddles, server, client, setup, idle, heard, heardBy, processes, host, participant, agentCtx, you, messages, until, useHuddleEnv } from "./huddle-env";
@@ -72,17 +72,29 @@ test("huddle runs don't take board slots", async () => {
   huddles.stopAll("p", h.id);
 }, 30000);
 
-test("own workspace: the agent gets a worktree off the host's branch and may edit there", async () => {
+test("own workspace: the agent gets a copy of the host's folder as it is now and may edit there", async () => {
   const t = await host();
+  await board.ensureSession("p", t.id);
+  const hostDir = store.getTicket("p", t.id)!.worktree!;
+  // @main's work in progress, committed or not, is in the helper's copy; the host's index and files stay as they were.
+  writeFileSync(join(hostDir, "README.md"), "wip\n");
+  writeFileSync(join(hostDir, "new.txt"), "new\n");
+  const status = await git(hostDir, "status", "--porcelain");
   const h = huddles.create("p", t.id, [{ preset: "engineer", focus: "API" }]);
   await idle();
   const p = participant(h, "engineer");
-  expect(p.canEdit).toBe(true);
-  expect(p.branch).toBe(`ck/${t.id}-engineer`);
-  expect(p.worktree && existsSync(p.worktree)).toBe(true);
+  expect(p).toMatchObject({ canEdit: true, workspace: "own" });
+  expect(p.worktree ?? null).toBeNull();
+  expect(p.copy).toMatchObject({ kind: "git", branch: `ck/${t.id}-engineer` });
+  expect(p.copy!.dir).toContain(`${t.id}.huddle`);
+  expect(readFileSync(join(p.copy!.dir, "README.md"), "utf8")).toBe("wip\n");
+  expect(readFileSync(join(p.copy!.dir, "new.txt"), "utf8")).toBe("new\n");
+  expect(await git(p.copy!.dir, "status", "--porcelain")).toBe("");
+  expect(await git(hostDir, "status", "--porcelain")).toBe(status);
   const run = processes()[0];
-  expect(run.cwd).toBe(p.worktree);
+  expect(run.cwd).toBe(p.copy!.dir);
   expect(run.args).not.toContain("--disallowedTools");
+  expect(run.args.join(" ")).toContain("huddle_hand_in");
 }, 20000);
 
 test("read-only agents work in a detached snapshot of the host's HEAD, refreshed at every wake", async () => {
@@ -151,9 +163,10 @@ test("a failing post-checkout hook in the project doesn't fail the snapshot or i
   expect(heardBy("reviewer").at(-1)).toContain("please look again");
 }, 30000);
 
-test("in a repo with no commits yet, agents work in the host's folder instead of failing", async () => {
+test("in a repo with no commits yet, read-only agents read the host's folder and editing ones get a plain copy", async () => {
   const empty = tempDir("ck-empty-");
   await git(empty, "init", "-q", "-b", "main");
+  writeFileSync(join(empty, "notes.md"), "hi\n");
   store.saveProfile({ ...store.getProfile("p")!, path: empty });
   const t = await host();
   const h = huddles.create("p", t.id, [{ preset: "reviewer" }, { role: "Fixer", prompt: "Fix it", workspace: "own", canEdit: true }]);
@@ -164,21 +177,23 @@ test("in a repo with no commits yet, agents work in the host's folder instead of
     expect(heardBy(a)[0]).toContain(`You just joined the huddle as @${a}`);
   }
   expect(participant(h, "reviewer").snapshot ?? null).toBeNull();
-  expect(processes().map((x) => x.cwd)).toEqual([empty, empty]);
-  expect(processes().some((x) => x.args.join(" ").includes("shared with @main, because it has no version history to branch from yet"))).toBe(true);
-  expect(messages(h).filter((m) => m.kind === "system" && m.text.includes("no commits yet")).map((m) => m.text)).toEqual([
-    expect.stringContaining("@fixer works in the host's folder"),
-  ]);
-  // A later wake uses the folder again, without another note.
+  const copy = participant(h, "fixer").copy!;
+  expect(copy).toMatchObject({ kind: "folder", branch: null });
+  // A plain copy: the files, without the version history folder.
+  expect(readFileSync(join(copy.dir, "notes.md"), "utf8")).toBe("hi\n");
+  expect(existsSync(join(copy.dir, ".git"))).toBe(false);
+  expect(processes().map((x) => x.cwd).sort()).toEqual([empty, copy.dir].sort());
+  // A later wake uses the same copy.
   huddles.post("p", h.id, you(h), "@reviewer @fixer again");
   await idle();
-  expect(heardBy("reviewer").at(-1)).toContain("again");
-  expect(processes().every((x) => x.cwd === empty)).toBe(true);
-  expect(messages(h).filter((m) => m.text.includes("no commits yet")).length).toBe(1);
+  expect(heardBy("fixer").at(-1)).toContain("again");
+  expect(processes().filter((x) => x.cwd === copy.dir).length).toBe(2);
+  expect(messages(h).some((m) => /branch|worktree|commit/i.test(m.text))).toBe(false);
 }, 30000);
 
-test("in a plain folder, shared, own and read-only agents all work in the host's folder with a note", async () => {
+test("in a plain folder, read-only agents read the host's folder and editing ones work in a copy of it", async () => {
   const plain = tempDir("ck-plain-");
+  writeFileSync(join(plain, "index.html"), "<h1>Hi</h1>\n");
   store.saveProfile({ ...store.getProfile("p")!, path: plain });
   const t = await host();
   const h = huddles.create("p", t.id, [
@@ -187,14 +202,14 @@ test("in a plain folder, shared, own and read-only agents all work in the host's
     { role: "Helper", prompt: "Help", workspace: "shared", canEdit: true },
   ]);
   await idle();
-  for (const a of ["reviewer", "fixer", "helper"]) {
-    expect(participant(h, a)).toMatchObject({ status: "idle", error: null });
-    expect(participant(h, a).worktree ?? null).toBeNull();
+  for (const a of ["reviewer", "fixer", "helper"]) expect(participant(h, a)).toMatchObject({ status: "idle", error: null });
+  expect(participant(h, "reviewer").copy ?? null).toBeNull();
+  // canEdit always means its own copy, whatever the workspace said.
+  for (const a of ["fixer", "helper"]) {
+    expect(participant(h, a)).toMatchObject({ workspace: "own", canEdit: true, copy: { kind: "folder" } });
+    expect(readFileSync(join(participant(h, a).copy!.dir, "index.html"), "utf8")).toBe("<h1>Hi</h1>\n");
   }
-  expect(processes().map((x) => x.cwd)).toEqual([plain, plain, plain]);
-  expect(messages(h).filter((m) => m.kind === "system" && m.text.includes("no version history")).map((m) => m.text)).toEqual([
-    expect.stringContaining("@fixer works in the host's folder"),
-  ]);
+  expect(processes().map((x) => x.cwd).sort()).toEqual([plain, participant(h, "fixer").copy!.dir, participant(h, "helper").copy!.dir].sort());
 }, 30000);
 
 test("an agent that can't start shows why: failed with the error, and a line in the huddle", async () => {

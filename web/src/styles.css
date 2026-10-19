@@ -2046,6 +2046,18 @@ div.huddle { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .hd-msg.mine .hd-msg-head b { color: var(--accent); }
 .hd-finding { border-left: 3px solid var(--warn); background: var(--warn-soft); padding: 6px 10px; border-radius: 6px; margin-top: 4px; }
 .hd-finding-tag { font-size: 11px; font-weight: 650; color: var(--warn); text-transform: uppercase; letter-spacing: 0.04em; }
+.hd-handin { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 6px; padding: 6px 10px; margin-top: 4px; background: var(--surface); }
+.hd-handin.accepted { border-left-color: var(--ok); }
+.hd-handin.rejected { border-left-color: var(--muted); }
+.hd-handin.conflict { border-left-color: var(--warn); background: var(--warn-soft); }
+.hd-handin-tag { font-size: 11px; font-weight: 650; color: var(--accent); text-transform: uppercase; letter-spacing: 0.04em; }
+.hd-handin-files { margin: 4px 0; padding-left: 18px; font-size: 12.5px; overflow-wrap: anywhere; }
+.hd-handin-status { font-size: 12px; font-weight: 600; }
+.hd-handin-status.accepted { color: var(--ok); }
+.hd-handin-status.conflict { color: var(--warn); }
+.hd-handin-status.rejected, .hd-handin-status.waiting { color: var(--muted); }
+.hd-handin-actions { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; align-items: center; }
+.hd-handin-reason { flex: 1; min-width: 160px; }
 .hd-mode { font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 0; background: var(--surface-2); color: var(--muted); font-weight: 520; }
 .hd-mode.monitor { background: var(--info-soft); color: var(--info); }
 button.hd-mode { cursor: pointer; }

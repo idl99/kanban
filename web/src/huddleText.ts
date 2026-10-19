@@ -396,3 +396,29 @@ export function digestPreview(text: string): string {
   const more = entries.length > 1 ? ` (+${entries.length - 1} more)` : "";
   return `${last.from ? `@${last.from}: ` : ""}${last.text.split("\n")[0]}${more}`;
 }
+
+interface HandInLike {
+  files: { path: string; change: "added" | "changed" | "removed" }[];
+  status: "waiting" | "accepted" | "rejected" | "conflict";
+  by?: string | null;
+  reason?: string | null;
+  conflicts?: string[];
+}
+
+const CHANGE_LABEL = { changed: "Changed", added: "Added", removed: "Removed" } as const;
+
+/** A hand-in's files in plain words, one group per kind of change: [["Changed", ["app.txt"]], ["Added", ["logo.svg"]]]. */
+export function handInGroups(files: HandInLike["files"]): [string, string[]][] {
+  return (["changed", "added", "removed"] as const)
+    .map((k): [string, string[]] => [CHANGE_LABEL[k], files.filter((f) => f.change === k).map((f) => f.path)])
+    .filter(([, fs]) => fs.length > 0);
+}
+
+/** Where a hand-in stands, in plain words for its card. */
+export function handInStatus(x: HandInLike): string {
+  if (x.status === "waiting") return "Waiting for @main, a lead or you to accept or reject it";
+  if (x.status === "accepted") return `Accepted by @${x.by}: the changes are in the ticket's folder`;
+  if (x.status === "rejected") return `Rejected by @${x.by}${x.reason ? `: ${x.reason}` : ""}`;
+  const n = x.conflicts?.length ?? 0;
+  return `Not brought in: the ticket's folder also changed ${n === 1 ? "this file" : `these ${n} files`} (${(x.conflicts ?? []).join(", ")}). Nothing was changed; the helper redoes it on a fresh copy.`;
+}

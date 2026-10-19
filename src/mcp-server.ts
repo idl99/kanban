@@ -132,7 +132,7 @@ export interface ToolContext {
     | "listProfiles" | "listTickets" | "getTicket" | "createTicket" | "updateTicket" | "deleteTicket" | "chat" | "stop" | "listComments"
     | "comment" | "reportBug" | "setFollowUp" | "cancelFollowUp" | "listSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "runSchedule"
     | "scheduleHistory" | "cronPreview" | "listJobs" | "createJob" | "updateJob" | "jobAction" | "adopt" | "planAction" | "huddleRead" | "huddlePost" | "huddleMode" | "huddleAdd" | "huddleFindings"
-    | "huddleStatus" | "huddleCloseRequest" | "startAutoHuddle"
+    | "huddleStatus" | "huddleCloseRequest" | "startAutoHuddle" | "huddleHandIn" | "huddleReviewHandIn" | "huddleAllowChanges"
     | "listHuddlePresets" | "saveHuddlePreset" | "deleteHuddlePreset" | "listHuddleTemplates" | "huddleBrief" | "huddleProposeTeammate">;
   cwd: string;
   env: Record<string, string | undefined>;
@@ -629,8 +629,8 @@ const PRESET_FIELDS = {
   model: { type: "string", description: "Default model, e.g. sonnet. Empty: the board's." },
   mode: { type: "string", enum: ["tagged", "monitor"], description: "tagged: sleeps until @mentioned. monitor: gets every new message. Default tagged; monitor for a lead." },
   lead: { type: "boolean", description: "May add participants and manage the findings list. Default false." },
-  canEdit: { type: "boolean", description: "May edit tracked files (only in its own worktree). Default: true for workspace own." },
-  workspace: { type: "string", enum: ["shared", "own"], description: "shared: read-only in the host ticket's worktree. own: its own worktree and branch. Default shared." },
+  canEdit: { type: "boolean", description: "May change files: it works in its own copy of the folder and hands its changes in (huddle_hand_in). For roles that make things (build, design, fix); reviewers stay read-only so their review stays independent. Default: true for workspace own." },
+  workspace: { type: "string", enum: ["shared", "own"], description: "shared: reads the host ticket's folder (a read-only snapshot). own: its own copy of the folder (always, when canEdit). Default shared." },
 };
 
 const PROPOSE_INSTEAD = "Nothing was saved: inside a board or huddle run only the user saves teammates. Call propose_teammate with the same fields and a one-line why; " +
@@ -847,10 +847,10 @@ const ROSTER_ENTRY = {
     mode: { type: "string", enum: ["tagged", "monitor"], description: "tagged: sleeps until @mentioned. monitor: gets every new message. Default: the preset's; monitor when this entry sets lead true (leads watch every message and wake on any tag)." },
     workspace: {
       type: "string", enum: ["shared", "own"],
-      description: "shared: works in the host ticket's worktree, read-only (review, QA). own: a new git worktree off the host's branch where it may edit (several agents writing code in parallel).",
+      description: "shared: reads the host ticket's folder, read-only (review, QA). own: its own copy of the folder, where it may change files and then hand them in. Works on any project, with or without version history.",
     },
     lead: { type: "boolean", description: "May add participants and manage the findings list." },
-    canEdit: { type: "boolean", description: "May edit tracked files; only applies with workspace own. Default: the preset's (true for a free-text role in its own worktree)." },
+    canEdit: { type: "boolean", description: "May change files (then it works in its own copy and hands its changes in with huddle_hand_in). Default: the preset's (true for a free-text role with workspace own)." },
     prompt: { type: "string", description: "Instructions: with a preset, added to its prompt; with a free-text role, its whole job." },
     handle: { type: "string", description: "Handle for @mentions. Default: the preset or role." },
   },
@@ -883,6 +883,11 @@ export function huddlePageText(p: HuddlePage, since?: number): string {
   ];
   if (h.quiet) lines.push("", `The huddle is quiet${h.idleSince ? ` since ${h.idleSince}` : ""}: nobody is working, no tag is unanswered and no finding is open.`);
   if (h.closeRequest) lines.push("", `@${h.closeRequest.by} asked the user to close the huddle: ${h.closeRequest.reason}`);
+  const waiting = (h.handIns ?? []).filter((x) => x.status === "waiting");
+  if (waiting.length) {
+    lines.push("", `Hand-ins waiting for a decision (huddle_review_changes):`,
+      ...waiting.map((x) => `- ${x.id} from @${x.from}: ${x.summary} (${x.files.map((f) => `${f.change} ${f.path}`).join(", ")})`));
+  }
   const open = h.findings.filter((f) => f.status === "open");
   if (h.findings.length) {
     lines.push("", `Findings (${open.length} open of ${h.findings.length}):`, ...h.findings.map((f) => `- ${f.id} [${f.status}${f.resolvedBy ? ` by @${f.resolvedBy}` : ""}] ${f.text} (by @${f.by})`));
@@ -1084,11 +1089,77 @@ const HUDDLE_TOOLS: Tool[] = [
     },
   },
   {
+    name: "huddle_hand_in",
+    description:
+      "Helpers that can change files: hand in what you changed in your own copy of the folder, with a one-line summary. The board finds the changed, " +
+      "added and removed files itself, saves them as they are now and posts them as a card; @main or a lead accepts them into the ticket's folder or rejects them. " +
+      "One hand-in waits at a time; end your turn after it. If the ticket's folder changed the same files meanwhile, nothing is applied and you get a fresh copy to redo it.",
+    inputSchema: {
+      type: "object",
+      properties: { summary: { type: "string", description: "One line: what you changed and why." }, huddle: HUDDLE, profile: PROFILE },
+      required: ["summary"],
+    },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      const slug = await slugFor(args, ctx);
+      const x = await ctx.client.huddleHandIn(slug, huddleId(args, ctx), str(args, "summary")!, huddleCaller(ctx.env));
+      return `Handed in ${x.id} (${x.files.length} file${x.files.length === 1 ? "" : "s"}: ${x.files.map((f) => `${f.change} ${f.path}`).join(", ")}). @main is tagged to accept or reject it; end your turn.`;
+    },
+  },
+  {
+    name: "huddle_review_changes",
+    description:
+      "Leads and @main: accept or reject changes a helper handed in (huddle_hand_in; the ids are on the cards, e.g. c1, and in huddle_read). " +
+      "accept: the files go into the ticket's folder (yours, @main: check them and commit them with your work); nothing in the folder is overwritten that changed since the helper's copy was made: " +
+      "then it is a conflict, nothing is applied and the helper redoes it on a fresh copy. reject: give the reason; the helper is told.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Hand-in id, e.g. c1." },
+        accept: { type: "boolean", description: "true: bring the changes in. false: reject them." },
+        reason: { type: "string", description: "Why (required to reject): what the helper should change." },
+        huddle: HUDDLE, profile: PROFILE,
+      },
+      required: ["id", "accept"],
+    },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      if (typeof args?.accept !== "boolean") throw new ClientError("accept must be true or false");
+      const reason = str(args, "reason", false) ?? "";
+      if (!args.accept && !reason.trim()) throw new ClientError("say why you reject it (reason), so the helper knows what to change");
+      const slug = await slugFor(args, ctx);
+      const x = await ctx.client.huddleReviewHandIn(slug, huddleId(args, ctx), str(args, "id")!, args.accept, reason, huddleCaller(ctx.env));
+      if (x.status === "accepted") return `Accepted ${x.id}: ${x.files.length} file${x.files.length === 1 ? "" : "s"} now in the ticket's folder (${x.files.map((f) => `${f.change} ${f.path}`).join(", ")}).`;
+      if (x.status === "conflict") return `Conflict on ${x.id}: the ticket's folder also changed ${(x.conflicts ?? []).join(", ")}. Nothing was applied; @${x.from} redoes it on a fresh copy and hands it in again.`;
+      return `Rejected ${x.id}; @${x.from} was told why.`;
+    },
+  },
+  {
+    name: "huddle_allow_changes",
+    description:
+      "Leads and @main: let a read-only helper change files, e.g. a researcher who found something to fix. From its next turn it works in its own copy of the folder " +
+      "and hands its changes in with huddle_hand_in. Keep reviewers read-only unless their review is done: their review should stay independent.",
+    inputSchema: {
+      type: "object",
+      properties: { handle: { type: "string", description: "The helper's handle, without @." }, huddle: HUDDLE, profile: PROFILE },
+      required: ["handle"],
+    },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      const slug = await slugFor(args, ctx);
+      const p = await ctx.client.huddleAllowChanges(slug, huddleId(args, ctx), str(args, "handle")!.replace(/^@/, ""), huddleCaller(ctx.env));
+      return `@${p.handle} can change files now; it was tagged and works in its own copy of the folder from its next turn.`;
+    },
+  },
+  {
     name: "propose_huddle",
     description:
       "Board ticket chat (the ticket's own session, as coordinator): propose a huddle, a room where helper Claude sessions (reviewer, QA testers, a QA lead...) " +
       "work on this ticket with you and talk to each other; you join as @main. The board shows the roster as a card; nothing starts until the user presses Start. " +
-      "For each entry choose workspace: shared (read-only in this ticket's worktree) for review and QA, own (its own worktree and branch) when several agents would edit code in parallel. " +
+      "For each entry choose: read-only (workspace shared) for review and QA, or canEdit true for helpers that make things (build a part, design, fix): each works in its own copy of the folder and hands its changes in for you to accept. " +
       "A lead (e.g. qa-lead) gathers findings so you are woken with one consolidated list. Keep it small (limit 8 including you). Nothing starts by the call. " +
       `Or give a template (a whole roster with its rules: rounds, budget, report format; built-in: ${BUILTIN_TEMPLATES.map((t) => t.name).join(", ")}; list_huddle_presets lists the board's) ` +
       "and leave out roster to use the template's. " +
