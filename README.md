@@ -130,4 +130,6 @@ Design: `docs/superpowers/specs/2026-09-29-claude-kanban-design.md`.
 
 ---
 
+If ckanban saves you time, you can [buy me a coffee ☕](https://buymeacoffee.com/leoawesome).
+
 Made by Leo. MIT License, see [LICENSE](LICENSE).
