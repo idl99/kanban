@@ -350,6 +350,9 @@ textarea { resize: vertical; font-size: 13.5px; }
 .tabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 560; }
 .tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
 
+/* Long links, paths and inline code wrap instead of widening the chat on phones. */
+.md { overflow-wrap: anywhere; min-width: 0; }
+.md table { display: block; max-width: 100%; overflow-x: auto; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md pre { background: var(--surface-2); padding: 10px; border-radius: 8px; overflow-x: auto; }
@@ -2296,6 +2299,9 @@ button.hd-mode:disabled { cursor: default; }
   .tabs { overflow-x: auto; scrollbar-width: none; padding: 0 8px; flex: none; }
   .tabs::-webkit-scrollbar, .col-jump::-webkit-scrollbar, .board::-webkit-scrollbar { display: none; }
   .tabs button { white-space: nowrap; padding: 10px 10px; flex: none; }
+  /* The dock's tabs scroll inside the row so its close button stays on screen and the page can't scroll sideways. */
+  .dock { overflow-x: clip; }
+  .dock-head .tabs { flex: 1 1 auto; min-width: 0; }
   .chat .composer { margin-bottom: env(safe-area-inset-bottom); }
   .composer-keys { display: none; }
   .qopt { min-height: 44px; }

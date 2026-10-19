@@ -732,6 +732,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           )}
           {phone && (
             <Select className="phone-move" ariaLabel="Move to column" value={ticket.status} onChange={(s) => setStatus(s as Status)} renderValue={() => "Move"}
+              menuMaxHeight={Infinity} // all columns fit on a phone screen; only scroll when the screen is too short
               options={COLUMNS.map((c) => ({ value: c.id, label: c.label, hint: c.hint, disabled: c.id === "in_progress" && !working }))} />
           )}
           <TicketMenu ticket={ticket} working={working} live={!!(ticket.terminalOpen || linked?.live)}
