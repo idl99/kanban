@@ -33,7 +33,7 @@ import { commandNote, messageCommand, type SlashCommand } from "./slashText";
 import { filesByReply } from "./fileCards";
 
 import { handoff as handoffOf, liveView, saved, type Handoff } from "./liveReply";
-import { heldByReply, unsentNow, type Pending } from "./pendingBubbles";
+import { heldByReply, inSession, norm, unsentNow, type Pending } from "./pendingBubbles";
 import { baseName, copyFile, dirName, downloadFile } from "./share";
 import { draftKey, formKey } from "./drafts";
 import { fullTime, timeAgo } from "./time";
@@ -127,8 +127,6 @@ function kb(n: number): string {
   return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-// Image links reach the session as local file paths, so compare by file name.
-const norm = (s: string) => s.trim().replace(/\S*\/attachments\/([0-9a-f]{32}\.\w+)/g, "$1");
 /** Whether a message the user sent is in the session file yet. */
 const delivered = (entries: SessionEntry[], text: string) => entries.some((e) => e.role === "user" && norm(e.text) === norm(text));
 
@@ -766,7 +764,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             )}
           </div>
         ))}
-        {queued.filter((q) => !q.peer && !heldByReply(q, pending)).map((q) => (
+        {queued.filter((q) => !q.peer && !heldByReply(q, pending) && !inSession(q, entries)).map((q) => (
           <div key={q.id} className={`conv-msg user pending${editable(q) ? " unsent" : ""}${editing?.id === q.id && editable(q) ? " editing" : ""}`}>
             <div className="conv-head">
               <b>You</b>
