@@ -10,7 +10,7 @@ import {
 } from "./huddle";
 import { DEFAULT_MAX, draftError, RosterEditor, rosterDraft, startFromDraft, TemplatePicker, usePresets, useTemplates, type RosterDraft } from "./HuddleRoster";
 import { autoGrow } from "./autoGrow";
-import { applyTemplate, BRIEF_MAX, clampSideWidth, DEFAULT_BUDGET, handInGroups, handInStatus, participantRole, POST_MAX, SIDE_DEFAULT } from "./huddleText";
+import { applyTemplate, BRIEF_MAX, clampSideWidth, DEFAULT_BUDGET, handInGroups, handInStatus, participantRole, POST_MAX, SIDE_DEFAULT, stoppedWhenDone } from "./huddleText";
 import { CloseIcon, MoreIcon } from "./icons";
 import { KeyHint } from "./KeyHint";
 import { useLayer } from "./layers";
@@ -288,6 +288,8 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
   const overBudget = spent >= max;
   const brake = h.status === "stopped" && h.stopReason ? h.stopReason : null;
   const plainFirst = !!brake && brake !== "budget" && !overBudget;
+  // Out of budget after the work was finished: Close is the next step, not more budget.
+  const doneStop = stoppedWhenDone(h);
   const quiet = h.status === "live" && !!h.quiet;
   // Messages that tag you (the pending learnings count in forYou too, but have their own section).
   const forYou = closed ? 0 : (h.forYou ?? 0) - (h.learningsPending ?? 0);
@@ -440,11 +442,26 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
       {brake && (
         <div className="hd-banner brake" role="alert">
           <span aria-hidden>⛔</span>
-          <span>
+          {doneStop ? (
+            <span>
+              <b>Huddle paused: {dollars(max)} budget reached after the work finished.</b>{" "}
+              {h.closeRequest ? <><b>@{h.closeRequest.by}</b> asks to close it: {h.closeRequest.reason}.</> : "Nobody was working and nothing was open."}{" "}
+              Check the result, then close the huddle.
+            </span>
+          ) : <span>
             <b>{BRAKE_TEXT[brake](max)}</b> No agent will wake until you act.
             {spenders.length > 0 && <> Spent: {spenders.slice(0, 3).map((p) => `${p.handle} ${money(p.costUsd ?? 0)}`).join(" · ")}{spenders.length > 3 ? " · …" : ""}</>}
-          </span>
+          </span>}
           <span className="spacer" />
+          {doneStop ? (
+            <>
+              {h.summary && <button className="btn small" onClick={() => onOpenOutput(h.summary!)}>Summary</button>}
+              <button className="btn small primary" onClick={() => setConfirm("close")}>Close huddle</button>
+              <button className="btn small" onClick={() => resume(BUDGET_STEP)} title={`Resume and raise the budget to ${money(max + BUDGET_STEP)}`}>
+                Resume (+{dollars(BUDGET_STEP)} budget)
+              </button>
+            </>
+          ) : <>
           {/* Out of budget: adding budget is the way on. Any other brake: plain Resume is. */}
           {plainFirst && <button className="btn small primary" onClick={() => resume()}>Resume</button>}
           <button className={`btn small${plainFirst ? "" : " primary"}`} onClick={() => resume(BUDGET_STEP)} title={`Resume and raise the budget to ${money(max + BUDGET_STEP)}`}>
@@ -452,6 +469,7 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
           </button>
           {!plainFirst && <button className="btn small" onClick={() => resume()} disabled={overBudget} title={overBudget ? "The budget is spent: add budget to resume" : undefined}>Resume</button>}
           <button className="btn small" onClick={() => setConfirm("close")}>Close</button>
+          </>}
         </div>
       )}
       {quiet && !h.closeRequest && (
@@ -462,7 +480,8 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
           <button className="btn small primary" onClick={() => setConfirm("close")}>Close huddle</button>
         </div>
       )}
-      {h.closeRequest && !closed && (phone ? (
+      {/* The brake banner already shows the close request when the budget stopped a finished huddle. */}
+      {h.closeRequest && !closed && !doneStop && (phone ? (
         // Phone: one line (tap to read it all) with the two things to do about it.
         <div className={`huddle-close-ask compact${askOpen ? " open" : ""}`}>
           <button className="hd-ask-text" aria-expanded={askOpen} onClick={() => setAskOpen((o) => !o)}>

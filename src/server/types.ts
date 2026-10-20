@@ -632,6 +632,8 @@ export interface Huddle {
   /** Seq of the last non-system message the idle watchdog already woke @main about. */
   idleNudged?: number;
   stopReason?: HuddleStopReason | null;
+  /** The budget stopped it after its work was finished (a close request was open, or it was quiet): Close is the next step, not Resume. */
+  finishedAtStop?: boolean;
   /** @main or a lead asked the user to close the huddle (huddle_close); only the user closes it. */
   closeRequest?: { by: string; at: string; reason: string } | null;
   /** Pinned brief (goal, decisions) the leads, @main and the user keep current; it heads every digest. */

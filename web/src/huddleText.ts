@@ -253,6 +253,14 @@ export function brakeLabel(h: { status: string; stopReason?: BoardHuddleLike["st
   return h.stopReason === "messages" ? "paused: message limit" : "paused: waiting for you";
 }
 
+/**
+ * The budget stopped the huddle after its work was finished (a close request was open, or nothing was going on):
+ * the brake banner then suggests Close, with Resume as the second choice.
+ */
+export function stoppedWhenDone(h: { status: string; stopReason?: BoardHuddleLike["stopReason"]; finishedAtStop?: boolean; closeRequest?: unknown }): boolean {
+  return h.status === "stopped" && h.stopReason === "budget" && (!!h.closeRequest || !!h.finishedAtStop);
+}
+
 /** The quiet state, short: "idle 12m · 0 open". Null unless the huddle is quiet. */
 export function quietLabel(h: BoardHuddleLike, now = Date.now()): string | null {
   if (h.status !== "live" || !h.quiet) return null;

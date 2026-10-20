@@ -1587,7 +1587,16 @@ export class Huddles {
     const max = h.maxCostUsd ?? DEFAULT_MAX_COST_USD;
     const spent = huddleCost(h);
     if (spent >= max) {
-      this.halt(slug, hid, "budget", `The huddle spent ${money(spent)} of its ${money(max)} budget and stopped; every run was stopped. @you: resume it with more budget if it should go on.`);
+      const stop = `The huddle spent ${money(spent)} of its ${money(max)} budget and stopped; every run was stopped.`;
+      // The last wrap-up turn can tip it over after the work is finished: then Close is the next step, not more budget.
+      const finished = !!h.closeRequest || this.quiet(slug, h, this.store.readHuddleMessages(slug, hid)).quiet;
+      if (!finished) {
+        this.halt(slug, hid, "budget", `${stop} @you: resume it with more budget if it should go on.`);
+        return;
+      }
+      const why = h.closeRequest ? `@${h.closeRequest.by} already asked to close it: ${h.closeRequest.reason}.` : "Nobody was working and nothing was open.";
+      this.update(slug, hid, (x) => void (x.finishedAtStop = true));
+      this.halt(slug, hid, "budget", `${stop} ${why} @you: the work looks finished, so check the result and close the huddle. Resume with more budget only if you want more done.`);
       return;
     }
     if (spent >= max * BUDGET_WARN && !h.budgetWarned) {
@@ -1715,10 +1724,10 @@ export class Huddles {
    * new ones) after its cursor. Run on Resume and after a restart, so nothing posted while the huddle was stopped
    * or the daemon was going down is lost. A monitor ticket session's pending messages come back this way too.
    */
-  private wakeIfOwed(slug: string, hid: string, handle: string) {
+  private wakeIfOwed(slug: string, hid: string, handle: string): "mention" | "monitor" | null {
     const h = this.load(slug, hid);
     const p = h?.participants.find((x) => x.handle === handle);
-    if (!h || !p || h.status !== "live") return;
+    if (!h || !p || h.status !== "live") return null;
     let owed: "mention" | "monitor" | null = null;
     for (const m of this.store.readHuddleMessages(slug, hid)) {
       if (m.seq <= p.cursor) continue;
@@ -1730,6 +1739,7 @@ export class Huddles {
       owed ??= w;
     }
     if (owed) this.wake(slug, h, p, owed === "mention");
+    return owed;
   }
 
   /**
@@ -2123,6 +2133,7 @@ export class Huddles {
       x.maxCostUsd = max;
       x.sinceUser = 0;
       x.held = null;
+      x.finishedAtStop = false;
       if (spent < max * BUDGET_WARN) x.budgetWarned = false;
       // Another round of messages before the limit stops it again.
       if (h.stopReason === "messages") x.maxMessages = (x.posts ?? 0) + DEFAULT_MAX_MESSAGES;
@@ -2130,7 +2141,10 @@ export class Huddles {
     });
     if (h.status !== "live" || addBudgetUsd) this.system(slug, hid, `Huddle resumed by @you${addBudgetUsd ? ` with ${money(addBudgetUsd)} more budget (now ${money(max)})` : ""}.`);
     this.userActed(slug, hid);
-    for (const p of this.get(slug, hid).participants) if (p.kind !== "human") this.wakeIfOwed(slug, hid, p.handle);
+    let tagged = false;
+    for (const p of this.get(slug, hid).participants) if (p.kind !== "human" && this.wakeIfOwed(slug, hid, p.handle) === "mention") tagged = true;
+    // Resume only delivers tags that were owed: without one, no agent has new work and the huddle would look stuck.
+    if (!tagged) this.system(slug, hid, "Nobody was tagged while the huddle was stopped, so no agent has new work. @you: tag an agent to give it work, or close the huddle.");
     return this.get(slug, hid);
   }
 

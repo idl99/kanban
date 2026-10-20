@@ -1,7 +1,7 @@
 // Huddles: who can wake whom, budget and message limits, ping-pong and restarts.
 import { expect, test } from "bun:test";
 import { callTool } from "../src/mcp-server";
-import { Huddles } from "../src/server/huddle";
+import { Huddles, huddleCost } from "../src/server/huddle";
 import { HUDDLE_HEADER } from "../src/server/huddle-roster";
 import { controlResponse } from "../src/server/runner";
 import { FAKE, store, bus, board, huddles, client, idle, heardBy, host, participant, agentCtx, mainCtx, text, you, messages, until, api, postJson, useHuddleEnv } from "./huddle-env";
@@ -153,6 +153,9 @@ test("budget brake: @main's huddle replies count, the leads are warned at 80%, e
   expect(warn.mentions).toEqual(["main"]);
   expect(heardBy(store.getTicket("p", t.id)!.sessionId!).join("\n")).toContain("(83%)");
   expect(log.at(-1)).toContain("budget and stopped");
+  // Work still going and no close request: the usual stop, which suggests more budget.
+  expect(log.at(-1)).toContain("resume it with more budget if it should go on");
+  expect(stopped.finishedAtStop).toBeFalsy();
   expect(messages(h).at(-1)!.mentions).toEqual(["you"]);
   // Spent: plain Resume is refused, Resume with more budget works.
   expect(() => huddles.resume("p", h.id)).toThrow("add budget");
@@ -161,8 +164,48 @@ test("budget brake: @main's huddle replies count, the leads are warned at 80%, e
   const resumed = store.getHuddle("p", h.id)!;
   expect(resumed).toMatchObject({ status: "live", stopReason: null });
   expect(resumed.maxCostUsd).toBeCloseTo(10.012);
-  expect(messages(h).at(-1)!.text).toContain("$10.00 more budget");
+  expect(messages(h).at(-2)!.text).toContain("$10.00 more budget");
 }, 30000);
+
+test("budget runs out after a close request: the stop points to Close; resuming without a tag says nobody has work", async () => {
+  const t = await host();
+  const h = huddles.create("p", t.id, [{ preset: "reviewer" }], { maxCostUsd: 100 });
+  await idle();
+  // @main asked to close, and the budget is already spent: the reviewer's next turn stops the huddle.
+  store.saveHuddle("p", { ...store.getHuddle("p", h.id)!, maxCostUsd: huddleCost(store.getHuddle("p", h.id)!), closeRequest: { by: "main", at: new Date().toISOString(), reason: "all fixed" } });
+  huddles.post("p", h.id, you(h), "@reviewer one last look");
+  await until(() => store.getHuddle("p", h.id)!.status === "stopped");
+  await idle();
+  const stopped = store.getHuddle("p", h.id)!;
+  expect(stopped).toMatchObject({ stopReason: "budget", finishedAtStop: true });
+  const stop = messages(h).at(-1)!;
+  expect(stop.text).toContain("@main already asked to close it: all fixed.");
+  expect(stop.text).toContain("close the huddle");
+  expect(stop.text).not.toContain("if it should go on");
+  expect(stop.mentions).toEqual(["you"]);
+  // Resume with more budget: nobody was tagged, so no run starts and the log says so.
+  const heard = heardBy("reviewer").length;
+  const mainHeard = heardBy(store.getTicket("p", t.id)!.sessionId!).length;
+  huddles.resume("p", h.id, 10);
+  await idle();
+  expect(store.getHuddle("p", h.id)!).toMatchObject({ status: "live", finishedAtStop: false });
+  expect(messages(h).at(-1)!.text).toBe("Nobody was tagged while the huddle was stopped, so no agent has new work. @you: tag an agent to give it work, or close the huddle.");
+  expect(heardBy("reviewer").length).toBe(heard);
+  expect(heardBy(store.getTicket("p", t.id)!.sessionId!).length).toBe(mainHeard);
+}, 30000);
+
+test("resume that delivers a tag wakes that agent and adds no nobody-has-work line", async () => {
+  const t = await host();
+  const h = huddles.create("p", t.id, [{ preset: "reviewer" }]);
+  await idle();
+  await huddles.stopAll("p", h.id);
+  huddles.post("p", h.id, you(h), "@reviewer check the login page");
+  const heard = heardBy("reviewer").length;
+  huddles.resume("p", h.id);
+  await idle();
+  expect(heardBy("reviewer").length).toBe(heard + 1);
+  expect(messages(h).some((m) => m.text.startsWith("Nobody was tagged"))).toBe(false);
+}, 20000);
 
 test("message limit stops the huddle", async () => {
   const t = await host();

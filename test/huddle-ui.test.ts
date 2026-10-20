@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resetTitle, scopeChip, usageText } from "../web/src/teamText";
 import {
-  applyProposedTemplate, applyTemplate, brakeLabel, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity, contextText, BIG_CONTEXT_TOKENS, participantRole, clampSideWidth, SIDE_DEFAULT, handInGroups, handInStatus,
+  applyProposedTemplate, applyTemplate, brakeLabel, stoppedWhenDone, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity, contextText, BIG_CONTEXT_TOKENS, participantRole, clampSideWidth, SIDE_DEFAULT, handInGroups, handInStatus,
 } from "../web/src/huddleText";
 import { mergeSteps, modelLabel, sessionMeta, sessionState, shortSession, toolIcon } from "../web/src/sessionText";
 
@@ -307,4 +307,14 @@ test("hand-in cards say what changed and where it stands in plain words", () => 
   for (const s of ["waiting", "accepted", "rejected", "conflict"] as const) {
     expect(handInStatus({ files, status: s, by: "main", conflicts: ["a"] })).not.toMatch(/branch|worktree|commit|merge/i);
   }
+});
+
+test("stoppedWhenDone: only a budget stop after a close request, or one the server marked finished", () => {
+  const close = { by: "main", at: "2026-10-20T12:55:20Z", reason: "all fixed" };
+  expect(stoppedWhenDone({ status: "stopped", stopReason: "budget", closeRequest: close })).toBe(true);
+  expect(stoppedWhenDone({ status: "stopped", stopReason: "budget", finishedAtStop: true })).toBe(true);
+  // A normal budget stop, another brake, or a live huddle keep the usual banner.
+  expect(stoppedWhenDone({ status: "stopped", stopReason: "budget" })).toBe(false);
+  expect(stoppedWhenDone({ status: "stopped", stopReason: "messages", closeRequest: close })).toBe(false);
+  expect(stoppedWhenDone({ status: "live", stopReason: null, closeRequest: close })).toBe(false);
 });

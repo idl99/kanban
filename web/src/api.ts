@@ -756,6 +756,8 @@ export interface Huddle {
   maxCostUsd?: number;
   /** Why it stopped by itself: budget spent, message limit, or too long without the user (routing paused). */
   stopReason?: "budget" | "messages" | "loop" | null;
+  /** The budget stopped it after its work was finished: Close is the next step, not Resume. */
+  finishedAtStop?: boolean;
   /** @main or a lead asked the user to close the huddle (its summary is in the host's outputs). */
   closeRequest?: { by: string; at: string; reason: string } | null;
   /** The lead that runs the huddle instead of @main (it gets the idle nudges, notes and hand-ins); null: @main runs it. */
