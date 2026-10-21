@@ -32,6 +32,7 @@ import { approxPct } from "./usage";
 import { Markdown } from "./Transcript";
 import { NeedsField } from "./Needs";
 import { TagEditor } from "./Tags";
+import { RunSettings } from "./RunSettings";
 import { boardTags } from "./tagText";
 import { useHuddle, members } from "./huddle";
 import { HuddlePanel } from "./HuddlePanel";
@@ -752,6 +753,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             onChange={(tags) => api.updateTicket(slug, ticket.id, { tags }).catch((e) => onError(`Tags not saved: ${e.message}`))}
             onSuggested={(suggestedTags) => api.updateTicket(slug, ticket.id, { suggestedTags }).catch((e) => onError(`Tags not saved: ${e.message}`))} />
         </div>
+        <RunSettings profile={profile} ticket={ticket} onError={onError} />
 
         <div ref={bodyRef} className={`panel-body ${detailsShown ? "" : "details-closed"} ${side.dragging ? "resizing" : ""}`}
           style={{ "--side-w": `${side.width}px` } as React.CSSProperties}>

@@ -151,6 +151,7 @@ export interface Profile {
   baseBranch: string;
   maxParallel: number;
   model?: string | null;
+  effort?: string | null;
   createdAt: string;
   /** Git-ignored files copied into each new worktree (paths or globs relative to the folder). */
   copyFiles?: string[];
@@ -206,6 +207,8 @@ export interface Ticket {
   notice?: string | null;
   /** Model set for this ticket with /model (overrides the board's). */
   model?: string | null;
+  /** Reasoning effort set for this ticket (overrides the board's). */
+  effort?: string | null;
   /** Created by this schedule. */
   scheduleId?: string | null;
   /** Created by this one-time scheduled job. */
@@ -1101,7 +1104,7 @@ export const api = {
   reportBug: (input: { title: string; description: string; include: BugBlockId[]; profile?: string; ticketId?: string }) =>
     req<BugReportResult>("POST", "/api/bug-report", { ...input, source: "ui" }),
   profiles: () => req<Profile[]>("GET", "/api/profiles"),
-  createProfile: (p: { name: string; path: string; maxParallel?: number; model?: string; baseBranch?: string; workspace?: Workspace }) =>
+  createProfile: (p: { name: string; path: string; maxParallel?: number; model?: string; effort?: string; baseBranch?: string; workspace?: Workspace }) =>
     req<Profile>("POST", "/api/profiles", p),
   updateProfile: (slug: string, p: Partial<Profile>) => req<Profile>("PATCH", `/api/profiles/${slug}`, p),
   deleteProfile: (slug: string) => req<void>("DELETE", `/api/profiles/${slug}`),
@@ -1215,7 +1218,7 @@ export const api = {
   }) => req<Ticket>("POST", t(slug), input),
   plan: (slug: string, id: string, action: "start" | "pause" | "resume" | "done" | "concurrency", maxConcurrent?: number) =>
     req<Ticket>("POST", `${t(slug, id)}/plan`, { action, maxConcurrent }),
-  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "needs" | "tags" | "suggestedTags" | "important" | "runCapUsd">> & { expectedBody?: string }) =>
+  updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "needs" | "tags" | "suggestedTags" | "important" | "runCapUsd" | "model" | "effort">> & { expectedBody?: string }) =>
     req<Ticket>("PATCH", t(slug, id), patch),
   deleteTicket: (slug: string, id: string) => req<void>("DELETE", t(slug, id)),
   /** Inbox Snooze: hide what the ticket waits for now for a day (or until its state changes). */

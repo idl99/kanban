@@ -5,7 +5,7 @@ import { ConflictError, recoveryFor, type Board } from "./board";
 import { FollowUpError } from "./followup";
 import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pickFolder, processCommands } from "./claude";
 import type { Bus, BusEvent } from "./events";
-import { listCommands } from "./commands";
+import { EFFORT_HELP, listCommands, MODEL_HELP, validEffort, validModel } from "./commands";
 import { DiffError, folderDiff, ticketDiff } from "./diff";
 import { detectBaseBranch, enableVersionHistory, isGitRepo, repoKind, resolveBaseBranch, which } from "./git";
 import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, resolveConflicts, sendFailures, type PrDeps } from "./prpoller";
@@ -733,6 +733,7 @@ export function createServer(deps: ServerDeps) {
         const path = String(b.path ?? "").trim().replace(/^~(?=\/|$)/, process.env.HOME ?? "~");
         if (!name) throw new HttpError(400, "name is required");
         if (!path || !existsSync(path) || !statSync(path).isDirectory()) throw new HttpError(400, `path is not a directory: ${path}`);
+        if (b.effort && !validEffort(String(b.effort))) throw new HttpError(400, `"${b.effort}" is not an effort level. Use ${EFFORT_HELP}.`);
         let slug = slugify(name);
         for (let i = 2; store.getProfile(slug); i++) slug = `${slugify(name)}-${i}`;
         const profile: Profile = {
@@ -741,6 +742,7 @@ export function createServer(deps: ServerDeps) {
           baseBranch: b.baseBranch || ((await isGitRepo(path)) ? (await resolveBaseBranch(path, await detectBaseBranch(path))) ?? "" : ""),
           maxParallel: Math.max(1, Number(b.maxParallel) || DEFAULT_MAX_PARALLEL),
           model: b.model || null,
+          ...(b.effort ? { effort: String(b.effort) } : {}),
           createdAt: nowIso(),
           ...(b.workspace !== undefined ? { workspace: workspaceValue(b.workspace) } : {}),
         };
@@ -765,6 +767,10 @@ export function createServer(deps: ServerDeps) {
         if (b.baseBranch !== undefined) next.baseBranch = String(b.baseBranch);
         if (b.maxParallel !== undefined) next.maxParallel = Math.max(1, Number(b.maxParallel) || 1);
         if (b.model !== undefined) next.model = b.model || null;
+        if (b.effort !== undefined) {
+          if (b.effort && !validEffort(String(b.effort))) throw new HttpError(400, `"${b.effort}" is not an effort level. Use ${EFFORT_HELP}.`);
+          next.effort = b.effort || null;
+        }
         if (b.copyFiles !== undefined) {
           if (!Array.isArray(b.copyFiles)) throw new HttpError(400, "copyFiles must be a list of paths");
           next.copyFiles = [...new Set(b.copyFiles.map((f: unknown) => String(f).trim()).filter(Boolean))] as string[];
@@ -1065,6 +1071,18 @@ export function createServer(deps: ServerDeps) {
         if (b.runCapUsd !== undefined) {
           if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can change a ticket's spending cap");
           patch.runCapUsd = capValue(b.runCapUsd, true);
+        }
+        // Model and effort for this ticket's runs: a name, or null for the board's. Only the user sets them.
+        if (b.model !== undefined || b.effort !== undefined) {
+          if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "only the user can change a ticket's model or effort");
+        }
+        if (b.model !== undefined) {
+          if (b.model !== null && !(typeof b.model === "string" && validModel(b.model))) throw new HttpError(400, `"${b.model}" is not a model name. Use ${MODEL_HELP}.`);
+          patch.model = b.model;
+        }
+        if (b.effort !== undefined) {
+          if (b.effort !== null && !(typeof b.effort === "string" && validEffort(b.effort))) throw new HttpError(400, `"${b.effort}" is not an effort level. Use ${EFFORT_HELP}.`);
+          patch.effort = b.effort;
         }
         if (planner || requester) {
           delete patch.order;

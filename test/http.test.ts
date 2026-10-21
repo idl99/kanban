@@ -112,6 +112,24 @@ test("stale body edit returns 409", async () => {
   expect(r.status).toBe(409);
 });
 
+test("PATCH ticket and board set model and effort; bad values are refused, null clears", async () => {
+  const path = tempDir("ck-plain-");
+  await fetch(`${base}/api/profiles`, json("POST", { name: "Effort", path, effort: "high" }));
+  expect(((await (await fetch(`${base}/api/profiles/effort`)).json()) as any).effort).toBe("high");
+  expect((await fetch(`${base}/api/profiles/effort`, json("PATCH", { effort: "loud" }))).status).toBe(400);
+  expect(((await (await fetch(`${base}/api/profiles/effort`, json("PATCH", { effort: "" }))).json()) as any).effort).toBeNull();
+  const t = (await (await fetch(`${base}/api/profiles/effort/tickets`, json("POST", { title: "t", body: "" }))).json()) as any;
+  const url = `${base}/api/profiles/effort/tickets/${t.id}`;
+  let r = await fetch(url, json("PATCH", { effort: "xhigh", model: "opus" }));
+  expect(await r.json()).toMatchObject({ effort: "xhigh", model: "opus" });
+  expect((await fetch(url, json("PATCH", { effort: "loud" }))).status).toBe(400);
+  expect((await fetch(url, json("PATCH", { model: "gpt-4" }))).status).toBe(400);
+  r = await fetch(url, json("PATCH", { effort: null, model: null }));
+  const cleared = (await r.json()) as any;
+  expect(cleared.effort ?? null).toBeNull();
+  expect(cleared.model ?? null).toBeNull();
+});
+
 test("PATCH queued/:id edits a held message; a peer's or a missing one is refused", async () => {
   const path = tempDir("ck-plain-");
   await fetch(`${base}/api/profiles`, json("POST", { name: "Queue Edit", path }));

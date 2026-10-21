@@ -58,6 +58,12 @@ test("buildArgs", () => {
   expect(again).not.toContain("--model");
 });
 
+test("buildArgs passes --effort only when set", () => {
+  expect(buildArgs("u1", false, null)).not.toContain("--effort");
+  const args = buildArgs("u1", false, "opus", [], undefined, undefined, null, "low");
+  expect(args.slice(args.indexOf("--effort"), args.indexOf("--effort") + 2)).toEqual(["--effort", "low"]);
+});
+
 test("stop kills the whole process group (grandchildren too)", async () => {
   const pidFile = join(tempDir(), "child.pid");
   process.env.FAKE_MODE = "child";

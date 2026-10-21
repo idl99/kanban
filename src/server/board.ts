@@ -27,7 +27,7 @@ import { AUTO_CONTINUE_PER_DAY, clockTime, CONTINUE_TEXT, dayKey, limitMessage, 
 import { DraftTracker } from "./draft";
 import { buildArgs, DEFAULT_STALL_MINUTES, PLANNING_DISALLOWED_TOOLS, startRun, type RunHandle } from "./runner";
 import { RETRY_DELAY_MS, RETRY_TEXT, transientError } from "./retry";
-import { BOARD_COMMANDS, commandText, listCommands, MODEL_HELP, parseSlash, REFUSED_COMMANDS, rememberInit, slashMessage, useBundledFile, validModel, type SlashCommand } from "./commands";
+import { BOARD_COMMANDS, commandText, EFFORT_HELP, validEffort, listCommands, MODEL_HELP, parseSlash, REFUSED_COMMANDS, rememberInit, slashMessage, useBundledFile, validModel, type SlashCommand } from "./commands";
 import { mcpConfig } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
@@ -524,6 +524,17 @@ export class Board {
       const when = this.isRunning(slug, id) ? "from the next run (the current one keeps its model)" : "from the next run";
       return this.patch(slug, id, { model: reset ? null : args, notice: reset ? `Model reset: this ticket uses ${fallback} ${when}.` : `Model set to ${args} for this ticket, ${when}.` });
     }
+    if (name === "effort") {
+      const profile = this.store.getProfile(slug)!;
+      const fallback = profile.effort ? `the board's effort (${profile.effort})` : "Claude Code's default effort";
+      if (!args) {
+        return this.patch(slug, id, { notice: t.effort ? `This ticket uses effort ${t.effort}. Change it with /effort <level>, or /effort default.` : `This ticket uses ${fallback}. Change it with /effort <level>, e.g. /effort high.` });
+      }
+      const reset = args === "default" || args === "reset";
+      if (!reset && !validEffort(args)) throw new Error(`"${args}" is not an effort level. Use ${EFFORT_HELP}.`);
+      const when = this.isRunning(slug, id) ? "from the next run (the current one keeps its effort)" : "from the next run";
+      return this.patch(slug, id, { effort: reset ? null : args, notice: reset ? `Effort reset: this ticket uses ${fallback} ${when}.` : `Effort set to ${args} for this ticket, ${when}.` });
+    }
     return t;
   }
 
@@ -781,7 +792,7 @@ export class Board {
     run.handle = startRun({
       bin: this.opts.claudeBin,
       cwd: session.dir,
-      args: buildArgs(session.sessionId, session.existed, t.model ?? profile.model, refine ? PLANNING_DISALLOWED_TOOLS : [], mcpConfig(), systemPrompt, cap),
+      args: buildArgs(session.sessionId, session.existed, t.model ?? profile.model, refine ? PLANNING_DISALLOWED_TOOLS : [], mcpConfig(), systemPrompt, cap, t.effort ?? profile.effort),
       input: prompt,
       inputLocal: run.chat?.slash === "local" && !resume,
       planning: refine,
@@ -1493,7 +1504,7 @@ export class Board {
   async updateTicket(
     slug: string,
     id: string,
-    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "needs" | "tags" | "suggestedTags" | "important" | "runCapUsd">> & {
+    patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "dependsOn" | "needs" | "tags" | "suggestedTags" | "important" | "runCapUsd" | "model" | "effort">> & {
       expectedBody?: string;
       /** null: take the ticket out of its plan (only clearing is allowed here; adoptTickets sets it). */
       parentId?: null;
@@ -1515,6 +1526,8 @@ export class Board {
     if (patch.mode !== undefined) clean.mode = patch.mode;
     if (patch.notice !== undefined) clean.notice = patch.notice;
     if (patch.runCapUsd !== undefined) clean.runCapUsd = patch.runCapUsd;
+    if (patch.model !== undefined) clean.model = patch.model;
+    if (patch.effort !== undefined) clean.effort = patch.effort;
     if (patch.needs !== undefined) clean.needs = normalizeNeeds(patch.needs);
     if (patch.tags !== undefined) clean.tags = normalizeTags(patch.tags);
     if (patch.suggestedTags !== undefined || patch.tags !== undefined) {

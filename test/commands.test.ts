@@ -55,6 +55,7 @@ test("listCommands: built-ins, project over user, folders and plugins namespaced
   const by = (n: string) => list.find((c) => c.name === n);
   expect(by("compact")).toMatchObject({ kind: "builtin", source: "claude", local: true });
   expect(by("model")).toMatchObject({ kind: "builtin", source: "board" });
+  expect(by("effort")).toMatchObject({ kind: "builtin", source: "board" });
   expect(by("clear")).toBeUndefined();
   expect(by("internal")).toBeUndefined();
   expect(by("retro")).toMatchObject({ kind: "skill", source: "user", description: "User retro" });

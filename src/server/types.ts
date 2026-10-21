@@ -15,6 +15,8 @@ export interface Profile {
   baseBranch: string;
   maxParallel: number;
   model?: string | null;
+  /** Default reasoning effort (low, medium, high, xhigh, max); empty: Claude's own. */
+  effort?: string | null;
   createdAt: string;
   /** Git-ignored files (paths or globs relative to the board folder) copied into each new worktree. */
   copyFiles?: string[];
@@ -142,6 +144,8 @@ export interface Ticket {
   notice?: string | null;
   /** Model for this ticket's runs, set with /model in its chat; overrides the board's model. */
   model?: string | null;
+  /** Reasoning effort for this ticket's runs, set with /effort in its chat; overrides the board's effort. */
+  effort?: string | null;
   /** Set on tickets created by a schedule (see Schedule). */
   scheduleId?: string | null;
   /** Set on tickets created by a one-time scheduled job (see Job). */

@@ -1,3 +1,4 @@
+import { EFFORTS, MODELS } from "./models";
 import { useEffect, useMemo, useState } from "react";
 import { api, type ClaudeProject, type Profile, type RepoKind, type SetupDetection, type Workspace } from "./api";
 import { capInputText, parseCap } from "./capText";
@@ -7,7 +8,6 @@ import { Select } from "./Select";
 import { timeAgo } from "./time";
 import { VersionHistoryOffer } from "./VersionHistoryOffer";
 
-const MODELS = ["opus", "sonnet", "haiku"];
 const DEFAULT_MAX_PARALLEL = 5;
 
 const sameList = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
@@ -33,6 +33,7 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
   const maxParallelError = /^\d+$/.test(maxParallelText.trim()) && maxParallel >= 1 && maxParallel <= 20 ? null : "A whole number from 1 to 20";
   const [saving, setSaving] = useState(false);
   const [model, setModel] = useState(profile?.model ?? "");
+  const [effort, setEffort] = useState(profile?.effort ?? "");
   const [autoHuddles, setAutoHuddles] = useState(profile?.autoHuddles !== false);
   const [keepAwake, setKeepAwake] = useState(profile?.keepAwake !== false);
   const [capText, setCapText] = useState(capInputText(profile?.runCapUsd));
@@ -101,12 +102,12 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
     try {
       const p = profile
         ? await api.updateProfile(profile.slug, {
-          name, path, maxParallel, model: model || null, autoHuddles, keepAwake, runCapUsd: cap || null, artifacts, stallMinutes, workspace,
+          name, path, maxParallel, model: model || null, effort: effort || null, autoHuddles, keepAwake, runCapUsd: cap || null, artifacts, stallMinutes, workspace,
           // A file typed but not yet added with Enter still counts.
           copyFiles: newFile.trim() && !copyFiles.includes(newFile.trim()) ? [...copyFiles, newFile.trim()] : copyFiles,
           setupCommand: setupCommand.trim(), cleanupCommand: cleanupCommand.trim(), setupDetected: detected,
         })
-        : await api.createProfile({ name, path, maxParallel, model: model || undefined, workspace });
+        : await api.createProfile({ name, path, maxParallel, model: model || undefined, effort: effort || undefined, workspace });
       onSaved(p);
     } catch (e: any) {
       setErr(e.message);
@@ -239,6 +240,18 @@ export function ProfileDialog({ profile, onClose, onSaved, onDeleted, onOpenTeam
                 ...(customModel ? [{ value: customModel, label: customModel }] : []),
               ]}
             />
+          </label>
+        </div>
+        <div className="row two">
+          <label>
+            Reasoning effort
+            <Select
+              ariaLabel="Reasoning effort"
+              value={effort}
+              onChange={setEffort}
+              options={[{ value: "", label: "Claude default" }, ...EFFORTS.map((e) => ({ value: e, label: e }))]}
+            />
+            <span className="muted small">Tickets can override both. Changes apply from the next run.</span>
           </label>
         </div>
 

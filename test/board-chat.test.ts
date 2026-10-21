@@ -28,6 +28,29 @@ test("chat while Claude works steers the run instead of restarting it", async ()
   }
 }, 15000);
 
+test("/effort sets, shows and resets the ticket's effort; a run passes --effort (ticket over board)", async () => {
+  const profile = await setup();
+  store.saveProfile({ ...profile, effort: "medium" });
+  const t = await board.createTicket("p", { title: "x", body: "", status: "backlog" });
+  expect((await board.chat("p", t.id, "/effort")).notice).toContain("board's effort (medium)");
+  await expect(board.chat("p", t.id, "/effort loud")).rejects.toThrow(/not an effort level/);
+  expect((await board.chat("p", t.id, "/effort low")).effort).toBe("low");
+  expect((await board.chat("p", t.id, "/effort")).notice).toContain("effort low");
+  await board.updateTicket("p", t.id, { status: "ready" });
+  await untilSpawned();
+  await board.whenIdle();
+  let args = readArgs()[0].args;
+  expect(args[args.indexOf("--effort") + 1]).toBe("low");
+  const reset = await board.chat("p", t.id, "/effort default");
+  expect(reset.effort).toBeNull();
+  expect(reset.notice).toContain("board's effort (medium)");
+  await board.updateTicket("p", t.id, { status: "ready" });
+  await untilSpawned(2);
+  await board.whenIdle();
+  args = readArgs()[1].args;
+  expect(args[args.indexOf("--effort") + 1]).toBe("medium");
+});
+
 test("chat sent while the run is still starting is delivered once claude is up", async () => {
   await setup();
   const t = await board.createTicket("p", { title: "x", body: "", status: "ready" });

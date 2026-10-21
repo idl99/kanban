@@ -31,6 +31,7 @@ export const BUILTINS: SlashCommand[] = [
   { name: "compact", kind: "builtin", source: "claude", local: true, description: "Summarise the conversation to free up context" },
   { name: "context", kind: "builtin", source: "claude", local: true, description: "Show how much context the conversation uses" },
   { name: "model", kind: "builtin", source: "board", description: "Switch the model for this ticket's next runs (e.g. /model sonnet)" },
+  { name: "effort", kind: "builtin", source: "board", description: "Set how hard Claude thinks on this ticket's next runs (e.g. /effort high)" },
 ];
 
 export const BOARD_COMMANDS = new Set(BUILTINS.filter((c) => c.source === "board").map((c) => c.name));
@@ -62,6 +63,15 @@ export function validModel(name: string): boolean {
   const base = name.toLowerCase().replace(/\[1m\]$/, "");
   return MODEL_ALIASES.includes(base) || /^claude-[a-z0-9][a-z0-9.-]*$/.test(base);
 }
+
+/** Reasoning effort levels `claude --effort` takes. */
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+
+export function validEffort(name: string): boolean {
+  return (EFFORTS as readonly string[]).includes(name);
+}
+
+export const EFFORT_HELP = `${EFFORTS.join(", ")}, or default`;
 
 export const MODEL_HELP = `${MODEL_ALIASES.join(", ")}, a full model id (claude-…), or default`;
 
