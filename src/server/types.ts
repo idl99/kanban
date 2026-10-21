@@ -66,6 +66,11 @@ export const autoHuddlesOn = (p: Pick<Profile, "autoHuddles"> | null | undefined
 export const AUTO_HUDDLE_TRIGGERS = ["security", "data", "payments", "important", "asked"] as const;
 export type AutoHuddleTrigger = (typeof AUTO_HUDDLE_TRIGGERS)[number];
 export const isAutoHuddleTrigger = (v: unknown): v is AutoHuddleTrigger => AUTO_HUDDLE_TRIGGERS.includes(v as AutoHuddleTrigger);
+/**
+ * start_huddle's trigger when the user's own chat message asked for a huddle now: it starts like the user's Start on a
+ * proposal card (not an auto huddle), so it needs no board setting and takes no auto-huddle slot.
+ */
+export const USER_HUDDLE_TRIGGER = "user";
 
 export interface AutoHuddle {
   state: "waiting" | "live";

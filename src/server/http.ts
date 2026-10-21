@@ -1595,7 +1595,7 @@ export function createServer(deps: ServerDeps) {
       const v = url.searchParams.get(k);
       return v === null || v === "" || !Number.isFinite(Number(v)) ? undefined : Number(v);
     };
-    // start_huddle: the host ticket's own unattended run starts its review huddle (Huddles.startAuto checks the rest).
+    // start_huddle: the host ticket's own unattended run starts its review huddle, or its chat when the user asked (Huddles.startAuto checks the rest).
     if (rest.length === 1 && rest[0] === "auto" && m === "POST") {
       const [runSlug, ticketId] = (who.run ?? "").split("/");
       if (!who.run || who.agent || runSlug !== slug || !ticketId) {
