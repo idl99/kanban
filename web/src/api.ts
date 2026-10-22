@@ -210,6 +210,8 @@ export interface Ticket {
   scheduleId?: string | null;
   /** Created by this one-time scheduled job. */
   jobId?: string | null;
+  /** Created by an automation from an event in another service: where to open it. */
+  source?: { provider: string; label: string; url: string; loopId: string } | null;
   /** Planner ticket whose chat proposed this one. */
   parentId?: string | null;
   /** Ticket this one was branched from (copy of its conversation and committed code). */
@@ -295,6 +297,10 @@ export interface Ticket {
   links?: TicketLink[];
   /** Teammate cards in the chat the user answered, by entry uuid (src/server/types.ts). */
   teammateCards?: Record<string, TeammateCardState>;
+  /** Automation cards in the chat the user saved (by entry uuid). */
+  automationCards?: Record<string, { loopId: string; at: string }>;
+  /** Made by Automations → Set up with Claude. */
+  automationSetup?: boolean;
   /** Share menu publishes in progress (or the last one's error), per output file. */
   shareJobs?: ShareJob[];
   /** Absolute path of the ticket's outputs folder. */
@@ -414,6 +420,8 @@ export interface SessionEntry {
   deletion?: { ids: string[]; reason: string };
   /** Claude proposed a teammate (propose_teammate): the card with Save teammate / Edit first / Dismiss. */
   teammate?: TeammateProposal;
+  /** Claude proposed an automation (propose_automation): the card with Connect and Save automation. */
+  automation?: AutomationProposal;
   /** Mockups Claude sent in this reply, saved as outputs/mockups/<name>. */
   mockups?: string[];
   moved?: "planning";
@@ -833,6 +841,9 @@ const query = (q: Record<string, number | undefined>) => {
 };
 const hud = (slug: string, id?: string) => `/api/profiles/${encodeURIComponent(slug)}/huddles${id ? `/${encodeURIComponent(id)}` : ""}`;
 
+export type { AutomationProposal, Loop, LoopColumn, LoopInput, LoopSeenItem, LoopTest, Pass } from "./automationTypes";
+import type { AutomationProposal, Loop, LoopInput, LoopTest, Pass } from "./automationTypes";
+
 export interface Schedule {
   id: string;
   name: string;
@@ -929,6 +940,8 @@ export type BusEvent =
   | { type: "mcp.updated"; state: McpState }
   | { type: "snippets.updated" }
   | { type: "schedule.updated"; profile: string; id: string; schedule: Omit<Schedule, "summary" | "active"> | null }
+  | { type: "loop.updated"; profile: string; id: string; loop: Loop | null }
+  | { type: "integration.updated" }
   | { type: "job.updated"; profile: string; id: string; job: Job | null }
   | { type: "restart.updated"; pending: boolean; waiting: number }
   | { type: "awake.updated"; held: boolean }
@@ -1055,12 +1068,19 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
     if (await askConfirm({ kind: confirm, message: (data as any).error ?? "" })) return req<T>(method, url, { ...body, confirmParallel: true });
     throw new NotStarted();
   }
-  if (!r.ok) throw new Error((data as any).error ?? `${r.status} ${r.statusText}`);
+  if (!r.ok) {
+    const e = new Error((data as any).error ?? `${r.status} ${r.statusText}`) as Error & { code?: string };
+    if (typeof (data as any).code === "string") e.code = (data as any).code;
+    throw e;
+  }
   return data as T;
 }
 
 const sch = (slug: string, id?: string) =>
   `/api/profiles/${encodeURIComponent(slug)}/schedules${id ? `/${encodeURIComponent(id)}` : ""}`;
+
+const lp = (slug: string, id?: string) =>
+  `/api/profiles/${encodeURIComponent(slug)}/loops${id ? `/${encodeURIComponent(id)}` : ""}`;
 
 const jb = (slug: string, id?: string) =>
   `/api/profiles/${encodeURIComponent(slug)}/jobs${id ? `/${encodeURIComponent(id)}` : ""}`;
@@ -1266,6 +1286,22 @@ export const api = {
   createSnippet: (input: SnippetInput) => req<Snippet>("POST", "/api/snippets", input),
   updateSnippet: (id: string, patch: Partial<SnippetInput>) => req<Snippet>("PATCH", `/api/snippets/${encodeURIComponent(id)}`, patch),
   deleteSnippet: (id: string) => req<void>("DELETE", `/api/snippets/${encodeURIComponent(id)}`),
+  passes: () => req<{ passes: Pass[]; automations: number }>("GET", "/api/passes"),
+  addPass: (input: { kind: Pass["kind"]; name?: string; claudeName?: string | null; url?: string; envName?: string; secret?: string }) =>
+    req<Pass>("POST", "/api/passes", input),
+  replacePassKey: (id: string, secret: string) => req<Pass>("PATCH", `/api/passes/${encodeURIComponent(id)}`, { secret }),
+  deletePass: (id: string) => req<void>("DELETE", `/api/passes/${encodeURIComponent(id)}`),
+  authorizePass: (id: string) => req<{ url: string }>("POST", `/api/passes/${encodeURIComponent(id)}/authorize`),
+  testLoop: (slug: string, script: string, passes: string[]) => req<LoopTest>("POST", `${lp(slug)}/test`, { script, passes }),
+  automationSetup: (slug: string) => req<Ticket>("POST", `/api/profiles/${encodeURIComponent(slug)}/automation-setup`),
+  answerAutomationCard: (slug: string, ticketId: string, uuid: string, loopId: string) =>
+    req<Ticket>("PUT", `/api/profiles/${encodeURIComponent(slug)}/tickets/${encodeURIComponent(ticketId)}/automation-cards/${encodeURIComponent(uuid)}`, { loopId }),
+  loops: (slug: string) => req<Loop[]>("GET", lp(slug)),
+  createLoop: (slug: string, input: LoopInput) => req<Loop>("POST", lp(slug), input),
+  updateLoop: (slug: string, id: string, patch: Partial<LoopInput>) => req<Loop>("PATCH", lp(slug, id), patch),
+  deleteLoop: (slug: string, id: string) => req<void>("DELETE", lp(slug, id)),
+  checkLoop: (slug: string, id: string) => req<Loop>("POST", `${lp(slug, id)}/check`),
+  copyLoop: (slug: string, id: string, to: string) => req<Loop>("POST", `${lp(slug, id)}/copy`, { to }),
   schedules: (slug: string) => req<Schedule[]>("GET", sch(slug)),
   createSchedule: (slug: string, input: ScheduleInput) => req<Schedule>("POST", sch(slug), input),
   updateSchedule: (slug: string, id: string, patch: Partial<ScheduleInput & { enabled: boolean }>) => req<Schedule>("PATCH", sch(slug, id), patch),

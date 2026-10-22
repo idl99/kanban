@@ -11,6 +11,28 @@ import { STATUSES, type HandIn, type HuddleFinding, type HuddleLearning, type Hu
 
 export class ClientError extends Error {}
 
+/** A board pass as the daemon shows it (src/server/integrations/passes.ts PassView). */
+export interface PassInfo {
+  id: string;
+  kind: "mcp" | "key" | "local";
+  name: string;
+  claudeName: string | null;
+  url: string | null;
+  envName: string | null;
+  status: "pending" | "connected" | "needs_reconnect";
+  error: string | null;
+  usedBy: number;
+}
+
+export interface AutomationTestInfo {
+  items: { id: string; title: string; text?: string; link?: string }[];
+  found: number;
+  error: string | null;
+  stderr: string;
+  toolsUsed: string[];
+  durationMs: number;
+}
+
 export const DAEMON_DOWN = "ckanban daemon not running, run `ckanban install` or `ckanban dev`";
 
 /** Set on every board run's claude process ("<profile>/<ticket id>"). */
@@ -325,6 +347,18 @@ export class BoardClient {
   /** `run` is the board run's CKANBAN_TICKET, so the daemon credits the change to that ticket. */
   private by = (run?: string | null): Record<string, string> => (run ? { [RUN_HEADER]: run } : {});
 
+  /** A check script's `ckanban call`: the token its check got says which services and tools it may use. */
+  automationCall = async (token: string, service: string, tool: string, args: unknown) =>
+    (await this.req<{ result: unknown }>("POST", "/api/automation-call", { token, service, tool, args }, {}, true)).result;
+  /** Claude Code's MCP servers as Connections shows them. */
+  claudeServers = () => this.req<{ servers: { name: string; target: string; transport: string | null; scope: string; status: string }[] }>("GET", "/api/mcp");
+  /** The board's own passes (Connections → Board column), without secrets. */
+  listPasses = () => this.req<{ passes: PassInfo[]; automations: number }>("GET", "/api/passes");
+  passTools = (id: string) => this.req<{ name: string; description?: string }[]>("GET", `/api/passes/${encodeURIComponent(id)}/tools`);
+  /** A trial run of a check script that isn't saved: what it found, nothing is created. */
+  testAutomation = (slug: string, script: string, passes: string[]) =>
+    this.req<AutomationTestInfo>("POST", `/api/profiles/${encodeURIComponent(slug)}/loops/test`, { script, passes }, {}, true);
+  listAutomations = (slug: string) => this.req<{ id: string; name: string; enabled: boolean; service: string; state: string; problems: string[] }[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/loops`);
   listSchedules = (slug: string) => this.req<ScheduleInfo[]>("GET", this.s(slug));
   createSchedule = (slug: string, input: ScheduleInput, run?: string | null) =>
     this.req<ScheduleInfo>("POST", this.s(slug), input, this.by(run));

@@ -7,6 +7,7 @@ import { HuddleDigest } from "./HuddleDigest";
 import { usePresets } from "./HuddleRoster";
 import type { TeamRequest } from "./Team";
 import { TeammateCard } from "./TeammateCard";
+import { AutomationCard } from "./AutomationCard";
 import { autoGrow } from "./autoGrow";
 import { branchTicket } from "./branch";
 import { BranchCard } from "./BranchCard";
@@ -569,6 +570,9 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   onEdit={onOpenTeam && ((scope, draft, isNew) => onOpenTeam({ action: "edit", draft, isNew, scope, card: { ticketId: ticket.id, uuid: e.uuid } }))}
                   onDismiss={() => dismissTeammate(e.uuid)}
                   onOpenTeam={onOpenTeam && ((name) => onOpenTeam({ action: "open", name }))} />
+              )}
+              {e.automation && (
+                <AutomationCard slug={slug} ticketId={ticket.id} uuid={e.uuid} proposal={e.automation} saved={ticket.automationCards?.[e.uuid]} onError={onError} />
               )}
               {e.huddle && (
                 <HuddleCard slug={slug} ticket={ticket} tickets={tickets} uuid={e.uuid} at={e.at} roster={e.huddle.roster} reason={e.huddle.reason} template={e.huddle.template} maxCostUsd={e.huddle.maxCostUsd}

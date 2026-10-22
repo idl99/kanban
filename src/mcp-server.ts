@@ -9,6 +9,7 @@ import { HUDDLE_AGENT_ENV, huddleLine, PROPOSED_MAX_COST_USD, proposedBudget, ro
 import { BUILTIN_TEMPLATES, PLAN_REVIEW, templateLine } from "./server/huddle-templates";
 import { normalizeTags } from "./server/tags";
 import { teammateProposal } from "./server/teammate-proposal";
+import { automationProposal } from "./server/automation-proposal";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -133,7 +134,8 @@ export interface ToolContext {
     | "comment" | "reportBug" | "setFollowUp" | "cancelFollowUp" | "listSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "runSchedule"
     | "scheduleHistory" | "cronPreview" | "listJobs" | "createJob" | "updateJob" | "jobAction" | "adopt" | "planAction" | "huddleRead" | "huddlePost" | "huddleMode" | "huddleAdd" | "huddleFindings"
     | "huddleStatus" | "huddleCloseRequest" | "startAutoHuddle" | "huddleHandIn" | "huddleReviewHandIn" | "huddleAllowChanges"
-    | "listHuddlePresets" | "saveHuddlePreset" | "deleteHuddlePreset" | "listHuddleTemplates" | "huddleBrief" | "huddleProposeTeammate">;
+    | "listHuddlePresets" | "saveHuddlePreset" | "deleteHuddlePreset" | "listHuddleTemplates" | "huddleBrief" | "huddleProposeTeammate"
+    | "listPasses" | "claudeServers" | "passTools" | "testAutomation">;
   cwd: string;
   env: Record<string, string | undefined>;
   main?: (dir: string) => string | null;
@@ -780,6 +782,114 @@ const PLANNING_TOOLS: Tool[] = [
       const slug = await slugFor({}, ctx);
       const l = await ctx.client.huddleProposeTeammate(slug, "current", input, huddleCaller(ctx.env));
       return `Proposed teammate @${l.teammate?.name ?? input.name}: the user reviews it under the huddle's Learnings and saves it with one click. Nothing is saved until then; carry on with your work.`;
+    },
+  },
+  {
+    name: "list_connections",
+    description:
+      "Automation setup: the services this board's automations can check by themselves (the board's own passes: signed in, a key, or a program on this computer), " +
+      "and Claude Code's servers from Connections that could be connected for automations. claude.ai connectors can't be used by automations. " +
+      "Use the names in test_automation_script and propose_automation, and in the script's `ckanban call <name> <tool> '<json>'`.",
+    inputSchema: { type: "object", properties: { profile: PROFILE } },
+    annotations: { readOnlyHint: true },
+    changes: false,
+    async run(_args, ctx) {
+      const [{ passes }, claude] = await Promise.all([ctx.client.listPasses(), ctx.client.claudeServers().catch(() => ({ servers: [] }))]);
+      const linked = new Set(passes.map((p) => p.claudeName).filter(Boolean));
+      const own = passes.map((p) => `- ${p.name} (${p.kind === "local" ? "program on this computer" : p.kind === "mcp" ? "signed in" : p.url ? "key for an MCP server" : `key, scripts read it from $${p.envName}`}): ${p.status}${p.error ? ` (${p.error})` : ""}${p.claudeName ? `, from Connections server "${p.claudeName}"` : ""}`);
+      const can = claude.servers.filter((s) => !linked.has(s.name) && s.scope !== "claude.ai" && (s.scope === "user" || s.scope === "local"))
+        .map((s) => `- ${s.name}: ${s.transport === "stdio" ? "program on this computer, connects in one click" : "online server, the user signs in once (or pastes a key if it can't)"}`);
+      const claudeOnly = claude.servers.filter((s: any) => s.scope === "claude.ai").map((s: any) => `${s.name}${s.target ? ` (${s.target})` : ""}`);
+      return `Connected for automations:\n${own.join("\n") || "(none yet)"}\n\nIn Connections, can be connected for automations (propose them in passes with from: "<name>"):\n${can.join("\n") || "(none)"}` +
+        (claudeOnly.length ? `\n\nclaude.ai connectors (automations can't use Claude's sign-in; for an online server the board can sign in by itself: propose {name, url} with its address): ${claudeOnly.join(", ")}` : "") +
+        "\n\nA service with none of these: a key the user pastes (passes entry with envName; the script reads $ENV_NAME).";
+    },
+  },
+  {
+    name: "connection_tools",
+    description: "Automation setup: the tools a connected service offers (name and description), to write a check script that calls them with `ckanban call`.",
+    inputSchema: { type: "object", properties: { name: { type: "string", description: "Connection name from list_connections." }, profile: PROFILE }, required: ["name"] },
+    annotations: { readOnlyHint: true },
+    changes: false,
+    async run(args, ctx) {
+      const { passes } = await ctx.client.listPasses();
+      const ref = String(args?.name ?? "").trim().toLowerCase();
+      const p = passes.find((x) => x.name.toLowerCase() === ref || x.claudeName?.toLowerCase() === ref);
+      if (!p) throw new ClientError(`"${args?.name}" isn't connected for automations yet: check list_connections, and ask the user to connect it (or propose it with from in propose_automation).`);
+      const tools = await ctx.client.passTools(p.id);
+      return tools.map((t) => `- ${t.name}${t.description ? `: ${t.description.replace(/\s+/g, " ")}` : ""}`).join("\n") || "(no tools)";
+    },
+  },
+  {
+    name: "test_automation_script",
+    description:
+      "Automation setup: run a check script once, the way the board will (bash, 60 s limit, no Claude), and see what it found. Nothing is saved and no tickets are made. " +
+      "The script prints JSON items, one per line or one list: {\"id\": \"stable id\", \"title\": \"...\", \"text\": \"optional details\", \"link\": \"optional https link\"}. " +
+      "It reaches connected services with `ckanban call <name> <tool> '<json args>'` (prints the tool's answer as JSON; use jq or bun to shape it); " +
+      "a pasted key comes as its environment variable. It never gets sign-in tokens. Return the current open items each time: the board remembers ids and only new ones become tickets.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        script: { type: "string", description: "The whole bash script." },
+        passes: { type: "array", items: { type: "string" }, description: "Connection names it uses (from list_connections)." },
+        profile: PROFILE,
+      },
+      required: ["script"],
+    },
+    annotations: { readOnlyHint: true },
+    changes: false,
+    async run(args, ctx) {
+      const slug = await slugFor(args, ctx);
+      const r = await ctx.client.testAutomation(slug, String(args?.script ?? ""), Array.isArray(args?.passes) ? args.passes.map(String) : []);
+      const lines = r.items.map((i) => `- [${i.id}] ${i.title}${i.link ? ` (${i.link})` : ""}`);
+      return `${r.error ? `Failed: ${r.error}` : `Found ${r.found} item${r.found === 1 ? "" : "s"} in ${(r.durationMs / 1000).toFixed(1)} s.`}` +
+        (lines.length ? `\n${lines.join("\n")}${r.found > lines.length ? `\n… and ${r.found - lines.length} more` : ""}` : "") +
+        (r.toolsUsed.length ? `\nTools it called: ${r.toolsUsed.join(", ")}` : "") +
+        (r.stderr.trim() ? `\nstderr (end):\n${r.stderr.trim().split("\n").slice(-15).join("\n")}` : "");
+    },
+  },
+  {
+    name: "propose_automation",
+    description:
+      "Automation setup chat: propose the automation you set up with the user. The board shows a card with Connect buttons for connections not made yet and Save automation; " +
+      "only the user's click saves it. Test the script with test_automation_script first. Its tickets land in Backlog (the user can change that in the editor). " +
+      "passes: each connection the script uses: {name} for one already connected, {name, from: \"<Connections server>\"} to connect from Connections in one click, " +
+      "{name, url: \"https://<online MCP server>\"} when its online MCP server isn't in the user's own Claude settings (e.g. a claude.ai connector's address): the board signs in to it by itself, " +
+      "or {name, envName, keyHelp} for a key the user pastes (keyHelp says where to find it). Nothing is saved by the call.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Short name, e.g. \"Linear: assigned to me\"." },
+        summary: { type: "string", description: "One plain line on what it watches and what it makes." },
+        service: { type: "string", description: "Display name of what it watches, e.g. \"Linear\"." },
+        passes: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { name: { type: "string" }, from: { type: "string" }, url: { type: "string" }, envName: { type: "string" }, keyHelp: { type: "string" } },
+            required: ["name"],
+          },
+        },
+        script: { type: "string", description: "The tested check script." },
+        everyMinutes: { type: "number", description: "How often it checks (default 15)." },
+        instructions: { type: "string", description: "Optional ticket text before the copied item; may use {{title}}, {{link}}, {{service}}." },
+        askClaude: {
+          type: "object",
+          properties: { on: { type: "boolean" }, prompt: { type: "string", description: "What Claude should make tickets for and what to skip." } },
+          description: "Ask Claude first: a short no-tools Claude call per new item decides whether it needs a ticket (costs a little per new item, never on quiet checks).",
+        },
+      },
+      required: ["name", "summary", "script"],
+    },
+    annotations: { readOnlyHint: true },
+    changes: false,
+    async run(args) {
+      try {
+        automationProposal(args);
+      } catch (e) {
+        throw new ClientError(`${(e as Error).message}. Fix it and call propose_automation again.`);
+      }
+      return SHOWN;
     },
   },
   {

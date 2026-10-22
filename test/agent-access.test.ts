@@ -231,14 +231,15 @@ test("inside a board run, changing tools are refused and read tools work", async
 
 test("every tool advertises a profile argument; change tools are flagged", () => {
   // The planning chat tools (forms, cards, artifacts) don't touch the board: no profile.
-  const PLANNING = ["ask_questions", "propose_branch", "propose_delete", "propose_huddle", "propose_teammate", "propose_ticket", "propose_tickets", "publish_artifact", "read_artifact"];
+  const PLANNING = ["ask_questions", "propose_automation", "propose_branch", "propose_delete", "propose_huddle", "propose_teammate", "propose_ticket", "propose_tickets", "publish_artifact", "read_artifact"];
   for (const t of TOOLS.filter((t) => t.name !== "list_profiles" && !PLANNING.includes(t.name))) expect(t.inputSchema.properties.profile).toBeDefined();
   expect(TOOLS.filter((t) => !t.changes).map((t) => t.name).sort()).toEqual([
-    "ask_questions", "get_ticket", "huddle_read", "list_huddle_presets", "list_jobs", "list_profiles", "list_schedules", "list_tickets", "propose_branch", "propose_delete", "propose_huddle",
-    "propose_teammate", "propose_ticket", "propose_tickets", "publish_artifact", "read_artifact", "report_bug", "schedule_history",
+    "ask_questions", "connection_tools", "get_ticket", "huddle_read", "list_connections", "list_huddle_presets", "list_jobs", "list_profiles", "list_schedules", "list_tickets",
+    "propose_automation", "propose_branch", "propose_delete", "propose_huddle",
+    "propose_teammate", "propose_ticket", "propose_tickets", "publish_artifact", "read_artifact", "report_bug", "schedule_history", "test_automation_script",
   ]);
   // Read tools run in a Planning chat (plan mode) without a permission ask; report_bug files an issue, so it asks.
-  const READ = ["get_ticket", "huddle_read", "list_huddle_presets", "list_jobs", "list_profiles", "list_schedules", "list_tickets", "schedule_history"];
+  const READ = ["connection_tools", "get_ticket", "huddle_read", "list_connections", "list_huddle_presets", "list_jobs", "list_profiles", "list_schedules", "list_tickets", "schedule_history", "test_automation_script"];
   expect(TOOLS.filter((t) => t.annotations?.readOnlyHint).map((t) => t.name).sort()).toEqual([...READ, ...PLANNING].sort());
   // Huddle tools work inside runs: the daemon checks who the run is (lead, coordinator, the participant itself).
   expect(TOOLS.filter((t) => t.allowInRun).map((t) => t.name).sort()).toEqual([
