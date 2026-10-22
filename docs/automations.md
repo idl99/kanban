@@ -42,7 +42,7 @@ Open **⋯ → Automations** and press **Set up with Claude**. A Planning chat o
 - The script is pinned when you save: if its file changes afterwards, it doesn't run and the automation says *Script changed, review it*. Save it again to run the new version.
 - The first check after a save also notes which tools the script called; from then on it may only call those. Save again to allow more.
 - A check runs with a 60 second limit, at most 1 MB of output and 500 items, and only the keys its own connections give it.
-- Only you save, change or delete automations and connections, from the board in your browser: a board run, a check script, the board's terminal or any other program can't, with or without its run header (the board checks that the request comes from a web browser it didn't start, with the board's own page as its origin).
+- Only you save, change or delete automations and connections, from the board in your browser: a board run, a check script, the board's terminal or any other program can't, with or without its run header (the board checks that the request comes from a web browser it didn't start, not run headless or remote-controlled, with the board's own page as its origin). This stops runs and scripts from saving by themselves; it isn't a wall against code running as you, which could also change the board's data folder directly.
 - One check makes at most 20 tickets; more new items come with the next checks. A check whose pipe fails (for example a failed `ckanban call | jq`) fails, instead of reading as "nothing found".
 - **Copy to board…** makes the same automation on another board, switched off, with a clean memory.
 - Deleting an automation or a connection never deletes tickets it made.

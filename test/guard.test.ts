@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { commandMap, descendsFrom, fromUserBrowser, isBrowser, lsofPids, parentMap } from "../src/server/integrations/guard";
+import { commandMap, descendsFrom, drivenBrowser, fromUserBrowser, isBrowser, lsofPids, parentMap } from "../src/server/integrations/guard";
 
 test("a process tree is walked up to the daemon", () => {
   const parents = parentMap("  10 1\n  20 10\n  30 20\n  40 1\n");
@@ -17,6 +17,13 @@ test("only browsers count as the user", () => {
   expect(isBrowser("/opt/homebrew/bin/bun")).toBe(false);
   expect(isBrowser("/tmp/Google Chrome-ish/curl")).toBe(false);
   expect(commandMap("  12 /usr/bin/curl -s\n 3 /bin/zsh\n").get(12)).toBe("/usr/bin/curl -s");
+});
+
+test("a browser started headless or with remote debugging, or a helper under one, isn't the user", () => {
+  const parents = parentMap("  50 1\n  51 50\n  60 1\n  61 60\n");
+  const args = commandMap("  50 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --headless=new --remote-debugging-port=9222\n  51 /Applications/Google Chrome.app/.../Google Chrome Helper --type=utility\n  60 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome\n  61 /Applications/Google Chrome.app/.../Google Chrome Helper --type=utility\n");
+  expect(drivenBrowser(51, parents, args)).toBe(true);
+  expect(drivenBrowser(61, parents, args)).toBe(false);
 });
 
 test("a program, a child of the daemon or one that detached from it, is never the user; nothing found isn't either", async () => {

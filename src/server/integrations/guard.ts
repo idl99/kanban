@@ -2,8 +2,9 @@
 // RUN_HEADER, but a run's shell can leave it out, and can detach a process from the daemon (double fork, setsid) so
 // it no longer looks like the daemon's child. So the daemon checks who is on the other end of a local connection
 // the other way round: only a web browser that the daemon didn't start may save. Anything it can't identify counts
-// as not the user (fail closed). Any program running as the user can still reach the user's own browser or files;
-// this keeps runs, check scripts and the board's terminal from saving by themselves, it isn't a wall against the user.
+// as not the user (fail closed), and so does a browser started to be driven by a program (headless, remote debugging).
+// It keeps runs, check scripts and the board's terminal from saving by themselves; it isn't a wall against code that
+// runs as the user, which could also edit the board's data folder directly.
 
 /** Runs a command and returns its stdout; "" when it fails. */
 async function out(argv: string[]): Promise<string> {
@@ -54,6 +55,15 @@ export function isBrowser(command: string): boolean {
   return BROWSER.test(command);
 }
 
+/** A browser started to be driven by a program, not by a person: headless, or with remote debugging or automation on. */
+const DRIVEN = /\s--(headless|remote-debugging-port|remote-debugging-pipe|enable-automation|marionette|remote-allow-origins)\b/;
+
+/** Whether pid or any process above it runs as a driven browser (its args, from `ps -A -o pid=,args=`). */
+export function drivenBrowser(pid: number, parents: Map<number, number>, args: Map<number, string>): boolean {
+  for (let p = pid, i = 0; p > 1 && i < 200; p = parents.get(p) ?? 0, i++) if (DRIVEN.test(` ${args.get(p) ?? ""}`)) return true;
+  return false;
+}
+
 /**
  * Whether the client on `peerPort` of a local connection to the daemon is a web browser the daemon didn't start.
  * Anything else, or nothing found, is not the user.
@@ -62,8 +72,9 @@ export async function fromUserBrowser(peerPort: number, daemonPid = process.pid)
   if (!peerPort) return false;
   const pids = lsofPids(await out(["lsof", "-nP", `-iTCP:${peerPort}`, "-sTCP:ESTABLISHED", "-Fp"])).filter((p) => p !== daemonPid);
   if (!pids.length) return false;
-  const [parents, commands] = await Promise.all([
+  const [parents, commands, args] = await Promise.all([
     out(["ps", "-A", "-o", "pid=,ppid="]).then(parentMap), out(["ps", "-A", "-o", "pid=,comm="]).then(commandMap),
+    out(["ps", "-A", "-o", "pid=,args="]).then(commandMap),
   ]);
-  return pids.every((p) => !descendsFrom(p, daemonPid, parents) && isBrowser(commands.get(p) ?? ""));
+  return pids.every((p) => !descendsFrom(p, daemonPid, parents) && isBrowser(commands.get(p) ?? "") && !drivenBrowser(p, parents, args));
 }
