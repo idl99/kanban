@@ -146,6 +146,8 @@ export interface Ticket {
   scheduleId?: string | null;
   /** Set on tickets created by a one-time scheduled job (see Job). */
   jobId?: string | null;
+  /** Set on tickets an automation loop made from an event in another service (see TicketSource). */
+  source?: TicketSource | null;
   /** Planner ticket whose Planning chat proposed this one. Missing on most tickets. */
   parentId?: string | null;
   /** Short name siblings use in dependsOn (from the planner's proposal). */
@@ -308,6 +310,53 @@ export interface BranchPoint {
   at: string;
   /** Source title at branch time (shown if the source is deleted later). */
   sourceTitle: string;
+}
+
+/** Where a ticket came from: the event's page in the service (e.g. the Linear issue) and the loop that made it. */
+export interface TicketSource {
+  /** Display name of the service. */
+  provider: string;
+  label: string;
+  url: string;
+  loopId: string;
+}
+
+/**
+ * An automation of one board: when `trigger` of the connected account fires and the rules match, run the action.
+ * Ids (provider, trigger, rule fields, action type) are looked up in the integrations registry, so a loop saved by a
+ * newer version stays on disk and shows as unsupported instead of being dropped.
+ */
+export interface Loop {
+  /** Format of this file; a loop with a newer one is shown as unsupported and left alone. */
+  version: number;
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** The account (integrations.json) it listens to. */
+  accountId: string;
+  provider: string;
+  trigger: string;
+  match: "all" | "any";
+  rules: { field: string; op: "is" | "is_not"; values: string[] }[];
+  action: { type: string; settings: Record<string, string> };
+  /** Text with `{{variables}}` of the trigger; the action gets it filled in. */
+  instructions: string;
+  createdAt: string;
+  updatedAt: string;
+  lastCheckedAt: string | null;
+  lastFiredAt: string | null;
+  /** Why the last check failed (cleared by the next good one). */
+  lastError: string | null;
+}
+
+/** What a loop remembers between checks (loops/<id>.state.json). */
+export interface LoopState {
+  /** Where the next poll starts; opaque, from the trigger. */
+  cursor: string | null;
+  /** Event keys already turned into an action: the same one never fires twice, also after a restart. */
+  handled: string[];
+  failures: number;
+  backoffUntil: string | null;
 }
 
 /** Recurring ticket template: on each cron tick the board creates a ticket from it and runs it. */

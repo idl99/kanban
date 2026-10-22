@@ -12,6 +12,9 @@ import { startPoller } from "./prpoller";
 import { Notifier } from "./notify";
 import { PushService } from "./push";
 import { RemoteAccess, remoteListenPort, remoteUrl } from "./remote";
+import { Accounts } from "./integrations/accounts";
+import { defaultRegistry } from "./integrations";
+import { LoopManager } from "./loops";
 import { Scheduler } from "./scheduler";
 import { JobRunner } from "./jobs";
 import { FollowUpWatcher } from "./followup";
@@ -60,6 +63,10 @@ export async function startDaemon(): Promise<void> {
   const mcp = new McpManager(bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude", seenFile: join(store.root, "mcp-seen.json") });
   const scheduler = new Scheduler(board, store, bus);
   const jobs = new JobRunner(board, store, bus);
+  const registry = defaultRegistry(board);
+  const integrationDeps = { fetch: globalThis.fetch, now: () => new Date() };
+  const accounts = new Accounts(store.root, registry, bus, integrationDeps, () => `http://localhost:${port}/api/integrations/oauth/callback`);
+  const loops = new LoopManager(store, bus, registry, accounts, integrationDeps);
   const huddles = new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
@@ -68,7 +75,7 @@ export async function startDaemon(): Promise<void> {
     onChange: (held) => bus.emit({ type: "awake.updated", held }),
   });
   const remotePort = remoteListenPort(port, config.remotePort);
-  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, jobs, huddles, assets: WEB_ASSETS, restart, awake: () => awake.held(), notifier, push });
+  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, jobs, huddles, loops, accounts, registry, assets: WEB_ASSETS, restart, awake: () => awake.held(), notifier, push });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   board.recover();
   huddles.recover();
@@ -79,6 +86,7 @@ export async function startDaemon(): Promise<void> {
   // After recover(): a missed run's ticket must not be mistaken for an interrupted one.
   const stopScheduler = scheduler.start();
   const stopJobs = jobs.start();
+  const stopLoops = loops.start();
   const stopLimits = new LimitWatcher(board, store).start();
   const stopFollowUps = new FollowUpWatcher(board, store).start();
   const stopWatcher = startSessionWatcher(store, bus, sessions);
@@ -94,6 +102,7 @@ export async function startDaemon(): Promise<void> {
     stopPoller();
     stopScheduler();
     stopJobs();
+    stopLoops();
     stopLimits();
     stopFollowUps();
     stopWatcher();

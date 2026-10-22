@@ -11,6 +11,10 @@ import { detectBaseBranch, enableVersionHistory, isGitRepo, repoKind, resolveBas
 import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, resolveConflicts, sendFailures, type PrDeps } from "./prpoller";
 import { resumeCommand } from "./prompts";
 import { cronError, describeCron, nextRuns, parseCron } from "./cron";
+import { AccountError, Accounts } from "./integrations/accounts";
+import { defaultRegistry } from "./integrations";
+import type { Registry } from "./integrations/registry";
+import { LoopError, LoopManager } from "./loops";
 import { RUN_HEADER, ScheduleError, Scheduler } from "./scheduler";
 import { JobError, JobRunner } from "./jobs";
 import { SnippetError, Snippets } from "./snippets";
@@ -65,6 +69,10 @@ export interface ServerDeps {
   shells?: ShellManager;
   mcp?: McpManager;
   scheduler?: Scheduler;
+  /** Automations and their accounts (integrations/, loops.ts); the daemon passes the ones it polls with. */
+  loops?: LoopManager;
+  accounts?: Accounts;
+  registry?: Registry;
   jobs?: JobRunner;
   agents?: AgentRegistry;
   huddles?: Huddles;
@@ -224,6 +232,12 @@ export function createServer(deps: ServerDeps) {
   const mcp = deps.mcp ?? new McpManager(bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const scheduler = deps.scheduler ?? new Scheduler(board, store, bus);
   const jobs = deps.jobs ?? new JobRunner(board, store, bus);
+  const registry = deps.registry ?? defaultRegistry(board);
+  const integrationDeps = { fetch: globalThis.fetch, now: () => new Date() };
+  // The address Linear (and other services) send the user back to: always localhost, on this board's port.
+  const callbackUrl = () => `http://localhost:${server.port ?? deps.port}/api/integrations/oauth/callback`;
+  const accounts = deps.accounts ?? new Accounts(store.root, registry, bus, integrationDeps, callbackUrl);
+  const loops = deps.loops ?? new LoopManager(store, bus, registry, accounts, integrationDeps);
   const agents = deps.agents ?? new AgentRegistry();
   const huddles = deps.huddles ?? new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const snippets = new Snippets(store, bus);
@@ -720,6 +734,49 @@ export function createServer(deps: ServerDeps) {
       }
     }
 
+    // /integrations — accounts of other services that automations listen to (shared by all boards)
+    if (parts[0] === "integrations") {
+      if (m !== "GET" && (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER))) {
+        throw new HttpError(403, "changing integrations is disabled inside a board run; ask the user to do it");
+      }
+      if (parts.length === 1 && m === "GET") {
+        return json({ catalog: registry.catalog(callbackUrl()), accounts: accounts.list().map((a) => accounts.view(a)) });
+      }
+      if (parts.length === 1 && m === "POST") {
+        const b = await body(req);
+        return json(accounts.view(await accounts.add(String(b?.provider ?? ""), b?.credentials)), 201);
+      }
+      // The service sends the user's browser here after they approve ckanban. Only on this Mac, and only with a
+      // state that authorize made (so a page that makes the browser open this URL can't connect a stranger's account).
+      if (parts[1] === "oauth" && parts[2] === "callback" && m === "GET") {
+        if (listenerOf(req) !== "local") throw new HttpError(403, "sign in from the computer ckanban runs on");
+        const page = (title: string, text: string, status = 200) => new Response(
+          `<!doctype html><meta charset="utf-8"><title>${title}</title><body style="font:16px system-ui;max-width:32rem;margin:15vh auto;padding:0 1rem"><h2>${title}</h2><p>${text}</p>`,
+          { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+        const esc = (x: string) => x.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+        const denied = url.searchParams.get("error");
+        if (denied) return page("Not connected", esc(url.searchParams.get("error_description") ?? denied), 400);
+        try {
+          const a = await accounts.complete(url.searchParams.get("state") ?? "", url.searchParams.get("code") ?? "");
+          return page("Connected", `${esc(accounts.view(a).providerName ?? "The service")} is connected. You can close this tab and go back to the board.`);
+        } catch (e) {
+          if (e instanceof AccountError) return page("Not connected", esc(e.message), e.status);
+          throw e;
+        }
+      }
+      const aid = parts[1];
+      if (parts.length === 2 && m === "PATCH") return json(accounts.view(accounts.update(aid, (await body(req))?.credentials)));
+      if (parts.length === 2 && m === "DELETE") {
+        accounts.remove(aid);
+        return new Response(null, { status: 204 });
+      }
+      if (parts.length === 3 && parts[2] === "authorize" && m === "POST") return json({ url: await accounts.authorizeUrl(aid) });
+      if (parts.length === 3 && parts[2] === "options" && m === "GET") {
+        return json(await accounts.options(aid, url.searchParams.get("trigger") ?? "", url.searchParams.get("field") ?? ""));
+      }
+      throw new HttpError(404, "not found");
+    }
+
     if (parts[0] !== "profiles") throw new HttpError(404, "not found");
 
     // /profiles
@@ -889,6 +946,24 @@ export function createServer(deps: ServerDeps) {
         const entry = await scheduler.runNow(slug, sid);
         return json({ entry, schedule: scheduler.view(slug, scheduler.get(slug, sid)) });
       }
+      throw new HttpError(404, "not found");
+    }
+
+    // /profiles/:p/loops — automations: an event in another service creates a ticket
+    if (parts[2] === "loops") {
+      if (m !== "GET" && (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER))) {
+        throw new HttpError(403, "changing automations is disabled inside a board run; ask the user to do it");
+      }
+      if (parts.length === 3 && m === "GET") return json(loops.list(slug));
+      if (parts.length === 3 && m === "POST") return json(await loops.create(slug, (await body(req)) ?? {}), 201);
+      const lid = parts[3];
+      if (parts.length === 4 && m === "PATCH") return json(await loops.update(slug, lid, (await body(req)) ?? {}));
+      if (parts.length === 4 && m === "DELETE") {
+        await loops.remove(slug, lid);
+        return new Response(null, { status: 204 });
+      }
+      if (parts.length === 5 && parts[4] === "check" && m === "POST") return json(await loops.checkNow(slug, lid));
+      if (parts.length === 5 && parts[4] === "copy" && m === "POST") return json(await loops.copy(slug, lid, String((await body(req))?.to ?? "")), 201);
       throw new HttpError(404, "not found");
     }
 
@@ -1868,6 +1943,8 @@ export function createServer(deps: ServerDeps) {
       if (e instanceof McpError) return json({ error: e.message }, e.status);
       if (e instanceof AgentError) return json({ error: e.message }, e.status);
       if (e instanceof ScheduleError) return json({ error: e.message }, e.status);
+      if (e instanceof LoopError) return json({ error: e.message }, e.status);
+      if (e instanceof AccountError) return json({ error: e.message }, e.status);
       if (e instanceof JobError) return json({ error: e.message }, e.status);
       if (e instanceof SnippetError) return json({ error: e.message }, e.status);
       if (e instanceof HuddleError) return json({ error: e.message }, e.status);

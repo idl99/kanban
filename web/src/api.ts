@@ -210,6 +210,8 @@ export interface Ticket {
   scheduleId?: string | null;
   /** Created by this one-time scheduled job. */
   jobId?: string | null;
+  /** Created by an automation from an event in another service: where to open it. */
+  source?: { provider: string; label: string; url: string; loopId: string } | null;
   /** Planner ticket whose chat proposed this one. */
   parentId?: string | null;
   /** Ticket this one was branched from (copy of its conversation and committed code). */
@@ -833,6 +835,9 @@ const query = (q: Record<string, number | undefined>) => {
 };
 const hud = (slug: string, id?: string) => `/api/profiles/${encodeURIComponent(slug)}/huddles${id ? `/${encodeURIComponent(id)}` : ""}`;
 
+export type { IntegrationAccount, IntegrationCatalog, Loop, LoopInput, LoopRule } from "./automationTypes";
+import type { IntegrationAccount, IntegrationCatalog, Loop, LoopInput } from "./automationTypes";
+
 export interface Schedule {
   id: string;
   name: string;
@@ -929,6 +934,8 @@ export type BusEvent =
   | { type: "mcp.updated"; state: McpState }
   | { type: "snippets.updated" }
   | { type: "schedule.updated"; profile: string; id: string; schedule: Omit<Schedule, "summary" | "active"> | null }
+  | { type: "loop.updated"; profile: string; id: string; loop: Loop | null }
+  | { type: "integration.updated" }
   | { type: "job.updated"; profile: string; id: string; job: Job | null }
   | { type: "restart.updated"; pending: boolean; waiting: number }
   | { type: "awake.updated"; held: boolean }
@@ -1061,6 +1068,9 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
 
 const sch = (slug: string, id?: string) =>
   `/api/profiles/${encodeURIComponent(slug)}/schedules${id ? `/${encodeURIComponent(id)}` : ""}`;
+
+const lp = (slug: string, id?: string) =>
+  `/api/profiles/${encodeURIComponent(slug)}/loops${id ? `/${encodeURIComponent(id)}` : ""}`;
 
 const jb = (slug: string, id?: string) =>
   `/api/profiles/${encodeURIComponent(slug)}/jobs${id ? `/${encodeURIComponent(id)}` : ""}`;
@@ -1266,6 +1276,19 @@ export const api = {
   createSnippet: (input: SnippetInput) => req<Snippet>("POST", "/api/snippets", input),
   updateSnippet: (id: string, patch: Partial<SnippetInput>) => req<Snippet>("PATCH", `/api/snippets/${encodeURIComponent(id)}`, patch),
   deleteSnippet: (id: string) => req<void>("DELETE", `/api/snippets/${encodeURIComponent(id)}`),
+  integrations: () => req<{ catalog: IntegrationCatalog; accounts: IntegrationAccount[] }>("GET", "/api/integrations"),
+  addIntegration: (provider: string, credentials: Record<string, string>) => req<IntegrationAccount>("POST", "/api/integrations", { provider, credentials }),
+  updateIntegration: (id: string, credentials: Record<string, string>) => req<IntegrationAccount>("PATCH", `/api/integrations/${encodeURIComponent(id)}`, { credentials }),
+  deleteIntegration: (id: string) => req<void>("DELETE", `/api/integrations/${encodeURIComponent(id)}`),
+  authorizeIntegration: (id: string) => req<{ url: string }>("POST", `/api/integrations/${encodeURIComponent(id)}/authorize`),
+  integrationOptions: (id: string, trigger: string, field: string) =>
+    req<{ value: string; label: string }[]>("GET", `/api/integrations/${encodeURIComponent(id)}/options?trigger=${encodeURIComponent(trigger)}&field=${encodeURIComponent(field)}`),
+  loops: (slug: string) => req<Loop[]>("GET", lp(slug)),
+  createLoop: (slug: string, input: LoopInput) => req<Loop>("POST", lp(slug), input),
+  updateLoop: (slug: string, id: string, patch: Partial<LoopInput>) => req<Loop>("PATCH", lp(slug, id), patch),
+  deleteLoop: (slug: string, id: string) => req<void>("DELETE", lp(slug, id)),
+  checkLoop: (slug: string, id: string) => req<Loop>("POST", `${lp(slug, id)}/check`),
+  copyLoop: (slug: string, id: string, to: string) => req<Loop>("POST", `${lp(slug, id)}/copy`, { to }),
   schedules: (slug: string) => req<Schedule[]>("GET", sch(slug)),
   createSchedule: (slug: string, input: ScheduleInput) => req<Schedule>("POST", sch(slug), input),
   updateSchedule: (slug: string, id: string, patch: Partial<ScheduleInput & { enabled: boolean }>) => req<Schedule>("PATCH", sch(slug, id), patch),

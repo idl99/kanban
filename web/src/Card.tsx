@@ -166,7 +166,7 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
           {plainPreview(last.from === "huddle" ? digestPreview(last.text) : last.text)}
         </div>
       )}
-      {(badge || ticket.autoHuddle || ticket.costUsd || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.plan || ticket.needs?.length || ticket.tags?.length || huddle || artifactHref || hasJobs || addOnChip || addOnsChip || ticket.followUp || ticket.followUpStopped) && (
+      {(badge || ticket.autoHuddle || ticket.costUsd || ticket.prUrl || ticket.runCount > 0 || ticket.workdir || ticket.session || ticket.scheduleId || ticket.source || ticket.plan || ticket.needs?.length || ticket.tags?.length || huddle || artifactHref || hasJobs || addOnChip || addOnsChip || ticket.followUp || ticket.followUpStopped) && (
         <div className="card-meta">
           {ticket.plan && ticket.plan.state !== "done" && (
             <span className={`badge plan ${ticket.plan.state}`} title="This ticket runs a plan of child tickets">
@@ -177,6 +177,12 @@ export function Card({ ticket, onClick, dragging, queued, held, huddle, onOpenHu
             <span className="badge sched" title="Created by a schedule" aria-label="Scheduled">
               <ClockIcon size={11} strokeWidth={1.8} />
             </span>
+          )}
+          {ticket.source && (
+            <a className="badge pr" href={safeHref(ticket.source.url)} target="_blank" rel="noreferrer" title={`Open ${ticket.source.label} in ${ticket.source.provider}`}
+              onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+              {ticket.source.provider} <ExternalIcon size={11} />
+            </a>
           )}
           {addOnChip}
           {addOnsChip}
