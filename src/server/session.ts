@@ -7,6 +7,7 @@ import { proposedBudget, rosterError, type RosterEntry } from "./huddle-roster";
 import { mockupName, stripMockups } from "./mockups";
 import { parseResult } from "./result";
 import { parseTeammateProposal, type TeammateProposal } from "./teammate-proposal";
+import { parseAutomationProposal, type AutomationProposal } from "./automation-proposal";
 import type { Store } from "./store";
 import { normalizeTags } from "./tags";
 import { AGENT_TOOL, notifiedStatus, parseTaskNotification, SubagentCache, subagentFiles, toolLabel, withTranscript, type AgentInfo } from "./subagents";
@@ -73,6 +74,8 @@ export interface SessionEntry {
   deletion?: { ids: string[]; reason: string };
   /** Claude proposed a teammate (propose_teammate; rendered with Save teammate / Edit first / Dismiss). */
   teammate?: TeammateProposal;
+  /** Claude proposed an automation (propose_automation; rendered with Connect buttons and Save automation). */
+  automation?: AutomationProposal;
   /** Mockups Claude sent as blocks (saved to outputs/mockups; the chat links to them). */
   mockups?: string[];
   /** Claude asked the board to move the ticket (a planning-only request arrived in Review). */
@@ -268,6 +271,8 @@ export interface ParsedSession {
   pendingNewTickets: TicketProposal[];
   /** Teammate cards (their entry uuids) since the user's last message; Ticket.teammateCards says which were answered. */
   pendingTeammates: string[];
+  /** Automation cards (entry uuids) since the user's last message; Ticket.automationCards says which were saved. */
+  pendingAutomations: string[];
 }
 
 /** What the board card and ticket header need; sent over SSE. */
@@ -280,6 +285,7 @@ export interface SessionSummary {
   pendingProposal: TicketProposal | null;
   pendingNewTickets: TicketProposal[];
   pendingTeammates: string[];
+  pendingAutomations?: string[];
 }
 
 interface Dirs {
@@ -368,9 +374,10 @@ const BRANCH_TOOL = /(?:^|__)propose_branch$/;
 const HUDDLE_TOOL = /(?:^|__)propose_huddle$/;
 const DELETE_TOOL = /(?:^|__)propose_delete$/;
 const TEAMMATE_TOOL = /(?:^|__)propose_teammate$/;
+const AUTOMATION_TOOL = /(?:^|__)propose_automation$/;
 
 /** The form or card a planning-chat tool call shows, or null for other tools (or input that can't be read). */
-function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "newTickets" | "branch" | "huddle" | "deletion" | "teammate"> | null {
+function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "newTickets" | "branch" | "huddle" | "deletion" | "teammate" | "automation"> | null {
   const name = String(block.name ?? "");
   if (QUESTIONS_TOOL.test(name)) {
     const questions = parseQuestions(block.input?.questions);
@@ -392,6 +399,10 @@ function cardEntry(block: any): Pick<SessionEntry, "questions" | "proposal" | "n
   if (TEAMMATE_TOOL.test(name)) {
     const teammate = parseTeammateProposal(block.input);
     return teammate && { teammate };
+  }
+  if (AUTOMATION_TOOL.test(name)) {
+    const automation = parseAutomationProposal(block.input);
+    return automation && { automation };
   }
   if (HUDDLE_TOOL.test(name)) {
     const template = typeof block.input?.template === "string" && block.input.template.trim() ? block.input.template.trim() : undefined;
@@ -542,13 +553,14 @@ export function parseSession(raw: string): ParsedSession {
   for (const e of entries) if (e.toolUseId && errored.has(e.toolUseId)) e.error = true;
   if (failed.size) entries.splice(0, entries.length, ...entries.filter((e) => !failed.has(e.uuid)));
   dropBlockedMoves(entries);
-  const last = entries.findLast((e) => e.kind === "text" && (e.text || e.questions || e.proposal || e.newTickets || e.branch || e.deletion || e.teammate));
+  const last = entries.findLast((e) => e.kind === "text" && (e.text || e.questions || e.proposal || e.newTickets || e.branch || e.deletion || e.teammate || e.automation));
   const lastText = !last ? "" : last.text
     || (last.questions ? `Asked ${last.questions.length} question${last.questions.length > 1 ? "s" : ""}`
       : last.newTickets ? `Proposed ${last.newTickets.length} new ticket${last.newTickets.length > 1 ? "s" : ""}`
       : last.branch ? "Offered to branch this ticket"
       : last.deletion ? `Asked to delete ${last.deletion.ids.length} ticket${last.deletion.ids.length > 1 ? "s" : ""}`
-      : last.teammate ? `Proposed teammate @${last.teammate.name}` : "Proposed an updated ticket");
+      : last.teammate ? `Proposed teammate @${last.teammate.name}`
+      : last.automation ? `Proposed automation "${last.automation.name}"` : "Proposed an updated ticket");
   const asked = last?.role === "assistant" ? entries.findLast((e, i) => i < entries.indexOf(last) && e.role === "user" && e.kind === "text") : undefined;
   return {
     title: customTitle ?? aiTitle,
@@ -591,7 +603,7 @@ function handBack(text: string): string {
   return text.slice(m[0].length).split("\n").map((l) => l.replace(/^ {2}/, "")).join("\n").trim();
 }
 
-function pendingSince(entries: SessionEntry[]): Pick<ParsedSession, "openQuestions" | "pendingProposal" | "pendingNewTickets" | "pendingTeammates"> {
+function pendingSince(entries: SessionEntry[]): Pick<ParsedSession, "openQuestions" | "pendingProposal" | "pendingNewTickets" | "pendingTeammates" | "pendingAutomations"> {
   let lastUser = -1;
   entries.forEach((e, i) => {
     // Messages from other tickets don't answer what Claude asked the user.
@@ -603,6 +615,7 @@ function pendingSince(entries: SessionEntry[]): Pick<ParsedSession, "openQuestio
     pendingProposal: after.findLast((e) => e.proposal)?.proposal ?? null,
     pendingNewTickets: after.findLast((e) => e.newTickets)?.newTickets ?? [],
     pendingTeammates: after.filter((e) => e.teammate).map((e) => e.uuid),
+    pendingAutomations: after.filter((e) => e.automation).map((e) => e.uuid),
   };
 }
 
@@ -705,6 +718,7 @@ export class SessionCache {
     return {
       title: p.title, lastMessage: p.lastMessage, artifacts: p.artifacts, updatedAt,
       openQuestions: p.openQuestions, pendingProposal: p.pendingProposal, pendingNewTickets: p.pendingNewTickets, pendingTeammates: p.pendingTeammates,
+      pendingAutomations: p.pendingAutomations,
     };
   }
 }

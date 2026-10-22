@@ -219,6 +219,10 @@ export interface Ticket {
   shareLinks?: ShareLink[];
   /** Teammate cards in this ticket's chat (propose_teammate) the user answered, by entry uuid (the tool_use id). */
   teammateCards?: Record<string, TeammateCardState>;
+  /** Automation cards in this ticket's chat (propose_automation) the user saved, by entry uuid: the automation made. */
+  automationCards?: Record<string, { loopId: string; at: string }>;
+  /** Made by Automations → Set up with Claude: its Planning chat sets up an automation instead of shaping a ticket. */
+  automationSetup?: boolean;
   createdAt: string;
   updatedAt: string;
   body: string;
@@ -312,19 +316,22 @@ export interface BranchPoint {
   sourceTitle: string;
 }
 
-/** Where a ticket came from: the event's page in the service (e.g. the Linear issue) and the loop that made it. */
+/** Where a ticket came from: the item in the other service (e.g. a Linear issue) and the automation that made it. */
 export interface TicketSource {
   /** Display name of the service. */
   provider: string;
   label: string;
+  /** "" when the item had no link. */
   url: string;
   loopId: string;
 }
 
+/** Columns an automation may put its tickets in. Planning and Ready start Claude by themselves (see Loop.autoStart). */
+export type LoopColumn = "backlog" | "planning" | "ready";
+
 /**
- * An automation of one board: when `trigger` of the connected account fires and the rules match, run the action.
- * Ids (provider, trigger, rule fields, action type) are looked up in the integrations registry, so a loop saved by a
- * newer version stays on disk and shows as unsupported instead of being dropped.
+ * An automation of one board: a check script the board runs on a timer, without Claude. Each item it finds for the
+ * first time becomes a ticket. The script file sits next to this one (loops/<id>.sh), pinned by its hash.
  */
 export interface Loop {
   /** Format of this file; a loop with a newer one is shown as unsupported and left alone. */
@@ -332,15 +339,22 @@ export interface Loop {
   id: string;
   name: string;
   enabled: boolean;
-  /** The account (integrations.json) it listens to. */
-  accountId: string;
-  provider: string;
-  trigger: string;
-  match: "all" | "any";
-  rules: { field: string; op: "is" | "is_not"; values: string[] }[];
-  action: { type: string; settings: Record<string, string> };
-  /** Text with `{{variables}}` of the trigger; the action gets it filled in. */
+  /** Display name of what it watches ("Linear"): the card's link and the outside-content label say it. */
+  service: string;
+  /** Board passes (integrations.json) its script may use. */
+  passes: string[];
+  /** sha256 of the script when the user saved it: a script changed since then doesn't run. */
+  scriptHash: string;
+  everyMinutes: number;
+  column: LoopColumn;
+  /** The user switched on that its tickets start Claude by themselves (Planning or Ready). */
+  autoStart: boolean;
+  /** Claude looks at each new item first (a side call with no tools) and decides whether it needs a ticket. */
+  askClaude: { on: boolean; prompt: string };
+  /** Ticket description with {{title}}, {{link}}, {{service}}; the copied text is added below as a fenced block. */
   instructions: string;
+  /** The tools `ckanban call` may use, learned from the first check after a save. Null: not learned yet. */
+  allowedTools: string[] | null;
   createdAt: string;
   updatedAt: string;
   lastCheckedAt: string | null;
@@ -349,14 +363,27 @@ export interface Loop {
   lastError: string | null;
 }
 
+/** An item of the last check, for the editor's "Last check found". */
+export interface LoopSeenItem {
+  id: string;
+  title: string;
+  link?: string;
+  /** new: became a ticket; skipped: Claude said no ticket; seen: found before; first: found by the first check. */
+  state: "new" | "skipped" | "seen" | "first";
+  ticketId?: string;
+  note?: string;
+}
+
 /** What a loop remembers between checks (loops/<id>.state.json). */
 export interface LoopState {
-  /** Where the next poll starts; opaque, from the trigger. */
-  cursor: string | null;
-  /** Event keys already turned into an action: the same one never fires twice, also after a restart. */
-  handled: string[];
+  /** Every item id it has found, kept for good: the same item never makes a second ticket, also after a restart. */
+  seen: string[];
+  /** False until the first check after it was switched on: that check only notes what is already there. */
+  primed: boolean;
   failures: number;
   backoffUntil: string | null;
+  lastFound: number;
+  lastItems: LoopSeenItem[];
 }
 
 /** Recurring ticket template: on each cron tick the board creates a ticket from it and runs it. */

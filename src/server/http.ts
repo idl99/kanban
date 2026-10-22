@@ -11,9 +11,9 @@ import { detectBaseBranch, enableVersionHistory, isGitRepo, repoKind, resolveBas
 import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, resolveConflicts, sendFailures, type PrDeps } from "./prpoller";
 import { resumeCommand } from "./prompts";
 import { cronError, describeCron, nextRuns, parseCron } from "./cron";
-import { AccountError, Accounts } from "./integrations/accounts";
-import { defaultRegistry } from "./integrations";
-import type { Registry } from "./integrations/registry";
+import { fromBoardProcess } from "./integrations/guard";
+import { PassError, Passes } from "./integrations/passes";
+import { ckanbanShim } from "./integrations/script";
 import { LoopError, LoopManager } from "./loops";
 import { RUN_HEADER, ScheduleError, Scheduler } from "./scheduler";
 import { JobError, JobRunner } from "./jobs";
@@ -69,10 +69,14 @@ export interface ServerDeps {
   shells?: ShellManager;
   mcp?: McpManager;
   scheduler?: Scheduler;
-  /** Automations and their accounts (integrations/, loops.ts); the daemon passes the ones it polls with. */
+  /** Automations and the board's own passes (integrations/, loops.ts); the daemon passes the ones it checks with. */
   loops?: LoopManager;
-  accounts?: Accounts;
-  registry?: Registry;
+  passes?: Passes;
+  /**
+   * Whether a local request comes from a process the daemon started (a run, a script, the board's terminal), which
+   * may not save automations or passes (integrations/guard.ts). Tests pass a fake.
+   */
+  isBoardProcess?: (peerPort: number) => Promise<boolean>;
   jobs?: JobRunner;
   agents?: AgentRegistry;
   huddles?: Huddles;
@@ -232,12 +236,9 @@ export function createServer(deps: ServerDeps) {
   const mcp = deps.mcp ?? new McpManager(bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const scheduler = deps.scheduler ?? new Scheduler(board, store, bus);
   const jobs = deps.jobs ?? new JobRunner(board, store, bus);
-  const registry = deps.registry ?? defaultRegistry(board);
-  const integrationDeps = { fetch: globalThis.fetch, now: () => new Date() };
-  // The address Linear (and other services) send the user back to: always localhost, on this board's port.
-  const callbackUrl = () => `http://localhost:${server.port ?? deps.port}/api/integrations/oauth/callback`;
-  const accounts = deps.accounts ?? new Accounts(store.root, registry, bus, integrationDeps, callbackUrl);
-  const loops = deps.loops ?? new LoopManager(store, bus, registry, accounts, integrationDeps);
+  // The address a service sends the user back to after signing in: always localhost, on this board's port.
+  const callbackUrl = () => `http://localhost:${server.port ?? deps.port}/api/passes/oauth/callback`;
+  const passes = deps.passes ?? new Passes(store.root, bus, { fetch: globalThis.fetch, now: () => new Date() }, callbackUrl);
   const agents = deps.agents ?? new AgentRegistry();
   const huddles = deps.huddles ?? new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const snippets = new Snippets(store, bus);
@@ -245,7 +246,22 @@ export function createServer(deps: ServerDeps) {
   const usage = new UsageCache(deps.usage ?? fetchUsage, (r) => recordWindow(windowsFile, r));
   const spend = new SpendIndex(store);
   const sideCall = deps.sideCall ?? makeSideCaller({ cwd: join(store.root, "side-calls") });
-  const simplifier = new Simplifier(store, sideCall);
+  const loops = deps.loops ?? new LoopManager(store, bus, board, passes, {
+    now: () => new Date(), sideCall, shimDir: () => ckanbanShim(store.root), port: () => server.port ?? deps.port,
+  });
+  const isBoardProcess = deps.isBoardProcess ?? ((peerPort: number) => fromBoardProcess(peerPort));
+  /**
+   * Saving or changing an automation or a pass is for the user only: not a board run (RUN_HEADER), and not any
+   * process the board started, header or not (a run's shell, a check script, the board's terminal).
+   */
+  const userOnly = async (req: Request, what: string) => {
+    const refusal = `${what} is for the user only: a board run, a check script or the board's terminal can't do it. Ask the user to do it in the board.`;
+    if (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER)) throw new HttpError(403, refusal);
+    const v = via.get(req);
+    if (v?.listener !== "local") return;
+    const peer = v.srv.requestIP(req)?.port ?? 0;
+    if (await isBoardProcess(peer)) throw new HttpError(403, refusal);
+  };  const simplifier = new Simplifier(store, sideCall);
   const helper = new Helper(store, sideCall);
   const claudeLogs = deps.claudeLogs ?? new ClaudeLogIndex();
   const publishArtifact = deps.publishArtifact ?? ((job: ArtifactJob) => runArtifactJob(job));
@@ -734,19 +750,20 @@ export function createServer(deps: ServerDeps) {
       }
     }
 
-    // /integrations — accounts of other services that automations listen to (shared by all boards)
-    if (parts[0] === "integrations") {
-      if (m !== "GET" && (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER))) {
-        throw new HttpError(403, "changing integrations is disabled inside a board run; ask the user to do it");
-      }
+    // /passes — the board's own passes: how automations reach a service without Claude (shared by all boards).
+    // Connections shows them next to Claude's servers.
+    if (parts[0] === "passes") {
       if (parts.length === 1 && m === "GET") {
-        return json({ catalog: registry.catalog(callbackUrl()), accounts: accounts.list().map((a) => accounts.view(a)) });
+        const all = passes.list();
+        const used = new Map<string, number>();
+        for (const p of store.listProfiles()) for (const l of store.listLoops(p.slug)) for (const id of l.passes ?? []) used.set(id, (used.get(id) ?? 0) + 1);
+        return json({ passes: all.map((p) => ({ ...passes.view(p), usedBy: used.get(p.id) ?? 0 })), automations: loops.count() });
       }
       if (parts.length === 1 && m === "POST") {
-        const b = await body(req);
-        return json(accounts.view(await accounts.add(String(b?.provider ?? ""), b?.credentials)), 201);
+        await userOnly(req, "Connecting a service for automations");
+        return json(passes.view(await passes.add((await body(req)) ?? {})), 201);
       }
-      // The service sends the user's browser here after they approve ckanban. Only on this Mac, and only with a
+      // The service sends the user's browser here after they approve the board. Only on this Mac, and only with a
       // state that authorize made (so a page that makes the browser open this URL can't connect a stranger's account).
       if (parts[1] === "oauth" && parts[2] === "callback" && m === "GET") {
         if (listenerOf(req) !== "local") throw new HttpError(403, "sign in from the computer ckanban runs on");
@@ -757,24 +774,31 @@ export function createServer(deps: ServerDeps) {
         const denied = url.searchParams.get("error");
         if (denied) return page("Not connected", esc(url.searchParams.get("error_description") ?? denied), 400);
         try {
-          const a = await accounts.complete(url.searchParams.get("state") ?? "", url.searchParams.get("code") ?? "");
-          return page("Connected", `${esc(accounts.view(a).providerName ?? "The service")} is connected. You can close this tab and go back to the board.`);
+          const p = await passes.complete(url.searchParams.get("state") ?? "", url.searchParams.get("code") ?? "");
+          return page("Connected", `${esc(p.name)} is connected for automations. You can close this tab and go back to the board.`);
         } catch (e) {
-          if (e instanceof AccountError) return page("Not connected", esc(e.message), e.status);
+          if (e instanceof PassError) return page("Not connected", esc(e.message), e.status);
           throw e;
         }
       }
-      const aid = parts[1];
-      if (parts.length === 2 && m === "PATCH") return json(accounts.view(accounts.update(aid, (await body(req))?.credentials)));
+      const pid = parts[1];
+      if (parts.length === 3 && parts[2] === "tools" && m === "GET") return json(await passes.tools(pid).catch((e) => {
+        throw e instanceof PassError ? e : new HttpError(502, passes.mask((e as Error).message));
+      }));
+      await userOnly(req, "Changing a service's connection for automations");
+      if (parts.length === 2 && m === "PATCH") return json(passes.view(passes.replaceKey(pid, (await body(req))?.secret)));
       if (parts.length === 2 && m === "DELETE") {
-        accounts.remove(aid);
+        passes.remove(pid);
         return new Response(null, { status: 204 });
       }
-      if (parts.length === 3 && parts[2] === "authorize" && m === "POST") return json({ url: await accounts.authorizeUrl(aid) });
-      if (parts.length === 3 && parts[2] === "options" && m === "GET") {
-        return json(await accounts.options(aid, url.searchParams.get("trigger") ?? "", url.searchParams.get("field") ?? ""));
-      }
+      if (parts.length === 3 && parts[2] === "authorize" && m === "POST") return json({ url: await passes.authorizeUrl(pid) });
       throw new HttpError(404, "not found");
+    }
+
+    // POST /automation-call — `ckanban call` from a check script: the token its check got says what it may call.
+    if (parts[0] === "automation-call" && parts.length === 1 && m === "POST") {
+      const b = (await body(req)) ?? {};
+      return json({ result: await loops.call(String(b.token ?? ""), String(b.service ?? ""), String(b.tool ?? ""), b.args) });
     }
 
     if (parts[0] !== "profiles") throw new HttpError(404, "not found");
@@ -949,15 +973,38 @@ export function createServer(deps: ServerDeps) {
       throw new HttpError(404, "not found");
     }
 
-    // /profiles/:p/loops — automations: an event in another service creates a ticket
+    // POST /profiles/:p/automation-setup — Automations → Set up with Claude: a Planning ticket whose chat sets one up.
+    if (parts[2] === "automation-setup" && parts.length === 3 && m === "POST") {
+      await userOnly(req, "Setting up an automation");
+      const t = await board.createTicket(slug, {
+        title: "Set up an automation", status: "planning",
+        body: "Set up an automation for this board with Claude: say what to watch (for example \"new Linear issues assigned to me\") and how often to check.",
+      });
+      store.updateTicket(slug, t.id, { automationSetup: true });
+      emitTicket(slug, t.id);
+      return json(view(profileOr404(slug), store.getTicket(slug, t.id)!), 201);
+    }
+
+    // /profiles/:p/loops — automations: a check script on a timer turns new items into tickets. Anyone lists and
+    // test-runs a script (the setup chat does); only the user saves, changes or runs one for real.
     if (parts[2] === "loops") {
-      if (m !== "GET" && (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER))) {
-        throw new HttpError(403, "changing automations is disabled inside a board run; ask the user to do it");
-      }
       if (parts.length === 3 && m === "GET") return json(loops.list(slug));
-      if (parts.length === 3 && m === "POST") return json(await loops.create(slug, (await body(req)) ?? {}), 201);
+      if (parts.length === 4 && parts[3] === "test" && m === "POST") return json(await loops.test(slug, (await body(req)) ?? {}));
+      await userOnly(req, "Saving or changing an automation");
+      if (parts.length === 3 && m === "POST") {
+        const l = await loops.create(slug, (await body(req)) ?? {});
+        // Its first check notes what is there already (no tickets) and fills "Last check found".
+        void loops.checkNow(slug, l.id).catch(() => {});
+        return json(l, 201);
+      }
       const lid = parts[3];
-      if (parts.length === 4 && m === "PATCH") return json(await loops.update(slug, lid, (await body(req)) ?? {}));
+      if (parts.length === 4 && m === "PATCH") {
+        const b = (await body(req)) ?? {};
+        const l = await loops.update(slug, lid, b);
+        // A new script or switching it on starts with a check that notes what is there (see create).
+        if (l.enabled && l.state === "ok" && (b.script !== undefined || b.enabled === true)) void loops.checkNow(slug, l.id).catch(() => {});
+        return json(l);
+      }
       if (parts.length === 4 && m === "DELETE") {
         await loops.remove(slug, lid);
         return new Response(null, { status: 204 });
@@ -1471,6 +1518,17 @@ export function createServer(deps: ServerDeps) {
     }
     // A teammate card in the chat (propose_teammate) was answered: PUT .../teammate-cards/<entry uuid> { state: "saved",
     // name, scope } after the user saved it (the save itself goes through huddle-presets), or { state: "dismissed" }.
+    // An automation card in the chat (propose_automation) was saved: PUT .../automation-cards/<entry uuid> { loopId }.
+    if (action === "automation-cards" && parts.length === 6 && m === "PUT") {
+      await userOnly(req, "Answering an automation card");
+      const b = await body(req);
+      const loopId = String(b?.loopId ?? "");
+      if (!store.getLoop(slug, loopId)) throw new HttpError(400, "that automation doesn't exist");
+      const t = store.getTicket(slug, id)!;
+      store.updateTicket(slug, id, { automationCards: { ...t.automationCards, [parts[5]]: { loopId, at: nowIso() } } });
+      emitTicket(slug, id);
+      return json(view(profile, store.getTicket(slug, id)!));
+    }
     if (action === "teammate-cards" && parts.length === 6 && m === "PUT") {
       if (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER)) throw new HttpError(403, "only the user answers teammate cards");
       const b = await body(req);
@@ -1944,7 +2002,7 @@ export function createServer(deps: ServerDeps) {
       if (e instanceof AgentError) return json({ error: e.message }, e.status);
       if (e instanceof ScheduleError) return json({ error: e.message }, e.status);
       if (e instanceof LoopError) return json({ error: e.message }, e.status);
-      if (e instanceof AccountError) return json({ error: e.message }, e.status);
+      if (e instanceof PassError) return json({ error: e.message, ...(e.code ? { code: e.code } : {}) }, e.status);
       if (e instanceof JobError) return json({ error: e.message }, e.status);
       if (e instanceof SnippetError) return json({ error: e.message }, e.status);
       if (e instanceof HuddleError) return json({ error: e.message }, e.status);

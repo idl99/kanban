@@ -12,9 +12,10 @@ import { startPoller } from "./prpoller";
 import { Notifier } from "./notify";
 import { PushService } from "./push";
 import { RemoteAccess, remoteListenPort, remoteUrl } from "./remote";
-import { Accounts } from "./integrations/accounts";
-import { defaultRegistry } from "./integrations";
+import { Passes } from "./integrations/passes";
+import { ckanbanShim } from "./integrations/script";
 import { LoopManager } from "./loops";
+import { makeSideCaller } from "./side-call";
 import { Scheduler } from "./scheduler";
 import { JobRunner } from "./jobs";
 import { FollowUpWatcher } from "./followup";
@@ -63,10 +64,11 @@ export async function startDaemon(): Promise<void> {
   const mcp = new McpManager(bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude", seenFile: join(store.root, "mcp-seen.json") });
   const scheduler = new Scheduler(board, store, bus);
   const jobs = new JobRunner(board, store, bus);
-  const registry = defaultRegistry(board);
-  const integrationDeps = { fetch: globalThis.fetch, now: () => new Date() };
-  const accounts = new Accounts(store.root, registry, bus, integrationDeps, () => `http://localhost:${port}/api/integrations/oauth/callback`);
-  const loops = new LoopManager(store, bus, registry, accounts, integrationDeps);
+  const passes = new Passes(store.root, bus, { fetch: globalThis.fetch, now: () => new Date() }, () => `http://localhost:${port}/api/passes/oauth/callback`);
+  const shimDir = ckanbanShim(store.root);
+  const loops = new LoopManager(store, bus, board, passes, {
+    now: () => new Date(), sideCall: makeSideCaller({ cwd: join(store.root, "side-calls") }), shimDir: () => shimDir, port: () => port,
+  });
   const huddles = new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
@@ -75,7 +77,7 @@ export async function startDaemon(): Promise<void> {
     onChange: (held) => bus.emit({ type: "awake.updated", held }),
   });
   const remotePort = remoteListenPort(port, config.remotePort);
-  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, jobs, huddles, loops, accounts, registry, assets: WEB_ASSETS, restart, awake: () => awake.held(), notifier, push });
+  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, jobs, huddles, loops, passes, assets: WEB_ASSETS, restart, awake: () => awake.held(), notifier, push });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   board.recover();
   huddles.recover();

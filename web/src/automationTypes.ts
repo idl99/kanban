@@ -1,42 +1,30 @@
-// What the server's automations API sends. Kept apart from api.ts (no browser types) so tests can import the helpers.
+// Shapes of the automations API (src/server/loops.ts, src/server/integrations/passes.ts), kept apart from api.ts.
 
-/** What the server's integrations registry offers: drawn by the Integrations and Automations dialogs, no provider-specific code. */
-export interface IntegrationCatalog {
-  callbackUrl: string;
-  providers: {
-    id: string;
-    name: string;
-    steps: string[];
-    fields: { id: string; label: string; secret?: boolean }[];
-    oauth: boolean;
-    triggers: {
-      id: string;
-      label: string;
-      fields: { id: string; label: string; operators: string[]; pick: boolean }[];
-      variables: { name: string; label: string }[];
-      defaultInstructions: string;
-    }[];
-  }[];
-  actions: { id: string; label: string; settings: { id: string; label: string; kind: "select"; options: { value: string; label: string }[]; default: string }[] }[];
-}
+export type LoopColumn = "backlog" | "planning" | "ready";
 
-/** A signed-in account of another service; secret fields only show as "set". */
-export interface IntegrationAccount {
+/** A board pass: how automations reach a service without Claude (no secrets). */
+export interface Pass {
   id: string;
-  provider: string;
-  providerName: string | null;
+  kind: "mcp" | "key" | "local";
+  name: string;
+  /** The Connections (Claude) server it was made from: that row shows both. */
+  claudeName: string | null;
+  url: string | null;
+  envName: string | null;
   status: "pending" | "connected" | "needs_reconnect";
   error: string | null;
-  identity: { userId: string; userName: string; workspace: string } | null;
   createdAt: string;
-  credentials: Record<string, string>;
-  secretsSet: string[];
+  /** Automations (all boards) that use it. */
+  usedBy: number;
 }
 
-export interface LoopRule {
-  field: string;
-  op: string;
-  values: string[];
+export interface LoopSeenItem {
+  id: string;
+  title: string;
+  link?: string;
+  state: "new" | "skipped" | "seen" | "first";
+  ticketId?: string;
+  note?: string;
 }
 
 export interface Loop {
@@ -44,21 +32,59 @@ export interface Loop {
   id: string;
   name: string;
   enabled: boolean;
-  accountId: string;
-  provider: string;
-  trigger: string;
-  match: "all" | "any";
-  rules: LoopRule[];
-  action: { type: string; settings: Record<string, string> };
+  service: string;
+  passes: string[];
+  scriptHash: string;
+  everyMinutes: number;
+  column: LoopColumn;
+  autoStart: boolean;
+  askClaude: { on: boolean; prompt: string };
   instructions: string;
+  allowedTools: string[] | null;
   createdAt: string;
   updatedAt: string;
   lastCheckedAt: string | null;
   lastFiredAt: string | null;
   lastError: string | null;
-  state: "ok" | "unsupported" | "no_connection" | "needs_reconnect";
+  state: "ok" | "unsupported" | "needs_connection" | "script_changed";
   problems: string[];
-  account: string | null;
+  script: string | null;
+  passViews: { id: string; name: string; status: string }[];
+  seenCount: number;
+  lastFound: number;
+  lastItems: LoopSeenItem[];
 }
 
-export type LoopInput = Pick<Loop, "name" | "enabled" | "accountId" | "trigger" | "match" | "rules" | "action" | "instructions">;
+export interface LoopInput {
+  name: string;
+  enabled: boolean;
+  service: string;
+  passes: string[];
+  script: string;
+  everyMinutes: number;
+  column: LoopColumn;
+  autoStart: boolean;
+  askClaude: { on: boolean; prompt: string };
+  instructions: string;
+}
+
+export interface LoopTest {
+  items: { id: string; title: string; text?: string; link?: string }[];
+  found: number;
+  error: string | null;
+  stderr: string;
+  toolsUsed: string[];
+  durationMs: number;
+}
+
+/** An automation the setup chat proposed (src/server/automation-proposal.ts). */
+export interface AutomationProposal {
+  name: string;
+  service: string;
+  passes: { name: string; from?: string; url?: string; envName?: string; keyHelp?: string }[];
+  script: string;
+  everyMinutes: number;
+  instructions?: string;
+  askClaude?: { on: boolean; prompt: string };
+  summary: string;
+}

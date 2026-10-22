@@ -362,6 +362,15 @@ export class Store {
     return join(this.profileDir(slug), "loops");
   }
 
+  /** An automation's check script, next to its settings (the loop keeps the hash it was saved with). */
+  loopScriptFile(slug: string, id: string): string {
+    return join(this.loopsDir(slug), `${id}.sh`);
+  }
+
+  saveLoopScript(slug: string, id: string, script: string): void {
+    atomicWrite(this.loopScriptFile(slug, id), script);
+  }
+
   listLoops(slug: string): Loop[] {
     const dir = this.loopsDir(slug);
     if (!existsSync(dir)) return [];
@@ -390,11 +399,12 @@ export class Store {
   deleteLoop(slug: string, id: string): void {
     rmSync(join(this.loopsDir(slug), `${id}.json`), { force: true });
     rmSync(join(this.loopsDir(slug), `${id}.state.json`), { force: true });
+    rmSync(this.loopScriptFile(slug, id), { force: true });
   }
 
   getLoopState(slug: string, id: string): LoopState {
     const file = join(this.loopsDir(slug), `${id}.state.json`);
-    const empty: LoopState = { cursor: null, handled: [], failures: 0, backoffUntil: null };
+    const empty: LoopState = { seen: [], primed: false, failures: 0, backoffUntil: null, lastFound: 0, lastItems: [] };
     if (!existsSync(file)) return empty;
     try {
       return { ...empty, ...JSON.parse(readFileSync(file, "utf8")) };

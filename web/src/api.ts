@@ -297,6 +297,10 @@ export interface Ticket {
   links?: TicketLink[];
   /** Teammate cards in the chat the user answered, by entry uuid (src/server/types.ts). */
   teammateCards?: Record<string, TeammateCardState>;
+  /** Automation cards in the chat the user saved (by entry uuid). */
+  automationCards?: Record<string, { loopId: string; at: string }>;
+  /** Made by Automations → Set up with Claude. */
+  automationSetup?: boolean;
   /** Share menu publishes in progress (or the last one's error), per output file. */
   shareJobs?: ShareJob[];
   /** Absolute path of the ticket's outputs folder. */
@@ -416,6 +420,8 @@ export interface SessionEntry {
   deletion?: { ids: string[]; reason: string };
   /** Claude proposed a teammate (propose_teammate): the card with Save teammate / Edit first / Dismiss. */
   teammate?: TeammateProposal;
+  /** Claude proposed an automation (propose_automation): the card with Connect and Save automation. */
+  automation?: AutomationProposal;
   /** Mockups Claude sent in this reply, saved as outputs/mockups/<name>. */
   mockups?: string[];
   moved?: "planning";
@@ -835,8 +841,8 @@ const query = (q: Record<string, number | undefined>) => {
 };
 const hud = (slug: string, id?: string) => `/api/profiles/${encodeURIComponent(slug)}/huddles${id ? `/${encodeURIComponent(id)}` : ""}`;
 
-export type { IntegrationAccount, IntegrationCatalog, Loop, LoopInput, LoopRule } from "./automationTypes";
-import type { IntegrationAccount, IntegrationCatalog, Loop, LoopInput } from "./automationTypes";
+export type { AutomationProposal, Loop, LoopColumn, LoopInput, LoopSeenItem, LoopTest, Pass } from "./automationTypes";
+import type { AutomationProposal, Loop, LoopInput, LoopTest, Pass } from "./automationTypes";
 
 export interface Schedule {
   id: string;
@@ -1062,7 +1068,11 @@ async function req<T>(method: string, url: string, body?: unknown): Promise<T> {
     if (await askConfirm({ kind: confirm, message: (data as any).error ?? "" })) return req<T>(method, url, { ...body, confirmParallel: true });
     throw new NotStarted();
   }
-  if (!r.ok) throw new Error((data as any).error ?? `${r.status} ${r.statusText}`);
+  if (!r.ok) {
+    const e = new Error((data as any).error ?? `${r.status} ${r.statusText}`) as Error & { code?: string };
+    if (typeof (data as any).code === "string") e.code = (data as any).code;
+    throw e;
+  }
   return data as T;
 }
 
@@ -1276,13 +1286,16 @@ export const api = {
   createSnippet: (input: SnippetInput) => req<Snippet>("POST", "/api/snippets", input),
   updateSnippet: (id: string, patch: Partial<SnippetInput>) => req<Snippet>("PATCH", `/api/snippets/${encodeURIComponent(id)}`, patch),
   deleteSnippet: (id: string) => req<void>("DELETE", `/api/snippets/${encodeURIComponent(id)}`),
-  integrations: () => req<{ catalog: IntegrationCatalog; accounts: IntegrationAccount[] }>("GET", "/api/integrations"),
-  addIntegration: (provider: string, credentials: Record<string, string>) => req<IntegrationAccount>("POST", "/api/integrations", { provider, credentials }),
-  updateIntegration: (id: string, credentials: Record<string, string>) => req<IntegrationAccount>("PATCH", `/api/integrations/${encodeURIComponent(id)}`, { credentials }),
-  deleteIntegration: (id: string) => req<void>("DELETE", `/api/integrations/${encodeURIComponent(id)}`),
-  authorizeIntegration: (id: string) => req<{ url: string }>("POST", `/api/integrations/${encodeURIComponent(id)}/authorize`),
-  integrationOptions: (id: string, trigger: string, field: string) =>
-    req<{ value: string; label: string }[]>("GET", `/api/integrations/${encodeURIComponent(id)}/options?trigger=${encodeURIComponent(trigger)}&field=${encodeURIComponent(field)}`),
+  passes: () => req<{ passes: Pass[]; automations: number }>("GET", "/api/passes"),
+  addPass: (input: { kind: Pass["kind"]; name?: string; claudeName?: string | null; url?: string; envName?: string; secret?: string }) =>
+    req<Pass>("POST", "/api/passes", input),
+  replacePassKey: (id: string, secret: string) => req<Pass>("PATCH", `/api/passes/${encodeURIComponent(id)}`, { secret }),
+  deletePass: (id: string) => req<void>("DELETE", `/api/passes/${encodeURIComponent(id)}`),
+  authorizePass: (id: string) => req<{ url: string }>("POST", `/api/passes/${encodeURIComponent(id)}/authorize`),
+  testLoop: (slug: string, script: string, passes: string[]) => req<LoopTest>("POST", `${lp(slug)}/test`, { script, passes }),
+  automationSetup: (slug: string) => req<Ticket>("POST", `/api/profiles/${encodeURIComponent(slug)}/automation-setup`),
+  answerAutomationCard: (slug: string, ticketId: string, uuid: string, loopId: string) =>
+    req<Ticket>("PUT", `/api/profiles/${encodeURIComponent(slug)}/tickets/${encodeURIComponent(ticketId)}/automation-cards/${encodeURIComponent(uuid)}`, { loopId }),
   loops: (slug: string) => req<Loop[]>("GET", lp(slug)),
   createLoop: (slug: string, input: LoopInput) => req<Loop>("POST", lp(slug), input),
   updateLoop: (slug: string, id: string, patch: Partial<LoopInput>) => req<Loop>("PATCH", lp(slug, id), patch),

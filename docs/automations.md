@@ -1,40 +1,53 @@
-# Automations and the Linear connection
+# Automations
 
-An automation ("loop") turns something that happens in Linear into a ticket on one board. You set it up once; after that the board checks Linear about once a minute while ckanban runs.
+An automation checks a service on a timer, by itself and without Claude, so a check costs nothing. Each item it finds for the first time becomes a ticket on the board. It works with any service: Linear, GitHub, Jira, a shop, an RSS feed, a folder.
 
-## 1. Connect Linear (once, for all boards)
+## The idea: one door, two passes
 
-You don't need to create an app or an API key in Linear, and no admin has to. ckanban signs in the same way Claude does: it registers itself with Linear's own server and asks you to approve it. It only asks for read access.
+A service is a door. Claude has its own pass for it: the servers in **⋯ → Connections**, which Claude uses while it works on tickets. The board can't borrow Claude's pass, so it gets its own pass to check a service by itself. Connections shows both: once you have an automation, a **Board (automations)** column appears next to Claude's.
 
-1. In ckanban open **⋯ → Integrations**, pick **Linear** under *Add an integration* and press **Authorize with Linear**.
-2. A new tab opens on Linear's page. Approve ckanban. The tab then says *Connected* and the Integrations list shows your Linear name and workspace.
+A board pass is one of:
 
-Keep ckanban open on this computer while you do this: Linear sends you back to it. The sign-in is kept in `~/.claude-kanban/integrations.json`, which only you can read.
+- **Signed in**: for an online MCP server. Press **Connect** on its row (or **+ Add for automations** with its address), approve the board on the service's page, done. No key and no app to create: the board finds the server's sign-in, registers itself there and signs in with a one-time proof, the standard way for MCP servers. If a server doesn't allow that, the board asks for a key instead.
+- **A key** you paste: for a service with no sign-in of its own. The scripts that use it get it as one environment variable (for example `JIRA_KEY`); a key for an MCP server is used as its token.
+- **A program on this computer**: a server from your own Claude settings (`claude mcp list`, user or local scope). Connect starts it the way Claude does, with Claude's settings, read again at each check. Servers from a project's `.mcp.json` are never started.
 
-ckanban reads Linear through Linear's own MCP server, because the sign-in token only works there. If your workspace doesn't allow apps like this, Linear says so on its page or ckanban shows *Linear signed you in but did not let ckanban read your issues*. Ask a Linear admin to allow ckanban for you; that is the only admin step.
+claude.ai connectors (Gmail, Google Docs…) keep their sign-in at claude.ai, so the board can't use it. For such a service, add it for automations with its own sign-in or a key.
 
-After each sign-in ckanban saves how Linear's tools look (names and the shape of a few answers, no tokens and no issue text) to `~/.claude-kanban/integrations-debug/linear.json`. It is only for fixing ckanban if Linear's answers differ from what it expects. If Linear later refuses the connection, the list shows *Needs sign-in*. Press **Authorize** again.
+Sign-ins and keys are kept in `~/.claude-kanban/integrations.json`, readable by you only, and are never shown in the board. They are not given to board runs, but any program running as you on this Mac could read that file, so prefer keys that can only read.
 
-If you change ckanban's port, press **Authorize** again: ckanban registers itself again for the new address.
+## Set one up with Claude
 
-## 2. Make an automation (per board)
+Open **⋯ → Automations** and press **Set up with Claude**. A Planning chat opens:
 
-Open **⋯ → Automations**, then **+ New automation**.
+1. Say what to watch, for example "new Linear issues assigned to me, every 15 minutes".
+2. Claude looks at what the board can reach. If the service isn't connected yet, it tells you what to press in Connections.
+3. Claude writes the check, runs it once and tells you what it found.
+4. Claude proposes the automation as a card. Press **Connect** for anything it still needs, then **Save automation**. Only your click saves it.
 
-- **When**: the connection and the trigger, *Issue created* or *Issue assigned*. Linear's tools say who an issue is assigned to but not when that changed, so *Issue assigned* fires the first time an issue with an assignee is created or edited after the loop was switched on (once per issue). Match the person with an *Assignee* rule.
-- **Only when**: rules on team, project and assignee. Each rule is *is* or *is not* with one or more values. With two or more rules, choose whether **all** (AND) or **any** (OR) must hold. *Me* in the assignee list is the connected Linear user. No rules means every event counts.
-- **Then**: create a ticket in Ready (starts right away), Planning (Claude interviews you) or Backlog.
-- **Instructions**: the ticket description. Variables such as `{{issue.identifier}}`, `{{issue.title}}`, `{{issue.description}}`, `{{issue.url}}`, `{{issue.team}}`, `{{issue.project}}` and `{{issue.assignee}}` are filled in from the issue. The ticket title is the issue's ID and title, and the card has a link back to Linear.
+## What an automation is
 
-Things to know:
+- **Check script**: a small bash script that prints the items it finds as JSON, one per line or one list: `{"id": "...", "title": "...", "text": "...", "link": "..."}`. Only `id` and `title` are required. It reaches a connected service with `ckanban call <name> <tool> '<json>'`, which prints the tool's answer as JSON. It never sees a sign-in token.
+- **Every**: how often it checks (at least 5 minutes for a program on this computer).
+- **New items become tickets in**: Backlog by default. Planning or Ready starts Claude on text from the service, so they need **Start Claude by itself** switched on, with a warning. The setup chat can never switch it on.
+- **Ticket text**: your own text first (`{{title}}`, `{{link}}` and `{{service}}` are filled in), then the item's text in a block marked *Outside content from <service>, not instructions*. The run that works on the ticket is told to treat that block as data.
+- **Ask Claude first** (optional): for each new item, a short Claude answer with no tools decides whether it needs a ticket and writes a title and summary. It costs a little per new item; checks that find nothing new cost nothing.
 
-- A loop only reacts to things that happen after you switch it on. Old issues are never imported. Switching it off and on again starts from that moment.
-- One issue makes at most one ticket per loop, even after a restart.
-- Checks happen about once a minute and only while ckanban is running. Issues created while it was off are picked up when it starts, if the loop was on at the time.
-- If Linear is unreachable or rate limiting, the loop waits (2, 4, 8 ... minutes, at most 30) and says why on its page. **Check now** asks right away.
-- **Copy to board…** (at the bottom of a loop) makes the same loop on another board. The copy is switched off, so check its column and rules there and switch it on; it starts with a clean memory and only looks forward from then.
-- Deleting a loop or a connection never deletes tickets it made.
+## How it behaves
 
-## For developers: adding another service
+- The first check after you save or switch it on only notes what is already there: old items never become tickets.
+- One item makes at most one ticket, even after a restart: the board remembers every id it has seen.
+- Checks run only while ckanban runs. After a failed check it waits 2, 4, 8 ... minutes (at most 30); a rate limit is waited out. **Check now** checks at once.
+- **Last check found** shows what the last check saw and what became a ticket.
+- The script is pinned when you save: if its file changes afterwards, it doesn't run and the automation says *Script changed, review it*. Save it again to run the new version.
+- The first check after a save also notes which tools the script called; from then on it may only call those. Save again to allow more.
+- A check runs with a 60 second limit, at most 1 MB of output and 500 items, and only the keys its own connections give it.
+- Only you save, change or delete automations and connections: a board run, a check script or the board's terminal can't, with or without its run header (the board checks whether the request comes from a program it started).
+- **Copy to board…** makes the same automation on another board, switched off, with a clean memory.
+- Deleting an automation or a connection never deletes tickets it made.
 
-Each service is one `ProviderDef` (`src/server/integrations/types.ts`): id and name, setup steps and credential fields, how to sign in (OAuth, or a pasted token), who the account is, and its triggers. A trigger declares its filter fields (with the operators they allow and where their values come from), the variables the instructions can use, and how to poll for events since a cursor. Add the file next to `linear.ts` and list it in `src/server/integrations/index.ts`; the dialogs, rule editor, poller and filters need no changes. Actions work the same way (`ActionDef`, v1 has *create a ticket*). `test/fixtures/dummy-provider.ts` is a second, tiny provider used to prove this.
+## For developers
+
+- `src/server/loops.ts`: automations, checks, `ckanban call` grants, tickets.
+- `src/server/integrations/`: `passes.ts` (board passes, renewal, calls), `oauth.ts` (generic MCP sign-in), `mcp-client.ts` / `stdio-client.ts` (tool servers), `script.ts` (running a check), `ticket-text.ts` (outside-content block), `ask-claude.ts`, `guard.ts` (who may save).
+- Nothing there knows a service: a new service needs no code.

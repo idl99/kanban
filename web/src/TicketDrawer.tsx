@@ -552,7 +552,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           {ticket.status === "review" && !finished && (
             <button className={`btn ${ticket.prUrl ? "" : "primary"}`} onClick={() => setStatus("done")} title={`Mark done (${MOD}⇧Enter)`}>Mark done{!working && <KeyHint keys={proposalPending ? "⌘⇧↵ after Apply" : "⌘⇧↵"} />}</button>
           )}
-          {ticket.source && (
+          {ticket.source?.url && (
             <a className="btn icon-label" href={safeHref(ticket.source.url)} target="_blank" rel="noreferrer" title={ticket.source.label}>
               Open in {ticket.source.provider} <ExternalIcon size={12} />
             </a>

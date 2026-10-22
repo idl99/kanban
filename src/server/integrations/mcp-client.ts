@@ -1,12 +1,12 @@
-import { AuthError, RateLimitError, type Deps } from "./types";
+import { AuthError, RateLimitError, type Deps, type ToolClient } from "./types";
 
 const PROTOCOL = "2025-03-26";
 
 /**
- * A small client for a remote MCP server over streamable HTTP: initialize, then call tools. Enough for a provider
- * whose sign-in token only works through its MCP server. One client per piece of work; nothing is kept between them.
+ * A small client for a remote MCP server over streamable HTTP: initialize, then call tools. One client per piece of
+ * work; nothing is kept between them. A token that comes from the server's own sign-in only works here.
  */
-export class McpClient {
+export class McpClient implements ToolClient {
   private session: string | null = null;
   private nextId = 1;
   private ready: Promise<void> | null = null;
@@ -77,37 +77,24 @@ export class McpClient {
   /** Calls a tool and returns what it answered: its JSON text parsed, or the plain text. */
   async call(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
     await this.init();
-    const result = await this.request("tools/call", { name, arguments: args });
-    const text = (result?.content ?? []).filter((c: any) => c?.type === "text").map((c: any) => String(c.text ?? "")).join("\n");
-    if (result?.isError) throw new Error(text || `${name} failed`);
-    try {
-      return JSON.parse(text);
-    } catch {
-      return text;
-    }
+    return toolAnswer(name, await this.request("tools/call", { name, arguments: args }));
+  }
+
+  /** Ends the session on the server (best effort). */
+  async close(): Promise<void> {
+    if (!this.session) return;
+    await this.deps.fetch(this.url, { method: "DELETE", headers: { authorization: `Bearer ${this.token}`, "mcp-session-id": this.session } }).catch(() => {});
   }
 }
 
-/** The first list in a tool's answer: the answer itself, or the first of `keys` (then any property) that is a list. */
-export function listOf(data: unknown, ...keys: string[]): any[] {
-  if (Array.isArray(data)) return data;
-  if (data && typeof data === "object") {
-    const o = data as Record<string, unknown>;
-    for (const k of keys) if (Array.isArray(o[k])) return o[k] as any[];
-    for (const v of Object.values(o)) if (Array.isArray(v)) return v;
+/** A tools/call result as its JSON text parsed, or the plain text. Throws the tool's own error text. */
+export function toolAnswer(name: string, result: any): unknown {
+  const text = (result?.content ?? []).filter((c: any) => c?.type === "text").map((c: any) => String(c.text ?? "")).join("\n");
+  if (result?.isError) throw new Error(text || `${name} failed`);
+  if (result?.structuredContent !== undefined && !text) return result.structuredContent;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
   }
-  return [];
-}
-
-/**
- * What a value looks like, without the private text: dates stay, other text is replaced by its length. For the
- * diagnostics file that lets a developer see a tool's real answer shape.
- */
-export function shapeOf(v: unknown, depth = 0): unknown {
-  if (typeof v === "string") return /^\d{4}-\d\d-\d\d(T[\d:.]+Z?)?$/.test(v) || v.length <= 3 ? v : `<text:${v.length}>`;
-  if (Array.isArray(v)) return depth > 4 ? "<list>" : v.slice(0, 2).map((x) => shapeOf(x, depth + 1));
-  if (v && typeof v === "object") {
-    return depth > 5 ? "<object>" : Object.fromEntries(Object.entries(v).map(([k, x]) => [k, shapeOf(x, depth + 1)]));
-  }
-  return v;
 }
