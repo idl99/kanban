@@ -47,11 +47,6 @@ export function boardCell(s: ClaudeServer, passes: Pass[]): BoardCell {
   return { kind: "connect", pass: null, how: s.transport === "stdio" ? "local" : "mcp" };
 }
 
-/** Whether Connections shows its Board column: once there is an automation or a board pass. */
-export function showBoardColumn(passes: Pass[] | null, automations: number): boolean {
-  return (passes?.length ?? 0) > 0 || automations > 0;
-}
-
 /** A proposed connection resolved against the board's passes: the pass it is, or what the card must still do. */
 export function resolveProposedPass(p: AutomationProposal["passes"][number], passes: Pass[]): { pass: Pass | null; need: "connect" | "key" | "missing" | null } {
   const name = p.name.toLowerCase();

@@ -4,7 +4,7 @@ An automation checks a service on a timer, by itself and without Claude, so a ch
 
 ## The idea: one door, two passes
 
-A service is a door. Claude has its own pass for it: the servers in **⋯ → Connections**, which Claude uses while it works on tickets. The board can't borrow Claude's pass, so it gets its own pass to check a service by itself. Connections shows both: once you have an automation, a **Board (automations)** column appears next to Claude's.
+A service is a door. Claude has its own pass for it: the servers in **⋯ → Connections**, which Claude uses while it works on tickets. The board can't borrow Claude's pass, so it gets its own pass to check a service by itself. Connections shows both: a **Board (automations)** column next to Claude's says which services automations can use.
 
 A board pass is one of:
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, copy, safeHref, type AgentStatus, type McpAddInput, type McpConfig, type McpServer, type McpState, type McpTransport, type Pass } from "./api";
-import { boardCell, showBoardColumn } from "./automations";
+import { boardCell } from "./automations";
 import { connectFromClaude, KeyForm, openSignIn } from "./passConnect";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CloseIcon, CopyIcon, TerminalIcon } from "./icons";
@@ -54,8 +54,8 @@ const looksLikeTty = (err: string | null | undefined) => !!err && /terminal|tty|
 const BOARD_TIP = "The board checks it by itself on a timer, for automations: free, without Claude. It has its own sign-in or key, separate from Claude's.";
 
 /**
- * Claude Code MCP servers, like `/mcp`: status, OAuth log in / out, add, edit and remove (user scope). Once there is
- * an automation or a board pass, a Board column shows the board's own pass per service (see automations.ts boardCell).
+ * Claude Code MCP servers, like `/mcp`: status, OAuth log in / out, add, edit and remove (user scope). A Board column
+ * shows the board's own pass per service, for automations (see automations.ts boardCell).
  */
 export function ConnectionsDialog({ state, refreshKey = 0, onClose, onRunInTerminal }: {
   state: McpState | null;
@@ -86,7 +86,8 @@ export function ConnectionsDialog({ state, refreshKey = 0, onClose, onRunInTermi
   const loadBoard = () => api.passes().then(setBoard).catch(() => {});
   useEffect(() => { loadBoard(); }, [refreshKey]);
   const passes = board?.passes ?? [];
-  const showBoard = showBoardColumn(board?.passes ?? null, board?.automations ?? 0);
+  // The Board column is always there (once loaded): it answers "which of these can automations use?".
+  const showBoard = board !== null;
 
   const connect = (s: McpServer, existing: Pass | null) => act(`board:${s.name}`, async () => {
     setNote(null);

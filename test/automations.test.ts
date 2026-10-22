@@ -4,7 +4,7 @@ import { parseDecision } from "../src/server/integrations/ask-claude";
 import { parseItems } from "../src/server/integrations/script";
 import { ticketBody, ticketTitle } from "../src/server/integrations/ticket-text";
 import type { Pass } from "../web/src/automationTypes";
-import { boardCell, everyLabel, loopStatus, loopSubtitle, resolveProposedPass, showBoardColumn } from "../web/src/automations";
+import { boardCell, everyLabel, loopStatus, loopSubtitle, resolveProposedPass } from "../web/src/automations";
 
 const pass = (p: Partial<Pass>): Pass => ({
   id: "p1", kind: "mcp", name: "linear", claudeName: null, url: null, envName: null, status: "connected", error: null, createdAt: "", usedBy: 0, ...p,
@@ -20,13 +20,6 @@ test("the Board column: ✓ for a linked pass, Connect for your own servers, a d
   expect(boardCell(server("planted", "project", "stdio"), [])).toMatchObject({ kind: "none" });
   // No name matching: a pass named like a server isn't its board pass unless it was made from that row.
   expect(boardCell(server("linear", "user"), [pass({ name: "linear", claudeName: null })])).toMatchObject({ kind: "connect", pass: null });
-});
-
-test("the Board column shows once there is an automation or a board pass", () => {
-  expect(showBoardColumn([], 0)).toBe(false);
-  expect(showBoardColumn(null, 0)).toBe(false);
-  expect(showBoardColumn([pass({})], 0)).toBe(true);
-  expect(showBoardColumn([], 1)).toBe(true);
 });
 
 test("a proposed connection is matched to a pass, or says what the card must still do", () => {
