@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, copy, safeHref, type AgentStatus, type McpAddInput, type McpConfig, type McpServer, type McpState, type McpTransport, type Pass } from "./api";
 import { boardCell, showBoardColumn } from "./automations";
-import { connectFromClaude, KeyForm } from "./passConnect";
+import { connectFromClaude, KeyForm, openSignIn } from "./passConnect";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CloseIcon, CopyIcon, TerminalIcon } from "./icons";
 import { Modal } from "./Modal";
@@ -353,7 +353,7 @@ export function ConnectionsDialog({ state, refreshKey = 0, onClose, onRunInTermi
                   <div className="mcp-actions">
                     {p.kind === "mcp" && p.status !== "connected" && (
                       <button className="btn small primary" disabled={busy === `pass:${p.id}`}
-                        onClick={() => act(`pass:${p.id}`, async () => { const tab = window.open("about:blank", "_blank"); try { const { url } = await api.authorizePass(p.id); if (tab) tab.location.href = url; } catch (e) { tab?.close(); throw e; } })}>
+                        onClick={() => act(`pass:${p.id}`, async () => { const tab = window.open("about:blank", "_blank"); try { openSignIn(tab, (await api.authorizePass(p.id)).url); } catch (e) { tab?.close(); throw e; } })}>
                         Connect
                       </button>
                     )}
@@ -612,8 +612,7 @@ function AddPassForm({ onDone, onCancel }: { onDone: (note: string) => void; onC
       }
       const p = await api.addPass({ kind: "mcp", name: name.trim(), url: url.trim() });
       try {
-        const { url: signIn } = await api.authorizePass(p.id);
-        if (tab) tab.location.href = signIn;
+        openSignIn(tab, (await api.authorizePass(p.id)).url);
         onDone(`Approve the board in the tab that just opened. ${p.name} shows ✓ when you are done.`);
       } catch (e: any) {
         tab?.close();

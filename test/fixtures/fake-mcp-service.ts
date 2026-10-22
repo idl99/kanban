@@ -16,7 +16,7 @@ export interface FakeService {
   stop(): void;
 }
 
-export function startFakeService(o: { registration?: boolean; expiresIn?: number } = {}): FakeService {
+export function startFakeService(o: { registration?: boolean; expiresIn?: number; authorizeEndpoint?: string } = {}): FakeService {
   const registration = o.registration ?? true;
   const codes = new Map<string, { challenge: string; clientId: string; redirect: string; resource: string }>();
   const tokens = new Set<string>();
@@ -40,7 +40,7 @@ export function startFakeService(o: { registration?: boolean; expiresIn?: number
       if (u.pathname === "/.well-known/oauth-protected-resource/mcp") return json({ resource: `${origin}/mcp`, authorization_servers: [origin] });
       if (u.pathname === "/.well-known/oauth-authorization-server") {
         return json({
-          issuer: origin, authorization_endpoint: `${origin}/authorize`, token_endpoint: `${origin}/token`,
+          issuer: origin, authorization_endpoint: o.authorizeEndpoint ?? `${origin}/authorize`, token_endpoint: `${origin}/token`,
           ...(registration ? { registration_endpoint: `${origin}/register` } : {}), code_challenge_methods_supported: ["S256"], scopes_supported: ["read", "write"],
         });
       }

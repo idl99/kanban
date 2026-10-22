@@ -16,9 +16,9 @@ export function usedVariables(text: string): string[] {
   return [...new Set([...text.matchAll(VARIABLE)].map((m) => m[1]))];
 }
 
-/** One line, at most TITLE_MAX characters. */
+/** One line, at most TITLE_MAX characters. A leading ⭐ (it would mark the ticket Important, and start a paid review) is dropped. */
 export function ticketTitle(title: string): string {
-  const line = title.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim();
+  const line = title.replace(/[\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().replace(/^(?:⭐️?\s*)+/u, "");
   return line.length > TITLE_MAX ? `${line.slice(0, TITLE_MAX - 1)}…` : line || "(no title)";
 }
 

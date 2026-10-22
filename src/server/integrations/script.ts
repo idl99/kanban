@@ -107,12 +107,15 @@ async function capped(stream: ReadableStream<Uint8Array>, max: number): Promise<
   return { text: Buffer.concat(chunks).toString("utf8"), over };
 }
 
-/** Runs the script file with bash in its own process group; everything it started is killed when it ends or times out. */
+/**
+ * Runs the script file with bash (pipefail: a failed `ckanban call` in a pipe fails the check instead of printing
+ * nothing) in its own process group; everything it started is killed when it ends or times out.
+ */
 export async function runScript(file: string, cwd: string, env: Record<string, string>, timeoutMs = SCRIPT_TIMEOUT_MS): Promise<ScriptRun> {
   const started = Date.now();
   let p: ReturnType<typeof Bun.spawn>;
   try {
-    p = Bun.spawn(["/bin/bash", file], { cwd: existsSync(cwd) ? cwd : homedir(), env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
+    p = Bun.spawn(["/bin/bash", "-o", "pipefail", file], { cwd: existsSync(cwd) ? cwd : homedir(), env, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
   } catch (e) {
     return { items: null, error: `Could not start the check: ${(e as Error).message}`, stderr: "", durationMs: 0 };
   }
@@ -127,7 +130,9 @@ export async function runScript(file: string, cwd: string, env: Record<string, s
   killGroup(p);
   // A background child may keep the pipes open: don't wait for it long.
   const read = await Promise.race([reading, Bun.sleep(1000).then(() => null)]);
-  const [out, err] = read ?? [{ text: "", over: false }, { text: "", over: false }];
+  // Output that didn't finish is not "no items": an empty list here would let the next check flood the board.
+  if (!read) return { items: null, error: "The check's output didn't finish (a program it started kept it open)", stderr: "", durationMs: Date.now() - started };
+  const [out, err] = read;
   const stderr = err.text.length > STDERR_KEEP ? err.text.slice(-STDERR_KEEP) : err.text;
   const durationMs = Date.now() - started;
   const lastLine = stderr.trim().split("\n").pop() ?? "";

@@ -341,7 +341,7 @@ export interface Loop {
   enabled: boolean;
   /** Display name of what it watches ("Linear"): the card's link and the outside-content label say it. */
   service: string;
-  /** Board passes (integrations.json) its script may use. */
+  /** Board passes (automation-passes.json) its script may use. */
   passes: string[];
   /** sha256 of the script when the user saved it: a script changed since then doesn't run. */
   scriptHash: string;

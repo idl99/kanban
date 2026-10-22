@@ -2,6 +2,23 @@ import { useState } from "react";
 import { api, type Pass } from "./api";
 
 /**
+ * Sends the tab opened before the wait to a service's sign-in page: only a web address (http/https), never a
+ * `javascript:` one, which would run on the board's own page. Closes the tab otherwise.
+ */
+export function openSignIn(tab: Window | null, url: string): void {
+  let ok = false;
+  try {
+    ok = ["https:", "http:"].includes(new URL(url).protocol);
+  } catch {}
+  if (!ok) {
+    tab?.close();
+    throw new Error("The service sent a sign-in address that isn't a web page");
+  }
+  if (tab) tab.location.href = url;
+  else window.open(url, "_blank", "noopener");
+}
+
+/**
  * Connects a Connections (Claude) server for automations: the board's own pass. A program on this computer is ready
  * at once; an online server opens its sign-in page in a new tab (opened before the wait, so it isn't blocked as a
  * popup). Returns "needs_key" when the server can't sign the board in by itself: offer a key instead.
@@ -19,8 +36,7 @@ export async function connectFromClaude(server: { name: string; transport: strin
       pass = await api.addPass({ kind: "mcp", claudeName: server.name, name: server.name, url: cfg.url });
     }
     const { url } = await api.authorizePass(pass.id);
-    if (tab) tab.location.href = url;
-    else window.open(url, "_blank", "noopener");
+    openSignIn(tab, url);
     return "signing_in";
   } catch (e: any) {
     tab?.close();

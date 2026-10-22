@@ -13,7 +13,7 @@ let passes: Passes;
 let now: Date;
 let configFile: string;
 
-function build(o: { registration?: boolean; expiresIn?: number } = {}) {
+function build(o: { registration?: boolean; expiresIn?: number; authorizeEndpoint?: string } = {}) {
   svc?.stop();
   svc = startFakeService(o);
   passes = new Passes(root, new Bus(), { fetch, now: () => now }, () => "http://localhost:7777/api/passes/oauth/callback", { configFile, home: root });
@@ -47,7 +47,7 @@ test("signs in to any MCP server by itself: finds its sign-in, registers, PKCE, 
   svc.issues = [{ id: "1", title: "Fix", url: "https://x/1" }];
   expect(await passes.call(id, "list_issues", {})).toEqual({ issues: svc.issues });
   // The passes file is for the owner only and the view has no secrets.
-  expect(statSync(join(root, "integrations.json")).mode & 0o777).toBe(0o600);
+  expect(statSync(join(root, "automation-passes.json")).mode & 0o777).toBe(0o600);
   expect(JSON.stringify(passes.view(p))).not.toContain(p.tokens!.access);
 });
 
@@ -126,4 +126,12 @@ test("secrets are hidden in text for the UI and logs", async () => {
   expect(readScopes(["read", "write", "openid"])).toEqual(["read"]);
   expect(readScopes(["org:read", "project:write", "issues.read", "read:all", "bread"])).toEqual(["org:read", "issues.read", "read:all"]);
   expect(resourceMetadataUrl('Bearer error="invalid_token", resource_metadata="https://x/.well-known/oauth-protected-resource"')).toBe("https://x/.well-known/oauth-protected-resource");
+});
+
+test("a sign-in address that isn't a web page is refused, never handed to the browser", async () => {
+  build({ authorizeEndpoint: "javascript:fetch('/api/passes')//" });
+  const p = await passes.add({ kind: "mcp", name: "Evil", url: svc.url });
+  await expect(passes.authorizeUrl(p.id)).rejects.toThrow("Could not start the sign-in");
+  await expect(passes.add({ kind: "mcp", name: "x", url: "javascript:alert(1)" })).rejects.toThrow("https://");
+  await expect(passes.add({ kind: "mcp", name: "x", url: "http://example.com/mcp" })).rejects.toThrow("https://");
 });

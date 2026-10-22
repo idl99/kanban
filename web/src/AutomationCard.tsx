@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, subscribe, type AutomationProposal, type Pass } from "./api";
 import { everyLabel, resolveProposedPass } from "./automations";
-import { connectFromClaude, KeyForm } from "./passConnect";
+import { connectFromClaude, KeyForm, openSignIn } from "./passConnect";
 
 /**
  * The setup chat proposed an automation (propose_automation). The card shows what it watches and the connections it
@@ -68,8 +68,7 @@ export function AutomationCard({ slug, ticketId, uuid, proposal, saved, onOpenAu
       const tab = window.open("about:blank", "_blank");
       try {
         const pass = r.pass ?? await api.addPass({ kind: "mcp", name: r.p.name, url: r.p.url });
-        const { url } = await api.authorizePass(pass.id);
-        if (tab) tab.location.href = url;
+        openSignIn(tab, (await api.authorizePass(pass.id)).url);
         result = "signing_in";
       } catch (e: any) {
         tab?.close();

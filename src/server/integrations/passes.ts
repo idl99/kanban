@@ -7,7 +7,7 @@ import { maskSecrets, readMcpConfig } from "../mcp";
 import { inheritedEnv } from "../runner";
 import { newId } from "../util";
 import { McpClient } from "./mcp-client";
-import { authorizeUrl, discover, exchange, NoRegistrationError, refresh, register, type Client } from "./oauth";
+import { authorizeUrl, discover, exchange, NoRegistrationError, refresh, register, webAddress, type Client } from "./oauth";
 import { StdioMcpClient } from "./stdio-client";
 import { AuthError, type Deps, type Tokens, type ToolClient } from "./types";
 
@@ -91,7 +91,7 @@ export interface PassOptions {
 }
 
 /**
- * The passes file (`integrations.json` in the data folder, readable by the owner only), the generic sign-in and
+ * The passes file (`automation-passes.json` in the data folder, readable by the owner only), the generic sign-in and
  * token renewal, and calling a pass's tools. Every call goes through here, so a token is renewed in one place only.
  */
 export class Passes {
@@ -102,7 +102,7 @@ export class Passes {
   private home: string;
 
   constructor(root: string, private bus: Bus, private deps: Deps, private callbackUrl: () => string, private o: PassOptions = {}) {
-    this.file = join(root, "integrations.json");
+    this.file = join(root, "automation-passes.json");
     this.configFile = o.configFile ?? join(process.env.CLAUDE_CONFIG_DIR ?? homedir(), ".claude.json");
     this.home = o.home ?? homedir();
   }
@@ -372,8 +372,11 @@ function nameOr(v: unknown, fallback: string): string {
 
 function httpUrl(v: unknown): string {
   const s = typeof v === "string" ? v.trim() : "";
-  if (!/^https?:\/\/\S+$/.test(s)) throw new PassError(400, "The address must start with https://");
-  return s;
+  try {
+    return webAddress(s);
+  } catch {
+    throw new PassError(400, "The address must start with https://");
+  }
 }
 
 /** "Linear API key" -> LINEAR_API_KEY. */

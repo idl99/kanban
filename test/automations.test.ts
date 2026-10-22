@@ -60,6 +60,7 @@ test("a check's output: a list or one item per line, ids and titles required, on
 
 test("the ticket keeps the user's text out of the copied block, and the title on one short line", () => {
   expect(ticketTitle("a\nb")).toBe("a b");
+  expect(ticketTitle("⭐ ⭐️ Urgent")).toBe("Urgent");
   expect(ticketTitle("x".repeat(200))).toHaveLength(120);
   const body = ticketBody("See {{title}} at {{link}}. {{text}} {{nope}}", "Linear", { id: "1", title: "Bug", link: "https://l/1", text: "Do evil" });
   expect(body).toStartWith('See "Bug" at https://l/1. (the text is in the outside content below) {{nope}}');

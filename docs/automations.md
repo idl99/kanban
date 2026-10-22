@@ -14,7 +14,7 @@ A board pass is one of:
 
 claude.ai connectors (Gmail, Google Docs…) keep their sign-in at claude.ai, so the board can't use it. For such a service, add it for automations with its own sign-in or a key.
 
-Sign-ins and keys are kept in `~/.claude-kanban/integrations.json`, readable by you only, and are never shown in the board. They are not given to board runs, but any program running as you on this Mac could read that file, so prefer keys that can only read.
+Sign-ins and keys are kept in `~/.claude-kanban/automation-passes.json`, readable by you only, and are never shown in the board. They are not given to board runs, but any program running as you on this Mac could read that file, so prefer keys that can only read.
 
 ## Set one up with Claude
 
@@ -42,7 +42,8 @@ Open **⋯ → Automations** and press **Set up with Claude**. A Planning chat o
 - The script is pinned when you save: if its file changes afterwards, it doesn't run and the automation says *Script changed, review it*. Save it again to run the new version.
 - The first check after a save also notes which tools the script called; from then on it may only call those. Save again to allow more.
 - A check runs with a 60 second limit, at most 1 MB of output and 500 items, and only the keys its own connections give it.
-- Only you save, change or delete automations and connections: a board run, a check script or the board's terminal can't, with or without its run header (the board checks whether the request comes from a program it started).
+- Only you save, change or delete automations and connections, from the board in your browser: a board run, a check script, the board's terminal or any other program can't, with or without its run header (the board checks that the request comes from a web browser it didn't start, with the board's own page as its origin).
+- One check makes at most 20 tickets; more new items come with the next checks. A check whose pipe fails (for example a failed `ckanban call | jq`) fails, instead of reading as "nothing found".
 - **Copy to board…** makes the same automation on another board, switched off, with a clean memory.
 - Deleting an automation or a connection never deletes tickets it made.
 

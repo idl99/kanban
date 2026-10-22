@@ -2596,10 +2596,11 @@ button.tag-chip:hover { border-color: currentColor; }
 .auto-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; }
 .auto-item:hover { background: var(--surface-2); }
 .auto-item.sel { border-color: var(--accent); background: var(--accent-soft); }
+.auto-item { min-width: 0; }
 .auto-item-main { display: flex; flex-direction: column; min-width: 0; }
 .auto-item-name { font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .auto-item-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.auto-editor { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 14px; min-width: 0; }
+.auto-editor { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 14px; min-width: 0; }
 .auto-form { display: flex; flex-direction: column; gap: 12px; }
 .auto-head { display: flex; gap: 10px; align-items: center; }
 .auto-name { flex: 1; font-weight: 600; font-size: 15px; }
@@ -2618,7 +2619,7 @@ button.tag-chip:hover { border-color: currentColor; }
 .auto-box textarea { width: 100%; }
 .auto-found { margin: 0; padding-left: 18px; font-size: 13px; max-height: 160px; overflow: auto; }
 .auto-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.auto-table td { padding: 5px 4px; border-top: 1px solid var(--border); vertical-align: top; }
+.auto-table td { overflow-wrap: anywhere; padding: 5px 4px; border-top: 1px solid var(--border); vertical-align: top; }
 .auto-state { font-size: 11px; font-weight: 600; white-space: nowrap; width: 1%; }
 .auto-state.new { color: var(--ok); }
 .auto-state.skipped { color: var(--muted); }
@@ -2635,7 +2636,7 @@ button.tag-chip:hover { border-color: currentColor; }
 .mcp-board .none { color: var(--muted); cursor: help; }
 .mcp-board-label { display: none; color: var(--muted); font-size: 12px; }
 @media (max-width: 720px) {
-  .auto-wrap { grid-template-columns: 1fr; }
+  .auto-wrap { grid-template-columns: minmax(0, 1fr); }
   .mcp-cols { display: none; }
   .mcp-board { width: 100%; justify-content: flex-start; padding-top: 6px; border-top: 1px dashed var(--border); }
   .mcp-board-label { display: inline; }

@@ -257,3 +257,21 @@ test("a script's output is checked: ids and titles are required, at most 500 ite
   const r = await loops.test("p", { script: `echo '[{"id":1,"title":"one","link":"javascript:alert(1)"}]'\n` });
   expect(r).toMatchObject({ found: 1, error: null, items: [{ id: "1", title: "one" }] });
 });
+
+test("a failed command in a pipe fails the check instead of reading as \"nothing found\"", async () => {
+  const l = await loops.create("p", input({ script: "false | cat\n" }));
+  await loops.checkNow("p", l.id);
+  const v = loops.list("p")[0];
+  expect(v.lastError).toContain("The check failed (exit 1)");
+  expect(store.getLoopState("p", l.id).primed).toBe(false);
+});
+
+test("one check makes at most 20 tickets; the rest come with the next checks", async () => {
+  const l = await loops.create("p", input());
+  await loops.checkNow("p", l.id);
+  add(...Array.from({ length: 25 }, (_, i) => ({ id: `n${i}`, title: `New ${i}` })));
+  await loops.checkNow("p", l.id);
+  expect(tickets()).toHaveLength(20);
+  await loops.checkNow("p", l.id);
+  expect(tickets()).toHaveLength(25);
+});

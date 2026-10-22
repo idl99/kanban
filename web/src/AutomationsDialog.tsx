@@ -91,7 +91,11 @@ export function AutomationsDialog({ profile, boards, refreshKey, onClose, onOpen
                 <LoopEditor key="new" slug={profile.slug} passes={data.passes} loop={null} onOpenTicket={onOpenTicket} onOpenConnections={onOpenConnections}
                   onSaved={async (l) => { await reload(); setSelected(l.id); }} onDeleted={() => setSelected(null)} />
               )}
-              {loop && (
+              {loop && loop.state === "unsupported" && (
+                <UnsupportedLoop key={loop.id} slug={profile.slug} loop={loop}
+                  onSaved={async () => { await reload(); }} onDeleted={async () => { setSelected(null); await reload(); }} />
+              )}
+              {loop && loop.state !== "unsupported" && (
                 <LoopEditor key={loop.id} slug={profile.slug} passes={data.passes} loop={loop} otherBoards={boards.filter((b) => b.slug !== profile.slug)}
                   onOpenTicket={onOpenTicket} onOpenConnections={onOpenConnections}
                   onSaved={async () => { await reload(); }} onDeleted={async () => { setSelected(null); await reload(); }} />
@@ -127,8 +131,8 @@ function LoopEditor({ slug, passes, loop, otherBoards = [], onSaved, onDeleted, 
   const [every, setEvery] = useState(loop?.everyMinutes ?? 15);
   const [column, setColumn] = useState<LoopColumn>(loop?.column ?? "backlog");
   const [autoStart, setAutoStart] = useState(loop?.autoStart ?? false);
-  const [askOn, setAskOn] = useState(loop?.askClaude.on ?? false);
-  const [askPrompt, setAskPrompt] = useState(loop?.askClaude.prompt ?? "");
+  const [askOn, setAskOn] = useState(loop?.askClaude?.on ?? false);
+  const [askPrompt, setAskPrompt] = useState(loop?.askClaude?.prompt ?? "");
   const [instructions, setInstructions] = useState(loop?.instructions ?? DEFAULT_TEXT);
   const [showScript, setShowScript] = useState(!loop);
   const [test, setTest] = useState<LoopTest | null>(null);
@@ -136,7 +140,6 @@ function LoopEditor({ slug, passes, loop, otherBoards = [], onSaved, onDeleted, 
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState(false);
-  const unsupported = loop?.state === "unsupported";
   const changed = loop?.state === "script_changed";
   const svc = service.trim() || passes.find((p) => p.id === passIds[0])?.name || "the service";
   const everyOptions = [...new Set([...EVERY_CHOICES, every])].sort((a, b) => a - b).map((m) => ({ value: String(m), label: everyLabel(m) }));
@@ -174,21 +177,6 @@ function LoopEditor({ slug, passes, loop, otherBoards = [], onSaved, onDeleted, 
 
   const togglePass = (id: string) => setPassIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
   const usable = passes.filter((p) => p.kind !== "key" || p.envName || p.url);
-
-  if (unsupported) {
-    return (
-      <div className="auto-form">
-        <div className="auto-head"><b className="auto-name">{loop!.name}</b></div>
-        <div className="mcp-msg">{loop!.problems.map((p) => <div key={p}>{p}</div>)}</div>
-        {err && <div className="form-error">{err}</div>}
-        <div className="form-actions">
-          {loop!.enabled && <button className="btn" disabled={!!busy} onClick={() => act("off", async () => { await onSaved(await api.updateLoop(slug, loop!.id, { enabled: false })); })}>Switch off</button>}
-          <button className="btn ghost danger" onClick={() => setConfirm(true)}>Delete</button>
-        </div>
-        {confirm && <DeleteLoop slug={slug} loop={loop!} onCancel={() => setConfirm(false)} onDeleted={onDeleted} />}
-      </div>
-    );
-  }
 
   return (
     <form className="auto-form" onSubmit={save}>
@@ -343,6 +331,40 @@ function LoopEditor({ slug, passes, loop, otherBoards = [], onSaved, onDeleted, 
       </div>
       {confirm && loop && <DeleteLoop slug={slug} loop={loop} onCancel={() => setConfirm(false)} onDeleted={onDeleted} />}
     </form>
+  );
+}
+
+/**
+ * An automation this version can't run (saved by an older test version or a newer ckanban): only what is wrong, and
+ * Switch off / Delete. It reads no other field, since an old file may not have them.
+ */
+function UnsupportedLoop({ slug, loop, onSaved, onDeleted }: { slug: string; loop: Loop; onSaved: () => Promise<void>; onDeleted: () => void | Promise<void> }) {
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  return (
+    <div className="auto-form">
+      <div className="auto-head"><b className="auto-name">{loop.name}</b></div>
+      <div className="mcp-msg">{(loop.problems ?? []).map((p) => <div key={p}>{p}</div>)}</div>
+      {err && <div className="form-error">{err}</div>}
+      <div className="form-actions">
+        {loop.enabled && (
+          <button className="btn" disabled={busy} onClick={async () => {
+            setBusy(true);
+            try {
+              await api.updateLoop(slug, loop.id, { enabled: false });
+              await onSaved();
+            } catch (e: any) {
+              setErr(e.message);
+            } finally {
+              setBusy(false);
+            }
+          }}>Switch off</button>
+        )}
+        <button className="btn ghost danger" onClick={() => setConfirm(true)}>Delete</button>
+      </div>
+      {confirm && <DeleteLoop slug={slug} loop={loop} onCancel={() => setConfirm(false)} onDeleted={onDeleted} />}
+    </div>
   );
 }
 

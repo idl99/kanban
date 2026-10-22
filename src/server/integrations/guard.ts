@@ -1,7 +1,9 @@
 // Saving an automation or a pass must come from the user, not from something the board started. Runs send
-// RUN_HEADER, but a run's shell can leave it out. So the daemon also looks at who is on the other end of the
-// connection: a local request from a process the daemon started (a run, a huddle agent, a check script, the board's
-// terminal) is refused. The browser, and ckanban in the user's own terminal, are not the daemon's children.
+// RUN_HEADER, but a run's shell can leave it out, and can detach a process from the daemon (double fork, setsid) so
+// it no longer looks like the daemon's child. So the daemon checks who is on the other end of a local connection
+// the other way round: only a web browser that the daemon didn't start may save. Anything it can't identify counts
+// as not the user (fail closed). Any program running as the user can still reach the user's own browser or files;
+// this keeps runs, check scripts and the board's terminal from saving by themselves, it isn't a wall against the user.
 
 /** Runs a command and returns its stdout; "" when it fails. */
 async function out(argv: string[]): Promise<string> {
@@ -14,12 +16,22 @@ async function out(argv: string[]): Promise<string> {
   }
 }
 
-/** pid -> parent pid for every process, from `ps`. */
+/** pid -> parent pid for every process, from `ps -A -o pid=,ppid=`. */
 export function parentMap(ps: string): Map<number, number> {
   const m = new Map<number, number>();
   for (const line of ps.split("\n")) {
     const [pid, ppid] = line.trim().split(/\s+/).map(Number);
     if (pid > 0 && Number.isFinite(ppid)) m.set(pid, ppid);
+  }
+  return m;
+}
+
+/** pid -> executable path, from `ps -A -o pid=,comm=` (macOS prints the full path). */
+export function commandMap(ps: string): Map<number, string> {
+  const m = new Map<number, string>();
+  for (const line of ps.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(.+?)\s*$/);
+    if (match) m.set(Number(match[1]), match[2]);
   }
   return m;
 }
@@ -35,14 +47,23 @@ export function lsofPids(text: string): number[] {
   return text.split("\n").filter((l) => l.startsWith("p")).map((l) => Number(l.slice(1))).filter((n) => n > 0);
 }
 
+/** The process that holds a browser's connections: Chrome-based browsers' helpers, Safari's WebKit networking, Firefox. */
+const BROWSER = /\/(Google Chrome|Google Chrome Helper|Chromium|Chromium Helper|Brave Browser|Brave Browser Helper|Microsoft Edge|Microsoft Edge Helper|Arc|Arc Helper|Vivaldi|Vivaldi Helper|Opera|Opera Helper|Orion|Firefox|firefox|plugin-container)(\.app)?(\/|$)|com\.apple\.WebKit\.Networking/;
+
+export function isBrowser(command: string): boolean {
+  return BROWSER.test(command);
+}
+
 /**
- * Whether the client on `peerPort` of a local connection to the daemon is a process the daemon started. Unknown
- * (no lsof, no match) counts as not started by the board.
+ * Whether the client on `peerPort` of a local connection to the daemon is a web browser the daemon didn't start.
+ * Anything else, or nothing found, is not the user.
  */
-export async function fromBoardProcess(peerPort: number, daemonPid = process.pid): Promise<boolean> {
+export async function fromUserBrowser(peerPort: number, daemonPid = process.pid): Promise<boolean> {
   if (!peerPort) return false;
   const pids = lsofPids(await out(["lsof", "-nP", `-iTCP:${peerPort}`, "-sTCP:ESTABLISHED", "-Fp"])).filter((p) => p !== daemonPid);
   if (!pids.length) return false;
-  const parents = parentMap(await out(["ps", "-A", "-o", "pid=,ppid="]));
-  return pids.some((p) => descendsFrom(p, daemonPid, parents));
+  const [parents, commands] = await Promise.all([
+    out(["ps", "-A", "-o", "pid=,ppid="]).then(parentMap), out(["ps", "-A", "-o", "pid=,comm="]).then(commandMap),
+  ]);
+  return pids.every((p) => !descendsFrom(p, daemonPid, parents) && isBrowser(commands.get(p) ?? ""));
 }

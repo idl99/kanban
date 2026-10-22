@@ -20,6 +20,22 @@ export function readScopes(supported: unknown): string[] {
   return supported.map(String).filter((s) => /^read$|[:.]read$|^read[:.]/i.test(s));
 }
 
+/**
+ * An address from a server's metadata or from the user, accepted only as https (http only on this computer): a
+ * `javascript:` or `file:` value must never reach the browser or fetch.
+ */
+export function webAddress(raw: unknown): string {
+  let u: URL;
+  try {
+    u = new URL(String(raw ?? ""));
+  } catch {
+    throw new Error(`"${String(raw ?? "")}" isn't a web address`);
+  }
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+  if (u.protocol !== "https:" && !(u.protocol === "http:" && local)) throw new Error(`${u.protocol}//${u.host} isn't a secure web address (https)`);
+  return u.toString();
+}
+
 /** The server can't register ckanban by itself: ask the user for a key instead. */
 export class NoRegistrationError extends Error {}
 
@@ -77,8 +93,8 @@ export async function discover(mcpUrl: string, deps: Deps): Promise<SignInServer
       const meta = await getJson(m, deps);
       if (meta?.authorization_endpoint && meta?.token_endpoint) {
         return {
-          authorizationEndpoint: String(meta.authorization_endpoint), tokenEndpoint: String(meta.token_endpoint),
-          ...(meta.registration_endpoint ? { registrationEndpoint: String(meta.registration_endpoint) } : {}),
+          authorizationEndpoint: webAddress(meta.authorization_endpoint), tokenEndpoint: webAddress(meta.token_endpoint),
+          ...(meta.registration_endpoint ? { registrationEndpoint: webAddress(meta.registration_endpoint) } : {}),
           readScopes: readScopes(meta.scopes_supported),
         };
       }
@@ -118,7 +134,7 @@ export interface Client {
 }
 
 export function authorizeUrl(c: Client, state: string, challenge: string): string {
-  const u = new URL(c.authorizationEndpoint);
+  const u = new URL(webAddress(c.authorizationEndpoint));
   u.searchParams.set("response_type", "code");
   u.searchParams.set("client_id", c.clientId);
   u.searchParams.set("redirect_uri", c.redirectUri);

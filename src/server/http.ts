@@ -11,7 +11,7 @@ import { detectBaseBranch, enableVersionHistory, isGitRepo, repoKind, resolveBas
 import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, resolveConflicts, sendFailures, type PrDeps } from "./prpoller";
 import { resumeCommand } from "./prompts";
 import { cronError, describeCron, nextRuns, parseCron } from "./cron";
-import { fromBoardProcess } from "./integrations/guard";
+import { fromUserBrowser } from "./integrations/guard";
 import { PassError, Passes } from "./integrations/passes";
 import { ckanbanShim } from "./integrations/script";
 import { LoopError, LoopManager } from "./loops";
@@ -73,10 +73,10 @@ export interface ServerDeps {
   loops?: LoopManager;
   passes?: Passes;
   /**
-   * Whether a local request comes from a process the daemon started (a run, a script, the board's terminal), which
-   * may not save automations or passes (integrations/guard.ts). Tests pass a fake.
+   * Whether a local request comes from a web browser the daemon didn't start: only that may save automations or
+   * passes (integrations/guard.ts). Tests pass a fake.
    */
-  isBoardProcess?: (peerPort: number) => Promise<boolean>;
+  isUserBrowser?: (peerPort: number) => Promise<boolean>;
   jobs?: JobRunner;
   agents?: AgentRegistry;
   huddles?: Huddles;
@@ -249,18 +249,20 @@ export function createServer(deps: ServerDeps) {
   const loops = deps.loops ?? new LoopManager(store, bus, board, passes, {
     now: () => new Date(), sideCall, shimDir: () => ckanbanShim(store.root), port: () => server.port ?? deps.port,
   });
-  const isBoardProcess = deps.isBoardProcess ?? ((peerPort: number) => fromBoardProcess(peerPort));
+  const isUserBrowser = deps.isUserBrowser ?? ((peerPort: number) => fromUserBrowser(peerPort));
   /**
-   * Saving or changing an automation or a pass is for the user only: not a board run (RUN_HEADER), and not any
-   * process the board started, header or not (a run's shell, a check script, the board's terminal).
+   * Saving or changing an automation or a pass is for the user only: from the board's page in a browser. Not a board
+   * run (RUN_HEADER), and not any other program, header or not: a run's shell, a check script, the board's terminal or
+   * a page from elsewhere (no Origin of the board). Fails closed when the caller can't be told.
    */
   const userOnly = async (req: Request, what: string) => {
-    const refusal = `${what} is for the user only: a board run, a check script or the board's terminal can't do it. Ask the user to do it in the board.`;
-    if (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER)) throw new HttpError(403, refusal);
+    const refusal = `${what} is for the user only, from the board in a browser: a board run, a check script or another program can't do it. Ask the user to do it in the board.`;
+    if (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER) || !req.headers.get("origin")) throw new HttpError(403, refusal);
     const v = via.get(req);
-    if (v?.listener !== "local") return;
-    const peer = v.srv.requestIP(req)?.port ?? 0;
-    if (await isBoardProcess(peer)) throw new HttpError(403, refusal);
+    // Phone access: only the tailnet owner's browser gets here (requestRefusal checks the login and the Origin).
+    if (v?.listener === "remote") return;
+    const peer = v?.srv.requestIP(req)?.port ?? 0;
+    if (!(await isUserBrowser(peer))) throw new HttpError(403, refusal);
   };  const simplifier = new Simplifier(store, sideCall);
   const helper = new Helper(store, sideCall);
   const claudeLogs = deps.claudeLogs ?? new ClaudeLogIndex();

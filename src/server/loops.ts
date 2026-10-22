@@ -84,6 +84,8 @@ const SCRIPT_MAX = 64_000;
 const PREVIEW = 20;
 /** New items Claude looks at in one check (Ask Claude first); the rest wait for the next check. */
 const ASK_PER_CHECK = 20;
+/** Tickets one check makes at most; the rest stay new and come with the next checks, so a bad check can't flood the board. */
+const NEW_PER_CHECK = 20;
 /** After a failed check the loop waits 2, 4, 8 ... minutes (at most this long) before it tries again. */
 const BACKOFF_MIN_MS = 2 * 60_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
@@ -437,6 +439,7 @@ export class LoopManager {
     const shown: LoopSeenItem[] = [];
     let fired: string | null = null;
     let asked = 0;
+    let made = 0;
     const remember = () => this.store.saveLoopState(slug, id, { ...this.store.getLoopState(slug, id), seen: [...seen] });
     for (const item of items) {
       const base = { id: item.id, title: item.title, ...(item.link ? { link: item.link } : {}) };
@@ -444,6 +447,8 @@ export class LoopManager {
         shown.push({ ...base, state: "seen" });
         continue;
       }
+      // The rest stay unseen: the next checks pick them up.
+      if (made >= NEW_PER_CHECK) continue;
       let decision: Decision | null = null;
       if (loop.askClaude.on) {
         // The rest wait for the next check (they stay unseen).
@@ -472,6 +477,7 @@ export class LoopManager {
           source: { provider: loop.service, label: ticketTitle(item.title), url: item.link ?? "", loopId: id },
         });
         fired = now.toISOString();
+        made++;
         shown.push({ ...base, state: "new", ticketId: t.id });
       } catch (e) {
         seen.delete(item.id);
@@ -482,7 +488,7 @@ export class LoopManager {
     const order = { new: 0, skipped: 1, first: 2, seen: 3 };
     save(
       { lastCheckedAt: now.toISOString(), lastError: null, allowedTools: learned, ...(fired ? { lastFiredAt: fired } : {}) },
-      { seen: [...seen], failures: 0, backoffUntil: null, lastFound: items.length, lastItems: preview(shown.sort((a, b) => order[a.state] - order[b.state])) },
+      { seen: [...seen], failures: 0, backoffUntil: grant.rateLimitMs ? new Date(now.getTime() + grant.rateLimitMs).toISOString() : null, lastFound: items.length, lastItems: preview(shown.sort((a, b) => order[a.state] - order[b.state])) },
     );
   }
 

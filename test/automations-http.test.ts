@@ -17,7 +17,7 @@ let base: string;
 let svc: FakeService;
 let keyService: ReturnType<typeof Bun.serve>;
 let keyItems: { id: string; title: string }[] = [];
-/** What the guard says about the next request's client (a process the board started, or not). */
+/** What the guard says about the next request's client: the user's browser, or another program. */
 let fromBoard = false;
 
 beforeAll(() => {
@@ -30,7 +30,7 @@ beforeAll(() => {
     port: 0,
     fetch: (req) => (req.headers.get("x-key") === "key-service-secret" ? Response.json(keyItems) : new Response("no", { status: 401 })),
   });
-  server = createServer({ store, bus, board, port: 0, webDir: tempDir("ck-web-"), isBoardProcess: async () => fromBoard });
+  server = createServer({ store, bus, board, port: 0, webDir: tempDir("ck-web-"), isUserBrowser: async () => !fromBoard });
   base = `http://127.0.0.1:${server.port}`;
 });
 
@@ -44,8 +44,12 @@ beforeEach(() => {
   fromBoard = false;
 });
 
+// Like the board's page in a browser: changes carry the board's Origin.
 const send = (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
-  fetch(`${base}/api${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body ? JSON.stringify(body) : undefined });
+  fetch(`${base}/api${path}`, {
+    method, body: body ? JSON.stringify(body) : undefined,
+    headers: { "content-type": "application/json", ...(method === "GET" ? {} : { origin: base }), ...headers },
+  });
 const sendJson = async (method: string, path: string, body?: unknown) => {
   const r = await send(method, path, body);
   const b: any = await r.json();
@@ -120,6 +124,11 @@ test("only the user saves: a board run, or any process the board started, can't 
     expect(r.status).toBe(403);
     expect(((await r.json()) as any).error).toContain("for the user only");
   }
+  fromBoard = false;
+  // Without the board's Origin (curl, a page from elsewhere) it is refused even from the user's browser.
+  const noOrigin = await fetch(`${base}/api/profiles/p/loops`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(loopBody) });
+  expect(noOrigin.status).toBe(403);
+  fromBoard = true;
   // A trial run of a script is allowed (the setup chat tests its script), and makes nothing.
   const t = await send("POST", "/profiles/p/loops/test", { script: `echo '{"id":"1","title":"Hi"}'\n` });
   expect(t.status).toBe(200);

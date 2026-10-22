@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { descendsFrom, fromBoardProcess, lsofPids, parentMap } from "../src/server/integrations/guard";
+import { commandMap, descendsFrom, fromUserBrowser, isBrowser, lsofPids, parentMap } from "../src/server/integrations/guard";
 
 test("a process tree is walked up to the daemon", () => {
   const parents = parentMap("  10 1\n  20 10\n  30 20\n  40 1\n");
@@ -9,23 +9,36 @@ test("a process tree is walked up to the daemon", () => {
   expect(lsofPids("p123\nf7\np456\n")).toEqual([123, 456]);
 });
 
-test("a request from a child of the daemon is from a board process; one from the daemon's own process isn't", async () => {
+test("only browsers count as the user", () => {
+  expect(isBrowser("/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/1/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper")).toBe(true);
+  expect(isBrowser("/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking")).toBe(true);
+  expect(isBrowser("/Applications/Firefox.app/Contents/MacOS/firefox")).toBe(true);
+  expect(isBrowser("/usr/bin/curl")).toBe(false);
+  expect(isBrowser("/opt/homebrew/bin/bun")).toBe(false);
+  expect(isBrowser("/tmp/Google Chrome-ish/curl")).toBe(false);
+  expect(commandMap("  12 /usr/bin/curl -s\n 3 /bin/zsh\n").get(12)).toBe("/usr/bin/curl -s");
+});
+
+test("a program, a child of the daemon or one that detached from it, is never the user; nothing found isn't either", async () => {
   const seen: boolean[] = [];
   const server = Bun.serve({
     port: 0,
     async fetch(req, srv) {
-      seen.push(await fromBoardProcess(srv.requestIP(req)?.port ?? 0));
+      seen.push(await fromUserBrowser(srv.requestIP(req)?.port ?? 0));
       return new Response("ok");
     },
   });
   try {
-    // curl started by this process: a descendant, like a run's shell.
-    const p = Bun.spawn(["curl", "-s", `http://127.0.0.1:${server.port}/`], { stdout: "ignore", stderr: "ignore" });
-    await p.exited;
-    // This process itself: the daemon's own pid is never counted.
+    // curl started by this process: a child, like a run's shell.
+    await Bun.spawn(["curl", "-s", `http://127.0.0.1:${server.port}/`], { stdout: "ignore", stderr: "ignore" }).exited;
+    // A double fork: curl reparented away from this process, like a run that detaches.
+    await Bun.spawn(["/bin/sh", "-c", `( curl -s http://127.0.0.1:${server.port}/ >/dev/null & ) ; sleep 0.1`], { stdout: "ignore", stderr: "ignore" }).exited;
+    await Bun.sleep(500);
+    // This process itself: the daemon's own pid is never counted, so nothing is found.
     await fetch(`http://127.0.0.1:${server.port}/`);
-    expect(seen).toEqual([true, false]);
+    expect(seen).toEqual([false, false, false]);
   } finally {
     server.stop(true);
   }
+  expect(await fromUserBrowser(0)).toBe(false);
 });
