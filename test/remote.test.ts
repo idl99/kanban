@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { Board } from "../src/server/board";
 import { Bus } from "../src/server/events";
 import { createServer, isAllowedRequest, isAllowedSocket } from "../src/server/http";
-import { isPhoneListener, qrSvg, qrTerminal, RemoteAccess, RemoteError, type RemoteConfig, type TailscaleRunner } from "../src/server/remote";
+import { chmodSync } from "node:fs";
+import { isPhoneListener, qrSvg, qrTerminal, RemoteAccess, RemoteError, tailscaleRunner, type RemoteConfig, type TailscaleRunner } from "../src/server/remote";
 import { RUN_HEADER } from "../src/server/scheduler";
 import { Store } from "../src/server/store";
 import { tempDir } from "./helpers";
@@ -159,6 +160,47 @@ test("liveStatus: asks Tailscale only while on; running, stopped or unavailable,
   expect((await live(fakeTailscale(STATUS, ["status"]).run)).tailscale).toBe("unavailable");
   expect((await live(fakeTailscale("{broken").run)).tailscale).toBe("unavailable");
   expect((await live(async () => { throw new RemoteError(424, "tailscale CLI not found"); })).tailscale).toBe("unavailable");
+});
+
+const GUI_FAILED = "The Tailscale GUI failed to start: The operation couldn\u2019t be completed. (Tailscale.CLIError error 3.)\n";
+
+test("runner: starts Tailscale with TAILSCALE_BE_CLI=1 and keeps the rest of the environment", async () => {
+  const bin = join(tempDir("ck-ts-bin-"), "tailscale");
+  writeFileSync(bin, '#!/bin/sh\necho "be_cli=$TAILSCALE_BE_CLI home=$HOME args=$*"\n');
+  chmodSync(bin, 0o755);
+  const r = await tailscaleRunner(() => bin)(["status", "--json"]);
+  expect(r.code).toBe(0);
+  expect(r.stdout.trim()).toBe(`be_cli=1 home=${process.env.HOME} args=status --json`);
+});
+
+test("Tailscale opening its app window (exit 0) is a failure, never a success", async () => {
+  const gui: TailscaleRunner = async () => ({ code: 0, stdout: GUI_FAILED, stderr: "" });
+  const root = tempDir("ck-remote-");
+  const err = await new RemoteAccess(root, () => 1, gui, yes).on().catch((e) => e);
+  expect(err).toBeInstanceOf(RemoteError);
+  expect(err.message).toContain("app window");
+  expect(err.message).toContain("Tailscale GUI failed to start");
+  expect(existsSync(join(root, "remote.json"))).toBe(false);
+
+  // serve fails the same way after a good status: on() fails, off() warns.
+  const serveGui: TailscaleRunner = async (args) => ({ code: 0, stdout: args[0] === "status" ? STATUS : GUI_FAILED, stderr: "" });
+  await expect(new RemoteAccess(root, () => 1, serveGui, yes).on()).rejects.toThrow("Tailscale GUI failed to start");
+  expect(existsSync(join(root, "remote.json"))).toBe(false);
+  writeFileSync(join(root, "remote.json"), JSON.stringify(REMOTE));
+  const st = await new RemoteAccess(root, () => 1, serveGui, yes).off();
+  expect(st.enabled).toBe(false);
+  expect(st.warning).toContain("Tailscale GUI failed to start");
+
+  writeFileSync(join(root, "remote.json"), JSON.stringify(REMOTE));
+  expect((await new RemoteAccess(root, () => 1, gui, yes).liveStatus()).tailscale).toBe("unavailable");
+});
+
+test("on: status output that isn't JSON shows what Tailscale printed", async () => {
+  const run: TailscaleRunner = async () => ({ code: 0, stdout: "something odd\nsecond line\n", stderr: "" });
+  const err = await new RemoteAccess(tempDir("ck-remote-"), () => 1, run, yes).on().catch((e) => e);
+  expect(err).toBeInstanceOf(RemoteError);
+  expect(err.message).toContain("could not read");
+  expect(err.message).toContain("something odd\nsecond line");
 });
 
 test("config is re-read when remote.json changes (CLI writes, daemon reads)", async () => {

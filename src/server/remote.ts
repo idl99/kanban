@@ -67,37 +67,54 @@ const RUN_TIMEOUT_MS = 30_000;
 /** Status checks give up sooner: they only decide what the Phone access dialog shows. */
 const CHECK_TIMEOUT_MS = 3_000;
 
-export const defaultRunner: TailscaleRunner = async (args) => {
-  const bin = tailscaleBin();
-  if (!bin) throw new RemoteError(424, `tailscale CLI not found. ${HINT}`);
-  // Own process group, so a timeout also ends a wrapper script's child.
-  const p = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore", detached: true });
-  let stdout = "", stderr = "";
-  let stop: (r: { code: number; stdout: string; stderr: string }) => void = () => {};
-  const stopped = new Promise<{ code: number; stdout: string; stderr: string }>((r) => (stop = r));
-  const end = (code: number) => {
-    try {
-      process.kill(-p.pid, "SIGTERM");
-    } catch {}
-    stop({ code, stdout, stderr });
+/** The Mac app's binary acts as the CLI only when it thinks a terminal started it; launchd gives the daemon no TERM. */
+export function tailscaleEnv(): Record<string, string | undefined> {
+  return { ...process.env, TAILSCALE_BE_CLI: "1" };
+}
+
+/** Printed (with exit code 0) when the Mac app's binary tried to open its window instead of running the command. */
+const GUI_FAILED = /Tailscale GUI failed to start/i;
+
+/** First lines of what Tailscale printed, for error messages. */
+function excerpt(text: string): string {
+  return text.trim().split("\n").slice(0, 6).join("\n");
+}
+
+export function tailscaleRunner(findBin: () => string | null = tailscaleBin): TailscaleRunner {
+  return async (args) => {
+    const bin = findBin();
+    if (!bin) throw new RemoteError(424, `tailscale CLI not found. ${HINT}`);
+    // Own process group, so a timeout also ends a wrapper script's child.
+    const p = Bun.spawn([bin, ...args], { stdout: "pipe", stderr: "pipe", stdin: "ignore", detached: true, env: tailscaleEnv() });
+    let stdout = "", stderr = "";
+    let stop: (r: { code: number; stdout: string; stderr: string }) => void = () => {};
+    const stopped = new Promise<{ code: number; stdout: string; stderr: string }>((r) => (stop = r));
+    const end = (code: number) => {
+      try {
+        process.kill(-p.pid, "SIGTERM");
+      } catch {}
+      stop({ code, stdout, stderr });
+    };
+    const read = async (stream: ReadableStream<Uint8Array>, add: (t: string) => void) => {
+      const dec = new TextDecoder();
+      for await (const chunk of stream) {
+        add(dec.decode(chunk, { stream: true }));
+        if (ENABLE_LINK.test(stdout + stderr)) end(1);
+      }
+    };
+    const timer = setTimeout(() => {
+      stderr += `\n(gave up after ${RUN_TIMEOUT_MS / 1000}s)`;
+      end(124);
+    }, RUN_TIMEOUT_MS);
+    const done = Promise.all([read(p.stdout, (t) => (stdout += t)), read(p.stderr, (t) => (stderr += t)), p.exited])
+      .then(([, , code]) => ({ code, stdout, stderr }));
+    const r = await Promise.race([done, stopped]);
+    clearTimeout(timer);
+    return r;
   };
-  const read = async (stream: ReadableStream<Uint8Array>, add: (t: string) => void) => {
-    const dec = new TextDecoder();
-    for await (const chunk of stream) {
-      add(dec.decode(chunk, { stream: true }));
-      if (ENABLE_LINK.test(stdout + stderr)) end(1);
-    }
-  };
-  const timer = setTimeout(() => {
-    stderr += `\n(gave up after ${RUN_TIMEOUT_MS / 1000}s)`;
-    end(124);
-  }, RUN_TIMEOUT_MS);
-  const done = Promise.all([read(p.stdout, (t) => (stdout += t)), read(p.stderr, (t) => (stderr += t)), p.exited])
-    .then(([, , code]) => ({ code, stdout, stderr }));
-  const r = await Promise.race([done, stopped]);
-  clearTimeout(timer);
-  return r;
-};
+}
+
+export const defaultRunner: TailscaleRunner = tailscaleRunner();
 
 /** The daemon's phone access listener: CKANBAN_REMOTE_PORT, config.json remotePort, else the board port + 1. */
 export function remoteListenPort(boardPort: number, configured?: number): number {
@@ -217,10 +234,14 @@ export class RemoteAccess {
 
   private async tailscale(args: string[]) {
     const r = await this.run(args);
+    if (GUI_FAILED.test(r.stdout + r.stderr)) {
+      throw new RemoteError(502, `tailscale ${args[0]} didn't run: Tailscale tried to open its app window instead. ` +
+        `It said: ${excerpt(r.stderr + "\n" + r.stdout)}`);
+    }
     if (r.code !== 0) {
       const link = (r.stdout + r.stderr).match(ENABLE_LINK)?.[1];
       if (link) throw new RemoteError(424, `Tailscale Serve isn't enabled on your tailnet yet. Enable it at ${link} and try again.`);
-      const msg = (r.stderr || r.stdout).trim().split("\n").slice(0, 6).join("\n");
+      const msg = excerpt(r.stderr || r.stdout);
       throw new RemoteError(502, `tailscale ${args[0]} failed${msg ? `: ${msg}` : ""}`);
     }
     return r.stdout;
@@ -228,12 +249,13 @@ export class RemoteAccess {
 
   /** This Mac's MagicDNS name and the signed-in user's login, from `tailscale status --json`. */
   async identity(): Promise<{ host: string; login: string }> {
+    const out = await this.tailscale(["status", "--json"]);
     let s: any;
     try {
-      s = JSON.parse(await this.tailscale(["status", "--json"]));
-    } catch (e) {
-      if (e instanceof RemoteError) throw e;
-      throw new RemoteError(502, "could not read `tailscale status --json`");
+      s = JSON.parse(out);
+    } catch {
+      const said = excerpt(out);
+      throw new RemoteError(502, `could not read \`tailscale status --json\`${said ? `. Tailscale said: ${said}` : " (it printed nothing)"}`);
     }
     if (s?.BackendState !== "Running") {
       throw new RemoteError(424, `Tailscale is not connected (state: ${s?.BackendState ?? "unknown"}). ${HINT}`);
