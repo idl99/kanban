@@ -32,7 +32,7 @@ import { mcpConfig } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
 import { normalizeTags } from "./tags";
-import { autoHuddlesOn, runCapFor, workspaceOf, type FollowUp, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode } from "./types";
+import { autoHuddlesOn, runCapFor, workspaceOf, type FollowUp, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode, type TicketSource } from "./types";
 import { CLEANUP_TIMEOUT_MS, copySetupFiles, prepareWorktree, runShell, SETUP_TIMEOUT_MS, withBoardText, type SetupOutcome, type SetupResult } from "./worktree-setup";
 
 const INSTALLING = "Installing project dependencies…";
@@ -94,6 +94,8 @@ interface ActiveRun {
   restartRequested?: boolean;
   /** This run started an auto huddle (start_huddle): one per run. */
   autoHuddleStarted?: boolean;
+  /** The user typed a message in the ticket's chat that was handed to this run while it worked (see userAskedRun). */
+  userSteered?: boolean;
   /** Queued messages (ticket.queued) written to this claude process, keyed by id, with the text it was given. */
   inFlight: Map<string, string>;
   /** Queued message this chat run was started with; it leaves the queue once Claude reads the prompt. */
@@ -588,6 +590,7 @@ export class Board {
     // Claude never echoes a local command back: it is read once it is written.
     if (msg.slash === "local") this.dropQueued(run.slug, run.id, [msg.id]);
     else run.inFlight.set(msg.id, text);
+    if (!msg.peer && !msg.fromPlanner && !msg.hostWake && !msg.followUp && !msg.slash) run.userSteered = true;
     return true;
   }
 
@@ -1481,7 +1484,7 @@ export class Board {
   async createTicket(
     slug: string,
     input: {
-      title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; jobId?: string; parentId?: string; planKey?: string; dependsOn?: string[];
+      title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; jobId?: string; source?: TicketSource; parentId?: string; planKey?: string; dependsOn?: string[];
       needs?: string[]; tags?: string[]; important?: boolean;
     },
   ): Promise<Ticket> {
@@ -1677,6 +1680,17 @@ export class Board {
   /** The ticket's current run answers a message the user typed in its chat (see ActiveRun.chat.user). */
   userChatRun(slug: string, id: string): boolean {
     return !!this.runs.get(this.key(slug, id))?.chat?.user;
+  }
+
+  /**
+   * The ticket's current run acts on the user's own words: it answers a message the user typed in its chat (not a
+   * slash command), or the user typed one that was handed to it while it worked. Peer messages, planner messages,
+   * huddle wakes and follow-ups don't count. start_huddle with trigger "user" needs this.
+   */
+  userAskedRun(slug: string, id: string): boolean {
+    const r = this.runs.get(this.key(slug, id));
+    if (!r || r.stopRequested) return false;
+    return (!!r.chat?.user && !r.chat.slash) || !!r.userSteered;
   }
 
   /**

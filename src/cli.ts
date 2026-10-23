@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } f
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { sha256, sumFor } from "./checksum";
-import { boardPort, ClientError } from "./client";
+import { BoardClient, boardPort, ClientError } from "./client";
 import { serveStdio } from "./mcp-server";
 import { runArtifactJob } from "./server/artifact";
 import { LABEL, PLIST_PATH, plistXml } from "./server/launchd";
@@ -33,6 +33,8 @@ Usage:
                        Publish a page to claude.ai (works from headless board runs)
   ckanban artifact read <url> [--out <file>]
                        Save an artifact's page source to a local file
+  ckanban call <service> <tool> ['<json arguments>']
+                       From an automation's check script: call a tool of a service connected for automations
 ${TICKET_USAGE}
   ckanban --version    Print the version
 `;
@@ -44,6 +46,22 @@ async function sh(cmd: string[]): Promise<number> {
 
 function boardUrl(): string {
   return `http://localhost:${boardPort()}`;
+}
+
+/** `ckanban call <service> <tool> [json]` inside an automation's check script: prints the tool's answer (JSON, or its text). */
+async function callCommand(args: string[]) {
+  const [service, tool, raw = "{}"] = args;
+  if (!service || !tool) throw new ClientError("usage: ckanban call <service> <tool> ['<json arguments>']");
+  const token = process.env.CKANBAN_CALL_TOKEN;
+  if (!token) throw new ClientError("ckanban call only works inside an automation's check script");
+  let input: unknown;
+  try {
+    input = JSON.parse(raw);
+  } catch {
+    throw new ClientError(`The arguments must be JSON, e.g. '{"limit": 20}'`);
+  }
+  const result = await new BoardClient().automationCall(token, service, tool, input);
+  console.log(typeof result === "string" ? result : JSON.stringify(result));
 }
 
 /** Board commands print the error alone (no stack) and exit 1. */
@@ -288,6 +306,9 @@ switch (cmd) {
   case "ticket":
   case "tickets":
     await board(() => ticketCommand(process.argv.slice(3)));
+    break;
+  case "call":
+    await board(() => callCommand(process.argv.slice(3)));
     break;
   case "mcp":
     if (process.argv.length === 3) await serveStdio();

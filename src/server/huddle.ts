@@ -73,7 +73,7 @@ import { addHuddleSpend } from "./spend";
 import type { Store } from "./store";
 import { contextTokens, messageCost } from "./ticket-usage";
 import { proposalPreset, teammateProposal, type TeammateProposal } from "./teammate-proposal";
-import { AUTO_HUDDLE_TRIGGERS, autoHuddlesOn, isAutoHuddleTrigger } from "./types";
+import { AUTO_HUDDLE_TRIGGERS, autoHuddlesOn, isAutoHuddleTrigger, USER_HUDDLE_TRIGGER } from "./types";
 import type {
   HandIn, Huddle, HuddleFinding, HuddleLearning, HuddleMessage, HuddleMessageKind, HuddleMode, HuddleParticipant, HuddleSource, HuddleStopReason, Profile, Ticket,
 } from "./types";
@@ -978,7 +978,11 @@ export class Huddles {
    */
   create(
     slug: string, hostId: string, roster: RosterEntry[],
-    opts: { maxParticipants?: number; maxCostUsd?: number; template?: string; auto?: { reason: string; askedCostUsd?: number; trigger?: string } } = {},
+    opts: {
+      maxParticipants?: number; maxCostUsd?: number; template?: string; auto?: { reason: string; askedCostUsd?: number; trigger?: string };
+      /** The ticket's run started it because the user asked in its chat (see startForUser). */
+      byUser?: { reason: string; askedCostUsd?: number };
+    } = {},
   ): Huddle {
     const host = this.store.getTicket(slug, hostId);
     if (!host) throw new HuddleError(404, `ticket ${hostId} not found`);
@@ -992,10 +996,10 @@ export class Huddles {
     const max = Math.max(2, Math.min(32, Math.round(opts.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS)));
     if (opts.maxCostUsd !== undefined && !(Number.isFinite(opts.maxCostUsd) && opts.maxCostUsd > 0)) throw new HuddleError(400, "maxCostUsd must be a positive amount");
     const maxCostUsd = opts.maxCostUsd ?? tpl?.maxCostUsd ?? DEFAULT_MAX_COST_USD;
-    const asked = opts.auto?.askedCostUsd;
+    const asked = opts.auto?.askedCostUsd ?? opts.byUser?.askedCostUsd;
     const budgetNote = opts.maxCostUsd === undefined ? (tpl?.maxCostUsd !== undefined ? " (template default)" : " (default)")
       : asked !== undefined && asked > maxCostUsd ? ` (asked ${money(asked)}, capped at ${money(maxCostUsd)})`
-      : opts.auto ? " (asked by the ticket's run)" : "";
+      : opts.auto ? " (asked by the ticket's run)" : opts.byUser ? " (asked by the user)" : "";
     const open = this.store.listHuddles(slug).find((h) => h.hostTicket === hostId && h.status !== "closed");
     if (open) throw new HuddleError(409, `ticket ${hostId} already has an open huddle (${open.id}); close it first`);
     const presets = this.presetMap(slug);
@@ -1026,10 +1030,10 @@ export class Huddles {
       if (e.host) h.host = ps[0].handle;
     }
     // Templates and auto huddles run with a host by default: their first lead.
-    if (!h.host && (tpl || opts.auto)) h.host = agents.find((p) => p.lead)?.handle ?? null;
+    if (!h.host && (tpl || opts.auto || opts.byUser)) h.host = agents.find((p) => p.lead)?.handle ?? null;
     this.save(slug, h);
     this.bus.emit({ type: "huddle.updated", profile: slug, huddle: this.view(slug, h) });
-    this.system(slug, h.id, `${opts.auto ? "Auto huddle" : "Huddle"} started on ticket ${hostId} "${host.title}"${opts.auto ? ` by its own run (${opts.auto.trigger ? `${opts.auto.trigger}: ` : ""}${opts.auto.reason})` : ""}${tpl ? ` from template ${tpl.label}` : ""} with ${agents.map((p) => `@${p.handle} (${p.role})`).join(", ")}. ${h.host ? `@${h.host} hosts: it hands out the tasks, accepts the hand-ins and sends @main the final report.` : "@main coordinates."} Budget ${money(maxCostUsd)}${budgetNote}.`);
+    this.system(slug, h.id, `${opts.auto ? "Auto huddle" : "Huddle"} started on ticket ${hostId} "${host.title}"${opts.auto ? ` by its own run (${opts.auto.trigger ? `${opts.auto.trigger}: ` : ""}${opts.auto.reason})` : opts.byUser ? ` by its own session because the user asked in the chat (${opts.byUser.reason})` : ""}${tpl ? ` from template ${tpl.label}` : ""} with ${agents.map((p) => `@${p.handle} (${p.role})`).join(", ")}. ${h.host ? `@${h.host} hosts: it hands out the tasks, accepts the hand-ins and sends @main the final report.` : "@main coordinates."} Budget ${money(maxCostUsd)}${budgetNote}.`);
     for (const p of agents) this.kickoff(slug, h.id, p.handle);
     return this.get(slug, h.id);
   }
@@ -1040,7 +1044,7 @@ export class Huddles {
    * An unattended run of the host ticket starts its own review huddle (the HTTP route checks the caller is that run).
    * Refused (403) when the board has auto huddles off, the run isn't unattended, it already started one, or the
    * ticket has an open huddle. While another auto huddle is live on the board, the ticket waits for the slot instead:
-   * the card stays In Progress and freeSlot() wakes it when that one ends.
+   * the card stays In Progress and freeSlot() wakes it when that one ends. Trigger "user" goes to startForUser.
    */
   startAuto(
     slug: string, hostId: string, input: { reason: string; trigger?: string; template?: string; roster?: RosterEntry[]; maxCostUsd?: number },
@@ -1052,6 +1056,7 @@ export class Huddles {
     if (!reason) throw new HuddleError(400, "reason is required: one line on why this work needs a review huddle");
     const propose = "; use propose_huddle to propose one to the user instead (with the same maxCostUsd)";
     if (input.maxCostUsd !== undefined && !(Number.isFinite(input.maxCostUsd) && input.maxCostUsd > 0)) throw new HuddleError(400, "maxCostUsd must be a positive amount");
+    if (input.trigger?.trim() === USER_HUDDLE_TRIGGER) return { huddle: this.startForUser(slug, host, { ...input, reason }), waiting: false, template: input.template?.trim() || "custom" };
     // A ticket with a "## Review huddle" section asked for one in Planning: that counts as opt-in, and gives the defaults.
     const requested = reviewHuddleRequest(host.body);
     const asked = input.maxCostUsd ?? requested?.maxCostUsd;
@@ -1065,7 +1070,7 @@ export class Huddles {
     // The trigger names the rule that called for the review, so the user can check it on the ticket.
     const trigger = input.trigger?.trim();
     if (!isAutoHuddleTrigger(trigger)) {
-      throw new HuddleError(400, `trigger is required: one of ${AUTO_HUDDLE_TRIGGERS.join(", ")} (the rule that calls for this review)`);
+      throw new HuddleError(400, `trigger is required: one of ${[...AUTO_HUDDLE_TRIGGERS, USER_HUDDLE_TRIGGER].join(", ")} (the rule that calls for this review, or ${USER_HUDDLE_TRIGGER} when the user's own message asked for it)`);
     }
     if (trigger === "asked" && !requested) throw new HuddleError(400, `trigger "asked" is only for a ticket with a "${REVIEW_HUDDLE_HEADING}" section; this one has none`);
     if (trigger === "important" && !host.important) throw new HuddleError(400, `trigger "important" is only for a ticket marked ⭐ Important; this one isn't`);
@@ -1094,6 +1099,28 @@ export class Huddles {
     this.board.setAutoHuddle(slug, hostId, { state: "live", reason, trigger, template: template || "custom", at: h.createdAt, huddleId: h.id });
     this.store.addComment(slug, hostId, "ai", `Auto huddle started (${template || "custom roster"}, ${trigger}): ${reason}`);
     return { huddle: h, waiting: false, template: template || "custom" };
+  }
+
+  /**
+   * start_huddle with trigger "user": the user typed in the ticket's chat that a huddle should start now, so the
+   * ticket's run starts it as the user's Start on a proposal card would (not an auto huddle: no board setting, no
+   * slot, the user closes it). The board decides the message was the user's (Board.userAskedRun), not Claude.
+   * Planning and Backlog keep the click: there a huddle would work the ticket before its run does.
+   */
+  private startForUser(slug: string, host: Ticket, input: { reason: string; template?: string; roster?: RosterEntry[]; maxCostUsd?: number }): Huddle {
+    const propose = "; call propose_huddle instead so the user can press Start on the card";
+    if (host.status === "planning" || host.status === "backlog") {
+      throw new HuddleError(403, `in ${host.status === "planning" ? "Planning" : "Backlog"} a huddle only starts when the user presses Start on a proposal card${propose}`);
+    }
+    if (!this.board.userAskedRun(slug, host.id)) {
+      throw new HuddleError(403, `trigger ${USER_HUDDLE_TRIGGER} only works while this ticket's run answers a message the user typed in its chat${propose}`);
+    }
+    const template = input.template?.trim() || undefined;
+    if (!input.roster?.length && !template) throw new HuddleError(400, "pass a template or a roster: the roles the user asked for, each prompt saying what to do, plus a lead (e.g. qa-lead) when there are 2 or more");
+    const maxCostUsd = input.maxCostUsd === undefined ? undefined : Math.min(input.maxCostUsd, AUTO_MAX_COST_USD);
+    const h = this.create(slug, host.id, input.roster ?? [], { template, maxCostUsd, byUser: { reason: input.reason, askedCostUsd: input.maxCostUsd } });
+    this.store.addComment(slug, host.id, "ai", `Huddle started because the user asked in the chat (${template ?? "custom roster"}): ${input.reason}`);
+    return h;
   }
 
   /** The board's live auto huddles (at most one, unless the user resumed a stopped one). */

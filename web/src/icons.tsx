@@ -79,3 +79,4 @@ export function Logo({ size = 22 }: { size?: number }) {
     </svg>
   );
 }
+export const LoopIcon = (p: IconProps) => svg(<path d="M3 8a5 5 0 0 1 8.6-3.4M13 8a5 5 0 0 1-8.6 3.4M11.8 2v3h-3M4.2 14v-3h3" />, p);

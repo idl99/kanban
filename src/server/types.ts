@@ -68,6 +68,11 @@ export const autoHuddlesOn = (p: Pick<Profile, "autoHuddles"> | null | undefined
 export const AUTO_HUDDLE_TRIGGERS = ["security", "data", "payments", "important", "asked"] as const;
 export type AutoHuddleTrigger = (typeof AUTO_HUDDLE_TRIGGERS)[number];
 export const isAutoHuddleTrigger = (v: unknown): v is AutoHuddleTrigger => AUTO_HUDDLE_TRIGGERS.includes(v as AutoHuddleTrigger);
+/**
+ * start_huddle's trigger when the user's own chat message asked for a huddle now: it starts like the user's Start on a
+ * proposal card (not an auto huddle), so it needs no board setting and takes no auto-huddle slot.
+ */
+export const USER_HUDDLE_TRIGGER = "user";
 
 export interface AutoHuddle {
   state: "waiting" | "live";
@@ -150,6 +155,8 @@ export interface Ticket {
   scheduleId?: string | null;
   /** Set on tickets created by a one-time scheduled job (see Job). */
   jobId?: string | null;
+  /** Set on tickets an automation loop made from an event in another service (see TicketSource). */
+  source?: TicketSource | null;
   /** Planner ticket whose Planning chat proposed this one. Missing on most tickets. */
   parentId?: string | null;
   /** Short name siblings use in dependsOn (from the planner's proposal). */
@@ -221,6 +228,10 @@ export interface Ticket {
   shareLinks?: ShareLink[];
   /** Teammate cards in this ticket's chat (propose_teammate) the user answered, by entry uuid (the tool_use id). */
   teammateCards?: Record<string, TeammateCardState>;
+  /** Automation cards in this ticket's chat (propose_automation) the user saved, by entry uuid: the automation made. */
+  automationCards?: Record<string, { loopId: string; at: string }>;
+  /** Made by Automations → Set up with Claude: its Planning chat sets up an automation instead of shaping a ticket. */
+  automationSetup?: boolean;
   createdAt: string;
   updatedAt: string;
   body: string;
@@ -312,6 +323,76 @@ export interface BranchPoint {
   at: string;
   /** Source title at branch time (shown if the source is deleted later). */
   sourceTitle: string;
+}
+
+/** Where a ticket came from: the item in the other service (e.g. a Linear issue) and the automation that made it. */
+export interface TicketSource {
+  /** Display name of the service. */
+  provider: string;
+  label: string;
+  /** "" when the item had no link. */
+  url: string;
+  loopId: string;
+}
+
+/** Columns an automation may put its tickets in. Planning and Ready start Claude by themselves (see Loop.autoStart). */
+export type LoopColumn = "backlog" | "planning" | "ready";
+
+/**
+ * An automation of one board: a check script the board runs on a timer, without Claude. Each item it finds for the
+ * first time becomes a ticket. The script file sits next to this one (loops/<id>.sh), pinned by its hash.
+ */
+export interface Loop {
+  /** Format of this file; a loop with a newer one is shown as unsupported and left alone. */
+  version: number;
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** Display name of what it watches ("Linear"): the card's link and the outside-content label say it. */
+  service: string;
+  /** Board passes (automation-passes.json) its script may use. */
+  passes: string[];
+  /** sha256 of the script when the user saved it: a script changed since then doesn't run. */
+  scriptHash: string;
+  everyMinutes: number;
+  column: LoopColumn;
+  /** The user switched on that its tickets start Claude by themselves (Planning or Ready). */
+  autoStart: boolean;
+  /** Claude looks at each new item first (a side call with no tools) and decides whether it needs a ticket. */
+  askClaude: { on: boolean; prompt: string };
+  /** Ticket description with {{title}}, {{link}}, {{service}}; the copied text is added below as a fenced block. */
+  instructions: string;
+  /** The tools `ckanban call` may use, learned from the first check after a save. Null: not learned yet. */
+  allowedTools: string[] | null;
+  createdAt: string;
+  updatedAt: string;
+  lastCheckedAt: string | null;
+  lastFiredAt: string | null;
+  /** Why the last check failed (cleared by the next good one). */
+  lastError: string | null;
+}
+
+/** An item of the last check, for the editor's "Last check found". */
+export interface LoopSeenItem {
+  id: string;
+  title: string;
+  link?: string;
+  /** new: became a ticket; skipped: Claude said no ticket; seen: found before; first: found by the first check. */
+  state: "new" | "skipped" | "seen" | "first";
+  ticketId?: string;
+  note?: string;
+}
+
+/** What a loop remembers between checks (loops/<id>.state.json). */
+export interface LoopState {
+  /** Every item id it has found, kept for good: the same item never makes a second ticket, also after a restart. */
+  seen: string[];
+  /** False until the first check after it was switched on: that check only notes what is already there. */
+  primed: boolean;
+  failures: number;
+  backoffUntil: string | null;
+  lastFound: number;
+  lastItems: LoopSeenItem[];
 }
 
 /** Recurring ticket template: on each cron tick the board creates a ticket from it and runs it. */

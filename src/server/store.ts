@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import YAML from "yaml";
 import type {
-  ActivityEntry, Comment, Config, Huddle, HuddleMessage, Job, OutputFile, Profile, Schedule, ScheduleHistoryEntry, Status, Ticket, TicketMode,
+  ActivityEntry, Comment, Config, Huddle, HuddleMessage, Job, Loop, LoopState, OutputFile, Profile, Schedule, ScheduleHistoryEntry, Status, Ticket, TicketMode, TicketSource,
 } from "./types";
 import { cleanPresets, type HuddlePreset } from "./huddle-presets";
 import { cleanTemplates, type HuddleTemplate } from "./huddle-templates";
@@ -168,7 +168,7 @@ export class Store {
   createTicket(
     slug: string,
     input: {
-      title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; jobId?: string; parentId?: string; planKey?: string; dependsOn?: string[];
+      title: string; body: string; status: Status; mode?: TicketMode; scheduleId?: string; jobId?: string; source?: TicketSource; parentId?: string; planKey?: string; dependsOn?: string[];
       needs?: string[]; tags?: string[]; important?: boolean;
     },
   ): Ticket {
@@ -179,6 +179,7 @@ export class Store {
       lastRunAt: null, runCount: 0, error: null, createdAt: at, updatedAt: at, body: input.body,
       ...(input.scheduleId ? { scheduleId: input.scheduleId } : {}),
       ...(input.jobId ? { jobId: input.jobId } : {}),
+      ...(input.source ? { source: input.source } : {}),
       ...(input.parentId ? { parentId: input.parentId } : {}),
       ...(input.planKey ? { planKey: input.planKey } : {}),
       ...(input.dependsOn?.length ? { dependsOn: input.dependsOn } : {}),
@@ -355,6 +356,65 @@ export class Store {
 
   readScheduleHistory(slug: string, id: string): ScheduleHistoryEntry[] {
     return readJsonl<ScheduleHistoryEntry>(join(this.schedulesDir(slug), `${id}.history.jsonl`));
+  }
+
+  private loopsDir(slug: string) {
+    return join(this.profileDir(slug), "loops");
+  }
+
+  /** An automation's check script, next to its settings (the loop keeps the hash it was saved with). */
+  loopScriptFile(slug: string, id: string): string {
+    return join(this.loopsDir(slug), `${id}.sh`);
+  }
+
+  saveLoopScript(slug: string, id: string, script: string): void {
+    atomicWrite(this.loopScriptFile(slug, id), script);
+  }
+
+  listLoops(slug: string): Loop[] {
+    const dir = this.loopsDir(slug);
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir)
+      .filter((f) => f.endsWith(".json") && !f.endsWith(".state.json"))
+      .map((f) => this.getLoop(slug, f.slice(0, -5)))
+      .filter((l): l is Loop => l !== null)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  getLoop(slug: string, id: string): Loop | null {
+    if (!/^[a-z0-9]+$/.test(id)) return null;
+    const file = join(this.loopsDir(slug), `${id}.json`);
+    if (!existsSync(file)) return null;
+    try {
+      return JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      return null;
+    }
+  }
+
+  saveLoop(slug: string, l: Loop): void {
+    atomicWrite(join(this.loopsDir(slug), `${l.id}.json`), JSON.stringify(l, null, 2) + "\n");
+  }
+
+  deleteLoop(slug: string, id: string): void {
+    rmSync(join(this.loopsDir(slug), `${id}.json`), { force: true });
+    rmSync(join(this.loopsDir(slug), `${id}.state.json`), { force: true });
+    rmSync(this.loopScriptFile(slug, id), { force: true });
+  }
+
+  getLoopState(slug: string, id: string): LoopState {
+    const file = join(this.loopsDir(slug), `${id}.state.json`);
+    const empty: LoopState = { seen: [], primed: false, failures: 0, backoffUntil: null, lastFound: 0, lastItems: [] };
+    if (!existsSync(file)) return empty;
+    try {
+      return { ...empty, ...JSON.parse(readFileSync(file, "utf8")) };
+    } catch {
+      return empty;
+    }
+  }
+
+  saveLoopState(slug: string, id: string, s: LoopState): void {
+    atomicWrite(join(this.loopsDir(slug), `${id}.state.json`), JSON.stringify(s) + "\n");
   }
 
   private jobsDir(slug: string) {

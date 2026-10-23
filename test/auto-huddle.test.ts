@@ -403,7 +403,8 @@ test("the auto huddle prompt section: unattended run prompts only, when the boar
   // Chats and Planning never get it.
   expect(planningPrompt(t, "/t.md")).not.toContain("start_huddle");
   expect(chatPrompt(t, "hi", "refine", "/o")).not.toContain("start_huddle");
-  expect(chatPrompt(t, "hi", "act", "/o")).not.toContain("start_huddle");
+  // An act chat starts a huddle only when the user's message asks for one (trigger user), never the auto rule.
+  expect(chatPrompt(t, "hi", "act", "/o")).not.toContain("# Auto huddle");
 });
 
 const ASKS = "## Goal\nDo it\n\n## Review huddle\nTemplate: `auto-review-important`\nCheck the login copy.\nBudget: ~$30\n\n## Acceptance criteria\n- works";
@@ -515,4 +516,100 @@ test("the UI asks before a run and the user's huddle work the same ticket at onc
   expect(((await q.json()) as { confirm: string }).confirm).toBe("run-active");
   expect(store.listHuddles("p").some((h) => h.hostTicket === w.id)).toBe(false);
   expect((await start({ confirmParallel: true })).status).toBe(201);
+});
+
+test("start_huddle trigger user: the user's own chat message starts a huddle, with Auto huddles off", async () => {
+  store.saveProfile({ ...store.getProfile("p")!, autoHuddles: false });
+  const review = await board.createTicket("p", { title: "Calls", body: "Do it", status: "review" });
+  const working = await inProgress("Timer");
+  board.userAskedRun = (_slug, id) => id === review.id || id === working.id;
+  const asked = (reason: string, extra: Record<string, unknown> = {}) => ({ trigger: "user", reason, roster: SQUAD, ...extra });
+  let r = await callTool("start_huddle", asked("check the dialled number and break the timer"), runCtx(review.id));
+  expect(r.isError).toBeUndefined();
+  expect(text(r)).toContain("started as the user asked");
+  expect(text(r)).toContain("@qa-lead hosts it");
+  const h = store.listHuddles("p").find((x) => x.hostTicket === review.id)!;
+  // Like the user's Start on a card: no auto huddle state, no slot; its first lead hosts.
+  expect(h.auto).toBeUndefined();
+  expect(h.host).toBe("qa-lead");
+  expect(h.status).toBe("live");
+  expect(ticket(review.id).autoHuddle).toBeFalsy();
+  expect(store.readHuddleMessages("p", h.id)[0].text).toContain("because the user asked in the chat (check the dialled number and break the timer)");
+  expect(store.listComments("p", review.id).at(-1)!.text).toBe("Huddle started because the user asked in the chat (custom roster): check the dialled number and break the timer");
+  // An In Progress ticket starts one too, alongside its run; a budget over the ceiling is capped.
+  r = await callTool("start_huddle", asked("review the timer", { maxCostUsd: 250 }), runCtx(working.id));
+  expect(r.isError).toBeUndefined();
+  const w = store.listHuddles("p").find((x) => x.hostTicket === working.id)!;
+  expect(w.maxCostUsd).toBe(AUTO_MAX_COST_USD);
+  expect(store.readHuddleMessages("p", w.id)[0].text).toContain("Budget $100.00 (asked $250.00, capped at $100.00).");
+  // One open huddle per ticket.
+  r = await callTool("start_huddle", asked("again"), runCtx(review.id));
+  expect(r.isError).toBe(true);
+  expect(text(r)).toContain("already has an open huddle");
+});
+
+test("start_huddle trigger user: refused unless the run answers the user's own message, and in Planning or Backlog", async () => {
+  const t = await board.createTicket("p", { title: "Calls", body: "Do it", status: "review" });
+  const asked = { trigger: "user", reason: "review it", roster: SQUAD };
+  // A chat reply to a peer, planner, huddle wake or follow-up: not the user's words.
+  board.userAskedRun = () => false;
+  let r = await callTool("start_huddle", asked, runCtx(t.id));
+  expect(r.isError).toBe(true);
+  expect(text(r)).toContain("message the user typed");
+  expect(text(r)).toContain("propose_huddle");
+  // Planning and Backlog keep the click, even for the user's own message.
+  board.userAskedRun = () => true;
+  for (const status of ["planning", "backlog"] as const) {
+    store.updateTicket("p", t.id, { status });
+    r = await callTool("start_huddle", asked, runCtx(t.id));
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("presses Start");
+  }
+  store.updateTicket("p", t.id, { status: "review" });
+  // It needs the roles to start.
+  r = await callTool("start_huddle", { trigger: "user", reason: "review it" }, runCtx(t.id));
+  expect(r.isError).toBe(true);
+  expect(text(r)).toContain("pass a template or a roster");
+  // Another ticket's run can't start it for this ticket.
+  const res = await fetch(`${client.url}/api/profiles/p/huddles/auto`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(asked),
+  });
+  expect(res.status).toBe(403);
+  expect(store.listHuddles("p")).toHaveLength(0);
+});
+
+test("userAskedRun: a reply to the user's chat message or a message they steered in; not peers, planners or slash commands", async () => {
+  process.env.FAKE_STEP_MS = "150";
+  try {
+    const t = await board.createTicket("p", { title: "Calls", body: "Do it", status: "review" });
+    const idle = () => until(() => !board.isRunning("p", t.id), 15000);
+    expect(board.userAskedRun("p", t.id)).toBe(false);
+    await board.chat("p", t.id, "start a huddle");
+    expect(board.userAskedRun("p", t.id)).toBe(true);
+    await idle();
+    expect(board.userAskedRun("p", t.id)).toBe(false);
+    for (const opts of [{ peer: true }, { fromPlanner: true }, { slash: "prompt" as const }]) {
+      await board.chat("p", t.id, "/huddle start", opts);
+      expect(board.isRunning("p", t.id)).toBe(true);
+      expect(board.userAskedRun("p", t.id)).toBe(false);
+      await idle();
+    }
+    // The user types while a peer reply runs: it is handed to that run, which now acts on their words.
+    await board.chat("p", t.id, "reply to the other ticket", { peer: true });
+    await board.chat("p", t.id, "also start a huddle");
+    await until(() => board.userAskedRun("p", t.id), 5000);
+    await idle();
+  } finally {
+    delete process.env.FAKE_STEP_MS;
+  }
+}, 40000);
+
+test("the chat prompt outside Planning starts a huddle the user asks for; Planning keeps the card", async () => {
+  const t = await board.createTicket("p", { title: "Calls", body: "Do it", status: "review" });
+  const act = chatPrompt(t, "start a huddle", "act", "/out");
+  expect(act).toContain("with trigger `user`");
+  expect(act).toContain("Never run your own helper sessions");
+  expect(act).toContain("propose the same huddle with `propose_huddle`");
+  const refine = chatPrompt({ ...t, status: "planning" }, "start a huddle", "refine", "/out");
+  expect(refine).not.toContain("trigger `user`");
 });

@@ -16,6 +16,10 @@ export type BusEvent =
   | { type: "mcp.updated"; state: McpState }
   /** A schedule was created, changed (fired, paused, edited) or deleted (schedule: null). */
   | { type: "schedule.updated"; profile: string; id: string; schedule: Schedule | null }
+  /** An automation loop was created, changed (checked, fired, edited) or deleted (loop: null); `loop` is its LoopView. */
+  | { type: "loop.updated"; profile: string; id: string; loop: unknown | null }
+  /** An integration account was added, signed in, changed or removed; clients refetch. */
+  | { type: "integration.updated" }
   /** A one-time job was created, changed (fired, finished, missed, edited) or cancelled. */
   | { type: "job.updated"; profile: string; id: string; job: Job | null }
   /** Prompt snippets changed (any scope); clients refetch. */

@@ -2,10 +2,11 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { api, copy, COLUMNS, onReconnect, subscribe, waitsForSlot, type Health, type InboxItem, type Job, type McpState, type Profile, type Schedule, type Status, type Ticket } from "./api";
 import { avatarColor, avatarLetter } from "./avatar";
 import { BugReportDialog } from "./BugReportDialog";
+import { AutomationsDialog } from "./AutomationsDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu, type MenuItem } from "./HeaderMenu";
 import { boardTags, hasTags, parseSearch, tagStyle } from "./tagText";
-import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, DeviceIcon, GearIcon, KeyboardIcon, Logo, PlugIcon, PlusIcon, SearchIcon, TeamIcon, TerminalIcon } from "./icons";
+import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, DeviceIcon, GearIcon, KeyboardIcon, LoopIcon, Logo, PlugIcon, PlusIcon, SearchIcon, TeamIcon, TerminalIcon } from "./icons";
 import { Inbox } from "./Inbox";
 import { NowView } from "./NowView";
 import { NotificationsDialog } from "./NotificationsDialog";
@@ -201,6 +202,10 @@ export function App() {
     setSchedulesOpen(true);
   }, []);
   const [snippetsOpen, setSnippetsOpen] = useState(false);
+  // Automations (this board) and the board's passes in Connections: they fetch for themselves and refetch when this
+  // counter moves (the server says an automation or a pass changed).
+  const [automationsOpen, setAutomationsOpen] = useState(false);
+  const [autoTick, setAutoTick] = useState(0);
   const schedulesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const phone = usePhone();
   // Phone home: the Now list or the board (bottom tab bar); More opens the header menu as a sheet.
@@ -392,7 +397,7 @@ export function App() {
       const boards = live.current.profiles ?? [];
       const at = boards.findIndex((p) => p.slug === slug);
       if (e.metaKey || e.ctrlKey || e.altKey || isTyping(e)) return;
-      if (openId || profileDialog || newTicket || connections || schedulesOpen || anyLayerOpen() || document.querySelector(".overlay")) return;
+      if (openId || profileDialog || newTicket || connections || schedulesOpen || automationsOpen || anyLayerOpen() || document.querySelector(".overlay")) return;
       // Plain 1…9 (Alt+digit is taken by Chrome's tab switching); the ticket panel's questions form uses digits too.
       const digit = e.shiftKey || e.isComposing ? null : boardDigit(e.code);
       if (digit !== null) {
@@ -447,7 +452,7 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [openId, profileDialog, newTicket, connections, schedulesOpen, slug, switchBoard, dockOpen, dockShown]);
+  }, [openId, profileDialog, newTicket, connections, schedulesOpen, automationsOpen, slug, switchBoard, dockOpen, dockShown]);
 
   const runInTerminal = useCallback((text: string) => {
     setDockOpen(true);
@@ -480,6 +485,10 @@ export function App() {
       subscribe((e) => {
         if (e.type === "mcp.updated") {
           setMcp(e.state);
+          return;
+        }
+        if (e.type === "integration.updated" || (e.type === "loop.updated" && e.profile === slug)) {
+          setAutoTick((n) => n + 1);
           return;
         }
         if (e.type === "restart.updated") {
@@ -628,6 +637,9 @@ export function App() {
             badge: scheduleFails > 0 ? <span className="need-chip">{scheduleFails}</span>
               : schedules && schedules.length > 0 ? <span className="muted small">{schedules.filter((s) => s.enabled).length} active</span> : null,
           }, {
+            label: "Automations", icon: <LoopIcon />, onSelect: () => setAutomationsOpen(true),
+            title: "Check a service on a timer, without Claude, and turn new items into tickets on this board",
+          }, {
             label: "Snippets", icon: <AtIcon />, onSelect: () => setSnippetsOpen(true),
             title: "Reusable prompt text: type @name in a ticket or the chat to insert it",
           }] : []),
@@ -697,6 +709,7 @@ export function App() {
     ] : []),
     ...(inbox.length ? [{ id: "inbox", label: `Open inbox (${inbox.length} need you)`, run: () => setInboxRequest(Date.now()) }] : []),
     ...(profile ? [{ id: "schedules", label: "Schedules", icon: <ClockIcon size={14} />, run: () => openSchedules() }] : []),
+    ...(profile ? [{ id: "automations", label: "Automations", icon: <LoopIcon size={14} />, run: () => setAutomationsOpen(true) }] : []),
     { id: "connections", label: "Connections", icon: <PlugIcon size={14} />, run: () => setConnections(true) },
     ...(profile ? [{ id: "snippets", label: "Snippets", icon: <AtIcon size={14} />, run: () => setSnippetsOpen(true) }] : []),
     { id: "usage", label: "Usage", run: () => setUsageRequest(Date.now()) },
@@ -917,7 +930,7 @@ export function App() {
       )}
 
       {connections && (
-        <ConnectionsDialog state={mcp} onClose={() => setConnections(false)}
+        <ConnectionsDialog state={mcp} refreshKey={autoTick} onClose={() => setConnections(false)}
           onRunInTerminal={profile && health?.pty !== false ? (cmd) => { setConnections(false); runInTerminal(cmd); } : undefined} />
       )}
       {shortcuts && <ShortcutsDialog onClose={() => setShortcuts(false)} />}
@@ -937,6 +950,11 @@ export function App() {
       {schedulesOpen && profile && (
         <SchedulesDialog profile={profile} schedules={schedules} jobs={jobs} jobFilter={jobFilter} onJobFilter={setJobFilter} tickets={tickets} onClose={() => setSchedulesOpen(false)}
           onOpenTicket={(id) => { setSchedulesOpen(false); openTicket(id); }} />
+      )}
+      {automationsOpen && profile && (
+        <AutomationsDialog profile={profile} boards={profiles ?? []} refreshKey={autoTick} onClose={() => setAutomationsOpen(false)}
+          onOpenTicket={(id) => { setAutomationsOpen(false); openTicket(id); }}
+          onOpenConnections={() => { setAutomationsOpen(false); setConnections(true); }} />
       )}
       {snippetsOpen && profile && <SnippetsDialog profile={profile} onClose={() => setSnippetsOpen(false)} />}
       {open && profile && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
