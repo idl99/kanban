@@ -76,19 +76,23 @@ function pathsIn(html: string): string[] {
   return [...out];
 }
 
-/** Paths of files that exist become chips that open the file (FileViewer.tsx). */
+/** Paths of files that exist become links that open the file (FileViewer.tsx). Long paths break after a "/". */
 function fileChips(doc: Document, files: Set<string>) {
+  const breakable = (text: string) => {
+    const frag = doc.createDocumentFragment();
+    text.split(/(?<=\/)/).forEach((part, i) => {
+      if (i) frag.append(doc.createElement("wbr"));
+      frag.append(part);
+    });
+    return frag;
+  };
   const chip = (path: string, content: Node) => {
     const a = doc.createElement("a");
     a.className = "path-chip";
     a.href = "#";
     a.dataset.path = path;
     a.title = `Open ${path}`;
-    const icon = doc.createElement("span");
-    icon.className = "path-chip-icon";
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = "📄";
-    a.append(icon, content);
+    a.append(content);
     return a;
   };
   const { codes, texts } = pathSpots(doc);
@@ -97,6 +101,7 @@ function fileChips(doc: Document, files: Set<string>) {
     if (!p || !files.has(p)) continue;
     const a = chip(p, doc.createTextNode(""));
     c.replaceWith(a);
+    c.replaceChildren(breakable(c.textContent ?? ""));
     a.append(c);
   }
   for (const node of texts) {
@@ -106,7 +111,7 @@ function fileChips(doc: Document, files: Set<string>) {
     const frag = doc.createDocumentFragment();
     let last = 0;
     for (const m of hits) {
-      frag.append(text.slice(last, m.at), chip(m.path, doc.createTextNode(m.path)));
+      frag.append(text.slice(last, m.at), chip(m.path, breakable(m.path)));
       last = m.at + m.path.length;
     }
     frag.append(text.slice(last));

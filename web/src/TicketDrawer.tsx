@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, COLUMNS, safeHref, startWorkTarget, subscribe, type ClaudeSession, type Job, type Profile, type Status, type Ticket } from "./api";
 import { outcomeBadge } from "./Card";
 import { JobChip } from "./Jobs";
@@ -324,7 +324,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [phone]);
-  const titleRef = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLTextAreaElement>(null);
+  const revertTitle = useRef(false);
   // Leaving for the neighbouring ticket: keep a title edit, and don't drop an unsaved description edit.
   const step = (id: string | null | undefined) => {
     if (!id || !nav || editing || confirmDelete || confirmStart || confirmBranch || confirmStop || picking || reportingBug) return;
@@ -362,6 +363,31 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const { dragging, handle } = panel;
   const width = (tab === "changes" || tab === "huddle") && !panel.custom ? clampWidth(CHANGES_WIDTH) : panel.width;
   const [descScrolled, setDescScrolled] = useState(false);
+  // The tab bar scrolls sideways on narrow screens: fade its right edge while tabs are hidden there,
+  // and keep the open tab in view.
+  const tabsRef = useRef<HTMLElement>(null);
+  const [tabsMore, setTabsMore] = useState(false);
+  const checkTabs = () => {
+    const el = tabsRef.current;
+    setTabsMore(!!el && el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  };
+  useEffect(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(checkTabs);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  useEffect(() => {
+    const el = tabsRef.current;
+    const on = el?.querySelector<HTMLElement>("button.active");
+    if (el && on) {
+      const r = on.getBoundingClientRect();
+      const n = el.getBoundingClientRect();
+      if (r.left < n.left || r.right > n.right) el.scrollLeft += r.left - n.left - (n.width - r.width) / 2;
+    }
+    checkTabs();
+  }, [tab, tabs.length]);
 
   const links = (ticket.links ?? []).filter((l) => safeHref(l.url));
   const loadOutputs = () => api.outputs(slug, ticket.id).then((o) => setOutputCount(o.length)).catch(() => {});
@@ -389,6 +415,19 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   useEffect(() => {
     if (document.activeElement !== titleRef.current) setTitle(ticket.title);
   }, [ticket.title]);
+  // The title box grows to fit the whole title; it re-measures when the text or the panel's width changes.
+  const growTitle = () => {
+    const el = titleRef.current;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)}px`;
+  };
+  useLayoutEffect(growTitle, [title, width, detailsShown, phone]);
+  useEffect(() => {
+    window.addEventListener("resize", growTitle);
+    return () => window.removeEventListener("resize", growTitle);
+  }, []);
 
   const act = async (fn: () => Promise<unknown>) => {
     try {
@@ -525,16 +564,28 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   };
   const cancelEdit = () => { setBody(baseBody); setEditing(false); images.clearError(); };
 
+  const usageTitle = !usage ? "" : usage.totals.pctCurrentWindow === null ? missingPctReason(usage)
+    : "This ticket's ≈ share of the current 5h plan window, and its API-equivalent cost";
+  // On a phone the run cost joins the column's help line when it is the only result chip.
+  const usageInline = phone && !!col && hasUsage && !links.length && outputCount === 0;
   // Status, actions, links and the description: a sidebar on wider screens, the Ticket tab on phones.
   const details = (
     <div className="panel-details">
       <div className="details-pinned">
-        <div className="field-row">
-          <span className="field-key">Status</span>
-          <Select className="status-select" ariaLabel="Status" value={ticket.status} onChange={(s) => setStatus(s as Status)}
-            options={COLUMNS.map((c) => ({ value: c.id, label: c.label, hint: c.hint, disabled: c.id === "in_progress" && !working }))} />
-        </div>
-        {col && <p className="field-help">{col.claude && <SparkIcon className="icon spark" />}{col.hint}</p>}
+        {/* Phones move the ticket with the header's picker, which shows the column. */}
+        {!phone && (
+          <div className="field-row">
+            <span className="field-key">Status</span>
+            <Select className="status-select" ariaLabel="Status" value={ticket.status} onChange={(s) => setStatus(s as Status)}
+              options={COLUMNS.map((c) => ({ value: c.id, label: c.label, hint: c.hint, disabled: c.id === "in_progress" && !working }))} />
+          </div>
+        )}
+        {col && (
+          <p className="field-help">
+            {col.claude && <SparkIcon className="icon spark" />}{col.hint}
+            {usageInline && <> · <button className="link-btn usage-inline" onClick={() => setTab("usage")} title={usageTitle}>{usageChipText(usage!)}</button></>}
+          </p>
+        )}
 
         <div className="action-stack">
           {working && <button className="btn danger" disabled={stopping} onClick={stop} title={`Stop Claude (${MOD}.)`}>{stopping ? "Stopping…" : "Stop Claude"}<KeyHint keys="⌘." /></button>}
@@ -635,11 +686,10 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
 
         {children.length > 0 && <PlanSummary ticket={ticket} children={children} onOpen={() => setTab("plan")} />}
 
-        {(!!links.length || outputCount > 0 || hasUsage) && (
+        {(!!links.length || outputCount > 0 || (hasUsage && !usageInline)) && (
           <div className="result-chips" aria-label="Results">
-            {usage && hasUsage && (
-              <button className="result-chip usage-chip" onClick={() => setTab("usage")}
-                title={usage.totals.pctCurrentWindow === null ? missingPctReason(usage) : "This ticket's ≈ share of the current 5h plan window, and its API-equivalent cost"}>
+            {usage && hasUsage && !usageInline && (
+              <button className="result-chip usage-chip" onClick={() => setTab("usage")} title={usageTitle}>
                 {usageChipText(usage)}
               </button>
             )}
@@ -710,21 +760,17 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             </svg>
           </button>}
           <StarToggle on={!!ticket.important} onChange={toggleStar} keyHint="S" />
-          <input ref={titleRef} className="title-input" value={title} onChange={(e) => setTitle(e.target.value)} onBlur={saveTitle}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-              else if (e.key === "Escape") { setTitle(ticket.title); (e.target as HTMLInputElement).blur(); }
-            }} aria-label="Title" />
-          <span className="save-state" aria-live="polite">
-            {titleSave === "saving" && <span className="muted small">Saving…</span>}
-            {titleSave === "saved" && <span className="saved small"><CheckIcon size={12} /> Saved</span>}
-          </span>
           {att && (
             <span className={`your-turn inline att-${att.kind}`}>
               <span className="yt-dot" aria-hidden /><span className="yt-label">Your turn</span><span className="yt-why">{att.kind === "limit" ? limitLabel(ticket) : att.label}</span>
             </span>
           )}
           {!att && !ticket.huddleBusy && outcomeBadge(ticket)}
+          <span className="save-state" aria-live="polite">
+            {titleSave === "saving" && <span className="muted small">Saving…</span>}
+            {titleSave === "saved" && <span className="saved small"><CheckIcon size={12} /> Saved</span>}
+          </span>
+          <span className="head-spacer" />
           <JobChip jobs={jobs} ticketId={ticket.id} onOpen={onOpenJobs} />
           <HelpMenu help={help} phone={phone} onAsk={(kind) => { setTab("chat"); void help.ask(kind); }} />
           {nav && (
@@ -737,7 +783,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             </span>
           )}
           {phone && (
-            <Select className="phone-move" ariaLabel="Move to column" value={ticket.status} onChange={(s) => setStatus(s as Status)} renderValue={() => "Move"}
+            <Select className="phone-move" ariaLabel="Move to column" value={ticket.status} onChange={(s) => setStatus(s as Status)} renderValue={(o) => o?.label ?? "Move"}
               menuMaxHeight={Infinity} // all columns fit on a phone screen; only scroll when the screen is too short
               options={COLUMNS.map((c) => ({ value: c.id, label: c.label, hint: c.hint, disabled: c.id === "in_progress" && !working }))} />
           )}
@@ -753,12 +799,24 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             onDelete={() => setConfirmDelete(true)} />
           {!phone && <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /><KeyHint keys="Esc" /></button>}
         </header>
-        <div className="panel-tags">
+        {/* The whole title, wrapping to as many lines as it needs, under the buttons. */}
+        <div className="panel-title">
+          <textarea ref={titleRef} className="title-input" rows={1} value={title} aria-label="Title"
+            onChange={(e) => setTitle(e.target.value.replace(/\s*\n\s*/g, " "))}
+            // Esc's blur runs with this render's title, so it is told to skip the save.
+            onBlur={() => { if (revertTitle.current) revertTitle.current = false; else saveTitle(); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); e.currentTarget.blur(); }
+              else if (e.key === "Escape") { revertTitle.current = true; setTitle(ticket.title); e.currentTarget.blur(); }
+            }} />
+        </div>
+        {/* Tags, model and effort share one row. */}
+        <div className="panel-meta">
           <TagEditor tags={ticket.tags ?? []} suggested={ticket.suggestedTags ?? []} known={boardTags(tickets)}
             onChange={(tags) => api.updateTicket(slug, ticket.id, { tags }).catch((e) => onError(`Tags not saved: ${e.message}`))}
             onSuggested={(suggestedTags) => api.updateTicket(slug, ticket.id, { suggestedTags }).catch((e) => onError(`Tags not saved: ${e.message}`))} />
+          <RunSettings profile={profile} ticket={ticket} onError={onError} />
         </div>
-        <RunSettings profile={profile} ticket={ticket} onError={onError} />
 
         <div ref={bodyRef} className={`panel-body ${detailsShown ? "" : "details-closed"} ${side.dragging ? "resizing" : ""}`}
           style={{ "--side-w": `${side.width}px` } as React.CSSProperties}>
@@ -804,7 +862,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
                 <StallActions slug={slug} ticket={ticket} onError={onError} small />
               </div>
             )}
-            <nav className="tabs" role="tablist" aria-label="Ticket">
+            <nav ref={tabsRef} className={`tabs${tabsMore ? " more-right" : ""}`} role="tablist" aria-label="Ticket" onScroll={checkTabs}>
               {phone && (
                 <button role="tab" aria-selected={tab === "ticket"} className={tab === "ticket" ? "active" : ""} onClick={() => setTab("ticket")}>Ticket</button>
               )}

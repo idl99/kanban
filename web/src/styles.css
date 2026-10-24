@@ -349,6 +349,11 @@ textarea { resize: vertical; font-size: 13.5px; }
 .tabs { display: flex; gap: 2px; padding: 0 20px; border-bottom: 1px solid var(--border); }
 .tabs button { border: 0; background: none; padding: 8px 12px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; font-weight: 560; }
 .tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+/* More tabs off the right edge (the ticket panel on a narrow screen): fade it so the bar reads as scrollable. */
+.tabs.more-right {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+}
 
 /* Long links, paths and inline code wrap instead of widening the chat on phones. */
 .md { overflow-wrap: anywhere; min-width: 0; }
@@ -816,8 +821,14 @@ body > .output-view.reader { position: fixed; }
 .ticket-nav .icon-btn:disabled { opacity: 0.35; cursor: default; background: none; }
 .panel.resizing * { cursor: col-resize !important; }
 .panel .drawer-resize { position: absolute; left: -5px; top: 0; bottom: 0; margin: 0; }
-.panel-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px 12px 20px; border-bottom: 1px solid var(--border); }
-.panel-head .title-input { flex: 1; min-width: 0; margin: 0; }
+.panel-head { display: flex; align-items: center; gap: 10px; padding: 10px 16px 0 20px; }
+.head-spacer { flex: 1; }
+/* The whole title under the buttons: a one-row textarea that grows with the text (TicketDrawer.tsx growTitle). */
+.panel-title { padding: 2px 20px 4px; }
+.panel-title .title-input { display: block; margin: 0 -6px; width: calc(100% + 12px); resize: none; overflow: hidden; line-height: 1.3; }
+/* Tags, model and effort in one row; the model and effort chips sit at the right end. */
+.panel-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 0 20px 10px; border-bottom: 1px solid var(--border); }
+.panel-meta .tag-editor { min-width: 0; }
 .panel-body {
   flex: 1; min-height: 0; display: grid; position: relative;
   grid-template-columns: var(--side-w, 340px) minmax(0, 1fr); transition: grid-template-columns 0.18s ease;
@@ -2293,9 +2304,17 @@ button.hd-mode:disabled { cursor: default; }
   /* ticket: full screen */
   .panel { border-left: 0; animation: none; }
   .panel-head { gap: 6px; padding: calc(8px + env(safe-area-inset-top)) 10px 8px 6px; flex-wrap: wrap; }
-  .panel-head .title-input { font-size: 16px; flex: 1 1 0; }
+  .panel-head { padding-bottom: 0; flex-wrap: nowrap; }
+  .panel-title { padding: 2px 14px 4px; }
+  .panel-title .title-input { font-size: 17px; }
+  .panel-meta { padding: 0 14px 8px; }
   .panel-head .star-toggle, .panel-head .ticket-nav, .panel-head .save-state { display: none; }
-  .panel-head .your-turn.inline, .panel-head .badge { order: 10; flex-basis: 100%; margin-left: 40px; justify-content: flex-start; width: fit-content; max-width: calc(100% - 40px); }
+  /* The Your-turn pill shares the button row: its reason shortens with "…" on a narrow screen. */
+  .panel-head .your-turn.inline, .panel-head .badge { min-width: 0; flex: 0 1 auto; overflow: hidden; }
+  .panel-head .your-turn.inline .yt-why { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .panel-head .your-turn.inline .yt-label { flex: none; }
+  .panel-head .head-spacer { flex: 1 0 0; }
+  .panel-head > :not(.your-turn):not(.badge):not(.head-spacer) { flex-shrink: 0; }
   .phone-back { width: 36px; height: 36px; }
   .phone-move .select-trigger { padding: 5px 10px; font-weight: 600; background: var(--surface-2); border-color: transparent; min-width: 0; }
   .panel-body.details-closed { grid-template-rows: minmax(0, 1fr); }
@@ -2304,7 +2323,14 @@ button.hd-mode:disabled { cursor: default; }
   .panel-ticket .panel-details { flex: 1 0 auto; max-height: none; overflow: visible; border: 0; }
   .panel-ticket .details-pinned { max-height: none; overflow: visible; }
   .panel-ticket .desc-scroll { flex: none; overflow: visible; }
-  .panel-ticket .section-head .btn { min-height: 36px; padding: 0 14px; font-size: 13px; }
+  .panel-ticket .section-head .btn { min-height: 30px; padding: 0 10px; font-size: 13px; }
+  /* Tighter Ticket tab: less padding, the column's help line first, actions side by side. */
+  .panel-ticket .details-pinned { padding: 10px 14px; gap: 8px; }
+  .panel-ticket .field-help { margin: 0; font-size: 13px; }
+  .panel-ticket .details-desc .section-head { padding: 6px 14px 2px; }
+  .panel-ticket .desc-scroll { padding: 0 14px 16px; }
+  .panel-ticket .action-stack { flex-direction: row; flex-wrap: wrap; }
+  .panel-ticket .action-stack > .btn { flex: 1 1 auto; }
   /* editing: the editor takes the whole tab */
   .panel-ticket.editing { overflow: hidden; }
   .panel-ticket.editing .panel-details { flex: 1; min-height: 0; }
@@ -2505,7 +2531,6 @@ button.tag-chip:hover { border-color: currentColor; }
 .tag-option.on { background: var(--surface-2); }
 .tag-dot { --tag-fg: hsl(var(--tag-h, 30) 55% 45%); width: 7px; height: 7px; border-radius: 50%; background: var(--tag-fg); flex: none; }
 .tag-count { margin-left: auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.panel-tags { padding: 8px 20px; border-bottom: 1px solid var(--border); }
 .draft-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
 /* tag filters sit inside the search pill, before the input */
 .search.has-tags {
@@ -2515,7 +2540,6 @@ button.tag-chip:hover { border-color: currentColor; }
 .search.has-tags input { width: 150px; padding: 5px 0; border: 0; box-shadow: none; background: transparent; }
 .search-tag { flex: none; }
 @media (max-width: 720px) {
-  .panel-tags { padding: 6px 12px; }
   .board-bar .search.has-tags input { width: auto; flex: 1; min-width: 60px; }
   /* Bigger touch targets for removing and picking tags. */
   .tag-x { padding: 2px 3px; }
@@ -2575,24 +2599,31 @@ button.tag-chip:hover { border-color: currentColor; }
 }
 
 /* File paths in chat that exist in the ticket's folders: tap to open (FileViewer.tsx). */
+/* Plain accent text with a dotted underline; long paths break after a "/" (Transcript.tsx fileChips). */
 .md a.path-chip {
-  display: inline; padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 6px;
-  background: var(--accent-soft); color: var(--accent); text-decoration: none; overflow-wrap: anywhere; cursor: pointer;
-  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  color: var(--accent); text-decoration: underline dotted; text-decoration-thickness: 1px; text-underline-offset: 3px;
+  overflow-wrap: break-word; cursor: pointer;
 }
-.md a.path-chip:hover { border-color: var(--accent); }
-.md a.path-chip code { background: none; padding: 0; color: inherit; font-size: 0.92em; }
+.md a.path-chip:hover { text-decoration-style: solid; }
+.md a.path-chip code { background: none; padding: 0; color: inherit; font-size: 0.92em; overflow-wrap: break-word; }
 .md a.path-chip:not(:has(code)) { font-family: var(--mono); font-size: 0.88em; }
-.path-chip-icon { margin-right: 3px; font-size: 0.9em; }
 .file-viewer .output-back { padding: 0 10px; }
 .file-viewer-where {
   flex: none; padding: 8px 14px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.panel-run-settings { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 6px 20px; border-bottom: 1px solid var(--border); }
-.run-chip { display: inline-flex; align-items: center; gap: 6px; }
-.run-chip .select-trigger { padding: 2px 10px; font-size: 12px; border-radius: 999px; background: var(--surface-2); }
-.run-chip .chip-set .select-trigger { background: var(--accent-soft); border-color: var(--accent); }
+.run-settings { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.run-chip { display: inline-flex; align-items: center; }
+.run-chip .select-trigger { padding: 2px 10px; font-size: 12px; border-radius: 999px; background: var(--surface-2); color: var(--muted); min-width: 0; }
+.run-chip .chip-set .select-trigger { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.run-key { margin-right: 4px; opacity: 0.75; }
+.run-key::after { content: ":"; }
+.usage-inline { font-size: inherit; color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; }
+@media (max-width: 720px) {
+  /* Phones: just the values, after a thin divider next to the tags. */
+  .run-settings { margin-left: 0; padding-left: 10px; border-left: 1px solid var(--border); }
+  .run-key { display: none; }
+}
 
 /* Automations, and the Board column of Connections */
 .auto-wrap { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 16px; align-items: start; }
