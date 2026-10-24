@@ -98,7 +98,7 @@ describe("push devices", () => {
     const { push } = setup(410);
     push.subscribe(browser().sub, "Android");
     const r = await push.send({ title: "t", body: "b", url: "u" });
-    expect(r).toEqual({ sent: 0, removed: 1, error: null });
+    expect(r).toEqual({ sent: 0, removed: 1, onScreen: 0, error: null });
     expect(push.devices()).toEqual([]);
   });
 
@@ -173,6 +173,54 @@ describe("Notifier with phone push", () => {
     expect(one).toEqual({ ok: true, error: null });
     expect(bodies.map((b) => b.url)).toEqual([mac.sub.endpoint]);
     stop();
+  });
+
+  test("notify_user: Claude's own words reach the phone, open the ticket, are logged, and wait 10 minutes before the next", async () => {
+    const store = new Store(tempDir("ck-home-"));
+    let clock = 0;
+    const p: Profile = { name: "Kanban", slug: "kb", path: tempDir(), baseBranch: "main", maxParallel: 1, model: null, createdAt: "" };
+    store.saveProfile(p);
+    const ticket = store.createTicket("kb", { title: "Login page", body: "b", status: "review" });
+    writeNotifySettings(store.root, normalizeSettings({ mac: false }));
+    const bodies: { url: string; body: Buffer }[] = [];
+    const push = new PushService(store.root, { now: () => clock, fetch: async (url, init) => (bodies.push({ url, body: init.body as Buffer }), new Response("", { status: 201 })) });
+    const notifier = new Notifier(store, new Bus(), {
+      root: store.root, push, sessionSummary: () => null, isRunning: () => false, hostHuddles: () => new Map(),
+      baseUrl: () => "https://mac.tail.ts.net", now: () => clock, banner: () => {},
+    });
+    // Nothing set up yet: it says so and logs nothing.
+    expect(await notifier.message("kb", ticket.id, "Pick A or B")).toMatchObject({ delivered: false, reason: "nowhere" });
+    const phone = browser();
+    push.subscribe(phone.sub, "Phone");
+    // The board on screen there: skipped, and Claude hears why.
+    push.setVisible(phone.sub.endpoint, true);
+    expect(await notifier.message("kb", ticket.id, "Pick A or B")).toMatchObject({ delivered: false, reason: "on-screen", onScreen: 1 });
+    expect(bodies).toHaveLength(0);
+    push.setVisible(phone.sub.endpoint, false);
+
+    const r = await notifier.message("kb", ticket.id, "  Please pick\noption A or B  ");
+    expect(r).toEqual({ delivered: true, devices: 1, onScreen: 0, webhook: false, banner: false, reason: null, error: null });
+    expect(JSON.parse(decryptPayload(bodies[0].body, phone.privateKey, phone.auth).toString())).toEqual({
+      title: "Login page", body: "Please pick option A or B · Kanban", url: `https://mac.tail.ts.net/#/kb/${ticket.id}`, tag: `kb/${ticket.id}`,
+    });
+    expect(store.listComments("kb", ticket.id).map((c) => c.text)).toEqual(["Sent you a notification: Please pick option A or B"]);
+
+    // A second one inside 10 minutes is refused with when the next is allowed; other tickets aren't held up.
+    clock += 9 * 60_000;
+    await expect(notifier.message("kb", ticket.id, "Still need A or B")).rejects.toMatchObject({ status: 429, message: expect.stringContaining("1970-01-01T00:10:00.000Z") });
+    const other = store.createTicket("kb", { title: "Other", body: "b", status: "review" });
+    expect((await notifier.message("kb", other.id, "Approve the copy?")).delivered).toBe(true);
+    clock += 60_000;
+    expect((await notifier.message("kb", ticket.id, "Still need A or B")).delivered).toBe(true);
+
+    // Too long or empty: refused. Messages from Claude off: nothing sent.
+    await expect(notifier.message("kb", other.id, "x".repeat(201))).rejects.toMatchObject({ status: 400, message: expect.stringContaining("too long") });
+    await expect(notifier.message("kb", other.id, "   ")).rejects.toMatchObject({ status: 400 });
+    notifier.update({ kinds: { message: false } });
+    clock += 3600_000;
+    bodies.length = 0;
+    expect(await notifier.message("kb", ticket.id, "Pick A or B")).toMatchObject({ delivered: false, reason: "off" });
+    expect(bodies).toHaveLength(0);
   });
 
   test("a browser on this Mac replaces the macOS banner: needs-you and Plan done go to it and open the ticket", async () => {

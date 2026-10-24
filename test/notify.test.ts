@@ -214,6 +214,17 @@ function describeNotifier() {
     stop();
   });
 
+  test("notify_user over ntfy and the macOS banner: ticket title as title, Claude's words below", async () => {
+    const r = await notifier.message("kb", ticket.id, "Pick A or B so I can continue");
+    expect(r).toMatchObject({ delivered: true, webhook: true, banner: true, devices: 0 });
+    const h = sent[0].init.headers as Record<string, string>;
+    expect(h.Title).toBe("Fix it");
+    expect(h.Tags).toBe("bell");
+    expect(h.Click).toBe(`https://mac.tail.ts.net/#/kb/${ticket.id}`);
+    expect(sent[0].init.body).toBe("Kanban · Pick A or B so I can continue");
+    expect(banners).toEqual(["Fix it"]);
+  });
+
   test("test notification goes out whatever the toggles, and webhook errors are kept", async () => {
     notifier = new Notifier(store, bus, {
       root: store.root, sessionSummary: () => null, isRunning: () => false, hostHuddles: () => new Map(), baseUrl: () => "http://localhost:3000",

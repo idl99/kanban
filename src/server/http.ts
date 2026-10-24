@@ -30,7 +30,7 @@ import {
 } from "./attachments";
 import { FileError, findInRoots, listDir, openWithSystem, readFileForView, type FileRoot } from "./files";
 import { McpError, McpManager } from "./mcp";
-import { Notifier } from "./notify";
+import { MessageError, Notifier } from "./notify";
 import { PushService } from "./push";
 import { LISTENER_HEADER, LOGIN_HEADER, qrSvg, RemoteAccess, RemoteError, remoteUrl, type RemoteConfig } from "./remote";
 import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
@@ -1287,6 +1287,19 @@ export function createServer(deps: ServerDeps) {
         }
       } catch (e) {
         if (e instanceof FollowUpError) throw new HttpError(400, e.message);
+        throw e;
+      }
+    }
+    // notify_user: the ticket's own Claude sends the user a notification in its own words (Notifier.message).
+    if (action === "notify" && m === "POST" && parts.length === 5) {
+      const caller = req.headers.get(RUN_HEADER);
+      if (caller !== `${slug}/${id}` || req.headers.get(HUDDLE_HEADER)) throw new HttpError(403, "only the ticket's own Claude sends it a notification, from its run or chat");
+      const b = (await body(req)) ?? {};
+      if (typeof b.message !== "string") throw new HttpError(400, "message is required");
+      try {
+        return json(await notifier.message(slug, id, b.message));
+      } catch (e) {
+        if (e instanceof MessageError) throw new HttpError(e.status, e.message);
         throw e;
       }
     }

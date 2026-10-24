@@ -930,6 +930,27 @@ test("one-time jobs: schedule, list, update, run now, and runs manage only their
   expect(r.status).toBe(404);
 });
 
+test("notify: only the ticket's own Claude sends it, and it is told where it went", async () => {
+  const path = tempDir("ck-plain-");
+  const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Notify", path }))).json()) as any;
+  const tickets = `${base}/api/profiles/${p.slug}/tickets`;
+  const send = (u: string, b: unknown, headers: Record<string, string> = {}) =>
+    fetch(u, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(b) });
+  const t = (await (await send(tickets, { title: "Pitch" })).json()) as any;
+  const other = (await (await send(tickets, { title: "Other" })).json()) as any;
+  const run = { "x-ckanban-run": `${p.slug}/${t.id}` };
+  const url = `${tickets}/${t.id}/notify`;
+  expect((await send(url, { message: "Pick A or B" })).status).toBe(403);
+  expect((await send(`${tickets}/${other.id}/notify`, { message: "Pick A or B" }, run)).status).toBe(403);
+  expect((await send(url, { message: "Pick A or B" }, { ...run, "x-ckanban-huddle-agent": "h1/reviewer" })).status).toBe(403);
+  expect((await send(url, {}, run)).status).toBe(400);
+  // No real macOS banner from a test.
+  await send(`${base}/api/notify`, { mac: false });
+  const r = await send(url, { message: "Pick A or B" }, run);
+  expect(r.status).toBe(200);
+  expect(((await r.json()) as any)).toMatchObject({ delivered: false, reason: "nowhere" });
+});
+
 test("follow-ups: a run sets and stops its own ticket's only; the user's Stop, seen and chat", async () => {
   const path = tempDir("ck-plain-");
   const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Follow", path }))).json()) as any;

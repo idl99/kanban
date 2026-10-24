@@ -32,6 +32,8 @@ export interface PushResult {
   sent: number;
   /** Devices dropped because their push service said they're gone (404/410). */
   removed: number;
+  /** Devices skipped because the board is on screen there. */
+  onScreen: number;
   error: string | null;
 }
 
@@ -149,8 +151,8 @@ export class PushService {
    */
   async send(p: PushPayload, o: { only?: string; thisMac?: boolean; skipVisible?: boolean } = {}): Promise<PushResult> {
     const f = this.read();
-    const targets = f.devices.filter((d) => (o.only ? d.id === o.only || d.endpoint === o.only : true) && (!o.thisMac || d.thisMac)
-      && !(o.skipVisible !== false && this.isVisible(d.id)));
+    const wanted = f.devices.filter((d) => (o.only ? d.id === o.only || d.endpoint === o.only : true) && (!o.thisMac || d.thisMac));
+    const targets = wanted.filter((d) => !(o.skipVisible !== false && this.isVisible(d.id)));
     const errors: string[] = [];
     const gone: string[] = [];
     let sent = 0;
@@ -166,6 +168,6 @@ export class PushService {
       }
     }));
     for (const id of gone) this.remove(id);
-    return { sent, removed: gone.length, error: errors[0] ?? null };
+    return { sent, removed: gone.length, onScreen: wanted.length - targets.length, error: errors[0] ?? null };
   }
 }

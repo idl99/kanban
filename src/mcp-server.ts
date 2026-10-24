@@ -7,6 +7,7 @@ import {
 import { BUILTIN_PRESETS, MAIN_PRESET, presetLine, presetName } from "./server/huddle-presets";
 import { HUDDLE_AGENT_ENV, huddleLine, PROPOSED_MAX_COST_USD, proposedBudget, rosterEntryError, rosterError } from "./server/huddle-roster";
 import { BUILTIN_TEMPLATES, PLAN_REVIEW, templateLine } from "./server/huddle-templates";
+import { CLAUDE_MESSAGE_GAP_MS, CLAUDE_MESSAGE_MAX, type MessageResult } from "./server/notify";
 import { normalizeTags } from "./server/tags";
 import { teammateProposal } from "./server/teammate-proposal";
 import { automationProposal } from "./server/automation-proposal";
@@ -131,7 +132,7 @@ interface Tool {
 export interface ToolContext {
   client: Pick<BoardClient,
     | "listProfiles" | "listTickets" | "getTicket" | "createTicket" | "updateTicket" | "deleteTicket" | "chat" | "stop" | "listComments"
-    | "comment" | "reportBug" | "setFollowUp" | "cancelFollowUp" | "listSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "runSchedule"
+    | "comment" | "reportBug" | "setFollowUp" | "cancelFollowUp" | "notifyUser" | "listSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "runSchedule"
     | "scheduleHistory" | "cronPreview" | "listJobs" | "createJob" | "updateJob" | "jobAction" | "adopt" | "planAction" | "huddleRead" | "huddlePost" | "huddleMode" | "huddleAdd" | "huddleFindings"
     | "huddleStatus" | "huddleCloseRequest" | "startAutoHuddle" | "huddleHandIn" | "huddleReviewHandIn" | "huddleAllowChanges"
     | "listHuddlePresets" | "saveHuddlePreset" | "deleteHuddlePreset" | "listHuddleTemplates" | "huddleBrief" | "huddleProposeTeammate"
@@ -235,6 +236,19 @@ function str(args: any, key: string, required = true): string | undefined {
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /** ISO time as local "2026-10-01 09:00" (schedules run in this computer's local time). */
+/** notify_user's answer: where the message went, or why it went nowhere. */
+export function messageResultText(r: MessageResult): string {
+  if (r.reason === "off") return "Not sent: the user turned off \"Messages from Claude\" in the board's notification settings.";
+  if (r.reason === "on-screen") return `Not sent: the user has the board open on screen right now (${r.onScreen === 1 ? "1 device" : `${r.onScreen} devices`}), so they can see the ticket.`;
+  if (!r.delivered) return r.error ? `Not sent: ${r.error}.` : "Not sent: the user hasn't set up any notifications (no phone or browser, webhook or Mac banner).";
+  const where = [
+    ...(r.devices ? [r.devices === 1 ? "1 phone or browser" : `${r.devices} phones or browsers`] : []),
+    ...(r.webhook ? ["the webhook"] : []),
+    ...(r.banner ? ["the Mac banner"] : []),
+  ];
+  return `Sent to ${where.join(", ")}. It is logged on the ticket.${r.onScreen ? ` Skipped ${r.onScreen} where the board is on screen.` : ""}${r.error ? ` One channel failed: ${r.error}.` : ""}`;
+}
+
 export function localTime(iso: string): string {
   const d = new Date(iso);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -1650,6 +1664,32 @@ export const TOOLS: Tool[] = [
       const slug = await slugFor(args, ctx);
       await ctx.client.cancelFollowUp(slug, own, str(args, "reason")!, ctx.env[RUN_ENV]);
       return "Stopped following up. The card says so with your reason.";
+    },
+  },
+  {
+    name: "notify_user",
+    description:
+      "Send the user a notification about the ticket you are working on, in your own words: their phone, browser, webhook or Mac banner shows the ticket title " +
+      "and your message, and tapping it opens the ticket. Use it sparingly, when you are stuck waiting on the user and they haven't answered " +
+      "(for example a follow-up finds no reply), with one short, specific ask: \"Pick A or B for the login page so I can continue.\" " +
+      "Not for progress updates or finished work: the board already tells the user when a ticket starts waiting on them. " +
+      `At most one message per ticket every ${CLAUDE_MESSAGE_GAP_MS / 60_000} minutes. The result says whether it reached the user.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: { type: "string", description: `What you need from the user, one short sentence (max ${CLAUDE_MESSAGE_MAX} characters).` },
+        profile: PROFILE,
+      },
+      required: ["message"],
+    },
+    changes: true,
+    allowInRun: true,
+    async run(args, ctx) {
+      const own = runTicketId(ctx);
+      if (!own) throw new ClientError("notify_user works inside a board run or ticket chat, on its own ticket");
+      const slug = await slugFor(args, ctx);
+      const r = await ctx.client.notifyUser(slug, own, str(args, "message")!, ctx.env[RUN_ENV]);
+      return messageResultText(r);
     },
   },
   {

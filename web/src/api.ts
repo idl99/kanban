@@ -976,7 +976,7 @@ export interface PushDevice {
 }
 
 /** "Needs you" notifications (src/server/notify.ts): webhook (ntfy or JSON), macOS banner, per-kind toggles. */
-export type NotifyKind = "stalled" | "questions" | "proposal" | "review" | "failed" | "limit" | "blocked" | "huddle" | "reply";
+export type NotifyKind = "stalled" | "questions" | "proposal" | "review" | "failed" | "limit" | "blocked" | "huddle" | "reply" | "message";
 export interface NotifyState {
   webhookUrl: string;
   format: "auto" | "ntfy" | "json";

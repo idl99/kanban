@@ -17,6 +17,7 @@ const KINDS: { kind: NotifyKind; label: string }[] = [
   { kind: "blocked", label: "Blocked / plan stuck" },
   { kind: "huddle", label: "Huddle asks you" },
   { kind: "reply", label: "Claude replied in Planning" },
+  { kind: "message", label: "Messages from Claude" },
 ];
 
 /** Header menu → Notifications: where "needs you" goes (this phone, ntfy / webhook, macOS banner) and for which kinds. */

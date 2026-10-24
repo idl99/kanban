@@ -4,6 +4,7 @@ import { dirname, isAbsolute, resolve, sep } from "node:path";
 import type { HuddlePresetView } from "./server/huddle-presets";
 import { HUDDLE_AGENT_ENV, HUDDLE_HEADER, SOURCE_HEADER, type RosterEntry } from "./server/huddle-roster";
 import type { HuddleTemplateView } from "./server/huddle-templates";
+import type { MessageResult } from "./server/notify";
 import type { SetupOutcome } from "./server/worktree-setup";
 import { RUN_HEADER } from "./server/scheduler";
 import { defaultRoot, Store } from "./server/store";
@@ -338,6 +339,8 @@ export class BoardClient {
     this.req<TicketInfo>("POST", `${this.t(slug, id)}/follow-up`, input, this.by(run));
   cancelFollowUp = (slug: string, id: string, reason: string | null, run?: string | null) =>
     this.req<TicketInfo>("DELETE", `${this.t(slug, id)}/follow-up`, { reason }, this.by(run));
+  notifyUser = (slug: string, id: string, message: string, run?: string | null) =>
+    this.req<MessageResult>("POST", `${this.t(slug, id)}/notify`, { message }, this.by(run));
   reportBug = (input: BugReportRequest) => this.req<BugReportReply>("POST", "/api/bug-report", input);
 
   private s(slug: string, id?: string): string {

@@ -1,5 +1,5 @@
 // "Needs you" notifications: when a ticket starts waiting on the user (attention.ts), tell them once, off the Mac too.
-// Sends to a webhook (ntfy topic URL or any JSON endpoint), to devices that turned phone push on (push.ts) and/or
+// A ticket's Claude can also send its own message (notify_user, Notifier.message). Sends to a webhook (ntfy topic URL or any JSON endpoint), to devices that turned phone push on (push.ts) and/or
 // shows a macOS banner, per kind (notify.json).
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -12,7 +12,37 @@ import type { SessionSummary } from "./session";
 import type { Store } from "./store";
 import { nowIso } from "./util";
 
-export const NOTIFY_KINDS: AttentionKind[] = ["questions", "proposal", "review", "failed", "limit", "blocked", "huddle", "reply"];
+/** What a notification is about: a "needs you" kind, or a message a ticket's Claude wrote itself (notify_user). */
+export type NotifyKind = AttentionKind | "message";
+
+export const NOTIFY_KINDS: NotifyKind[] = ["stalled", "questions", "proposal", "review", "failed", "limit", "blocked", "huddle", "reply", "message"];
+
+/** Longest notify_user message: it has to fit a phone notification. */
+export const CLAUDE_MESSAGE_MAX = 200;
+/** notify_user sends at most one message per ticket in this time (stops a runaway loop, not a careful Claude). */
+export const CLAUDE_MESSAGE_GAP_MS = 10 * 60_000;
+
+/** notify_user input the board refuses; status is the HTTP status. */
+export class MessageError extends Error {
+  constructor(message: string, readonly status = 400) {
+    super(message);
+  }
+}
+
+/** What notify_user tells Claude: where the message went, or why it went nowhere. */
+export interface MessageResult {
+  /** Reached the user somewhere (a device, the webhook or the macOS banner). */
+  delivered: boolean;
+  /** Phones and browsers that got it. */
+  devices: number;
+  /** Devices skipped because the board is on screen there right now. */
+  onScreen: number;
+  webhook: boolean;
+  banner: boolean;
+  /** Why it went nowhere: "off" (Messages from Claude is off), "nowhere" (no device, webhook or banner), "on-screen". */
+  reason: "off" | "nowhere" | "on-screen" | null;
+  error: string | null;
+}
 
 /** How the webhook gets the message. auto: ntfy when the URL's host has "ntfy" in it, else JSON. */
 export type WebhookFormat = "auto" | "ntfy" | "json";
@@ -23,7 +53,7 @@ export interface NotifySettings {
   format: WebhookFormat;
   /** macOS banner on this Mac (skipped while a browser on this Mac gets notifications, see Notifier.macBrowser). */
   mac: boolean;
-  kinds: Record<AttentionKind, boolean>;
+  kinds: Record<NotifyKind, boolean>;
 }
 
 /** What the settings dialog shows besides the settings: how the last send went. */
@@ -39,7 +69,7 @@ export const DEFAULT_NOTIFY: NotifySettings = {
   webhookUrl: "",
   format: "auto",
   mac: true,
-  kinds: { stalled: true, questions: true, proposal: true, review: true, failed: true, limit: true, blocked: true, huddle: true, reply: false },
+  kinds: { stalled: true, questions: true, proposal: true, review: true, failed: true, limit: true, blocked: true, huddle: true, reply: false, message: true },
 };
 
 /** Settings in `<root>/notify.json`; defaults for anything missing or invalid. */
@@ -99,8 +129,8 @@ export interface NotifyMessage {
   boardName: string;
   ticketId: string;
   title: string;
-  kind: AttentionKind;
-  /** The attention label, e.g. "Answer 2 questions". */
+  kind: NotifyKind;
+  /** The attention label, e.g. "Answer 2 questions", or Claude's own text for kind "message". */
   label: string;
   /** Deep link to the ticket. */
   url: string;
@@ -117,8 +147,8 @@ export function headerValue(s: string): string {
   return /^[\x20-\x7e]*$/.test(flat) ? flat : `=?UTF-8?B?${Buffer.from(flat, "utf8").toString("base64")}?=`;
 }
 
-const NTFY_TAGS: Record<AttentionKind, string> = {
-  stalled: "warning", questions: "question", proposal: "memo", review: "eyes", failed: "x", limit: "hourglass", blocked: "no_entry", huddle: "speech_balloon", reply: "speech_balloon",
+const NTFY_TAGS: Record<NotifyKind, string> = {
+  stalled: "warning", questions: "question", proposal: "memo", review: "eyes", failed: "x", limit: "hourglass", blocked: "no_entry", huddle: "speech_balloon", reply: "speech_balloon", message: "bell",
 };
 
 /** The webhook request: ntfy (plain text body, Title/Click/Tags headers) or JSON {board, ticketId, title, kind, url}. */
@@ -128,7 +158,7 @@ export function webhookRequest(s: Pick<NotifySettings, "webhookUrl" | "format">,
       url: s.webhookUrl,
       init: {
         method: "POST",
-        headers: { Title: headerValue(`${m.label}: ${m.title}`), Click: m.url, Tags: NTFY_TAGS[m.kind], "Content-Type": "text/plain; charset=utf-8" },
+        headers: { Title: headerValue(m.kind === "message" ? m.title : `${m.label}: ${m.title}`), Click: m.url, Tags: NTFY_TAGS[m.kind], "Content-Type": "text/plain; charset=utf-8" },
         body: `${m.boardName} · ${m.label}`,
       },
     };
@@ -213,6 +243,8 @@ export class Notifier {
   private dirty = new Set<string>();
   private lastSentAt: string | null = null;
   private lastError: string | null = null;
+  /** When each ticket's Claude last reached the user with notify_user (the spam guard). */
+  private lastMessage = new Map<string, number>();
   private fetch: (url: string, init: RequestInit) => Promise<Response>;
   private banner: (title: string, body: string) => void;
   private now: () => number;
@@ -333,6 +365,50 @@ export class Notifier {
     } catch (e) {
       return { sent: false, error: `webhook failed: ${(e as Error).message}` };
     }
+  }
+
+  /**
+   * notify_user: a ticket's Claude tells the user something in its own words (ticket title above, its text below; a
+   * tap opens the ticket). Same channels and on-screen skip as "needs you"; at most one per ticket per
+   * CLAUDE_MESSAGE_GAP_MS. Logged on the ticket when it reached the user.
+   */
+  async message(slug: string, id: string, raw: string): Promise<MessageResult> {
+    const text = raw.replace(/\s+/g, " ").trim();
+    if (!text) throw new MessageError("message is required: what you need from the user, in one short sentence");
+    if (text.length > CLAUDE_MESSAGE_MAX) throw new MessageError(`message is too long (${text.length} characters, max ${CLAUDE_MESSAGE_MAX}): keep it to one short ask`);
+    const t = this.store.getTicket(slug, id);
+    const p = this.store.getProfile(slug);
+    if (!t || !p) throw new MessageError(`ticket ${id} not found`, 404);
+    const key = `${slug}/${id}`;
+    const last = this.lastMessage.get(key);
+    const now = this.now();
+    if (last !== undefined && now - last < CLAUDE_MESSAGE_GAP_MS) {
+      const next = new Date(last + CLAUDE_MESSAGE_GAP_MS);
+      throw new MessageError(`a message was already sent for this ticket in the last ${CLAUDE_MESSAGE_GAP_MS / 60_000} minutes; the next one is allowed after ${next.toISOString()}`, 429);
+    }
+    const none = { delivered: false, devices: 0, onScreen: 0, webhook: false, banner: false, error: null };
+    const settings = this.settings();
+    if (!settings.kinds.message) return { ...none, reason: "off" };
+    const m: NotifyMessage = { board: slug, boardName: p.name, ticketId: id, title: t.title, kind: "message", label: text, url: this.link(slug, id) };
+    const banner = settings.mac && !this.macBrowser();
+    if (banner) this.banner(t.title, text);
+    const [hook, push] = await Promise.all([
+      this.sendWebhook(settings, m),
+      this.o.push ? this.o.push.send(pushPayload(m)) : Promise.resolve({ sent: 0, removed: 0, onScreen: 0, error: null }),
+    ]);
+    const error = hook.error ?? push.error;
+    if (error) console.warn(`notify: ${error}`);
+    if (hook.sent || push.sent || error) this.lastError = error;
+    if (hook.sent || push.sent) this.lastSentAt = nowIso();
+    const delivered = banner || hook.sent || push.sent > 0;
+    if (delivered) {
+      this.lastMessage.set(key, now);
+      this.store.addComment(slug, id, "ai", `Sent you a notification: ${text}`);
+    }
+    return {
+      delivered, devices: push.sent, onScreen: push.onScreen, webhook: hook.sent, banner, error,
+      reason: delivered ? null : push.onScreen ? "on-screen" : error ? null : "nowhere",
+    };
   }
 
   private async sendPush(m: NotifyMessage, everyDevice: boolean): Promise<{ sent: number; error: string | null }> {
