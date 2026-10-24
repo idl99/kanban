@@ -4,6 +4,28 @@ What changed in each ckanban release. Get the latest with `ckanban update`.
 
 ## Unreleased
 
+## [0.13.0] - 2026-10-25
+
+### Added
+- **Model and effort per ticket**: pick the model and reasoning effort for one ticket, next to its tags. Boards also get a default effort.
+- **Automations**: turn Linear issues, or new items from any service a small check script can read on a timer, into tickets by themselves.
+- **Huddles with a lead**: a lead hands out the work and collects the results, and the ticket's Claude waits until it is needed. Helpers can change files in their own copy and hand the changes in.
+- Ask for a huddle in a ticket's chat and it starts. In Planning, ask for a review of the plan before any work starts.
+- Claude can send you a phone notification in its own words when it still needs your answer.
+- The Mac stays awake while runs, chats, huddles or scheduled jobs are working.
+
+### Changed
+- **Ticket page**: the whole title always shows, on its own line under the buttons. Tags, model and effort share one small row. On a phone the Move button shows the current column, the Ticket tab is tighter, and the tab bar fades at the edge when more tabs are hidden.
+- File names in chats and descriptions are underlined links instead of boxes, and long paths wrap neatly.
+
+### Fixed
+- Pressing Esc while editing a ticket's title saved the edit anyway; it now throws the edit away.
+- A message you sent no longer shows twice while Claude is replying.
+- Long links, paths and code wrap on phones, and the Move menu shows every column without scrolling.
+- A huddle that runs out of budget after its work is done points you to Close instead of Resume.
+- Connections always shows the Board column.
+- Phone access finds Tailscale when the board runs in the background.
+
 ## [0.12.0] - 2026-10-18
 
 ### Added
@@ -237,6 +259,7 @@ First release.
 - Terminal & file explorer panel, Connections panel for MCP servers, scheduled tickets on a cron, claude.ai artifacts from runs.
 - Standalone binary, installer, `ckanban update` and a background service that starts at login.
 
+[0.13.0]: https://github.com/leoawesome/kanban/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/leoawesome/kanban/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/leoawesome/kanban/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/leoawesome/kanban/compare/v0.9.0...v0.10.0
