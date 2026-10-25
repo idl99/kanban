@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import { api, type HuddleNote, type HuddleNotes, type HuddlePreset, type HuddleTemplate, type Level, type TeamUsage } from "./api";
+import { api, type Huddle, type HuddleNote, type HuddleNotes, type HuddlePreset, type HuddleTemplate, type Level, type TeamUsage } from "./api";
 import { avatarColor, avatarLetter } from "./avatar";
 import { Select } from "./Select";
 import { TeamTemplates } from "./HuddleTemplates";
+import { HuddleList } from "./HuddleList";
 import { fullTime, timeAgo } from "./time";
 import { plural, resetTitle, scopeChip, usageText } from "./teamText";
 import type { TeammateEditRequest } from "./teammateText";
@@ -13,7 +14,7 @@ const ALL_ROLES = "_all";
 const MAIN = "main";
 const VIEW_KEY = "ckanban.team.view";
 
-type View = "teammates" | "templates" | "notes";
+type View = "teammates" | "templates" | "huddles" | "notes";
 type Draft = Pick<HuddlePreset, "name" | "role" | "prompt" | "model" | "mode" | "lead" | "canEdit" | "workspace">;
 const EMPTY: Draft = { name: "", role: "", prompt: "", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared" };
 
@@ -22,8 +23,8 @@ export type HuddleSeed = { preset: string } | { template: string };
 
 export type UsageMap = Record<string, TeamUsage>;
 
-/** What the Team tab is asked to show: the new-teammate editor, the editor prefilled (a proposal's Edit first), or a teammate. */
-export type TeamRequest = { action: "new" } | ({ action: "edit" } & TeammateEditRequest) | { action: "open"; name: string };
+/** What the Team tab is asked to show: the new-teammate editor, the editor prefilled (a proposal's Edit first), a teammate, or the huddles. */
+export type TeamRequest = { action: "new" } | ({ action: "edit" } & TeammateEditRequest) | { action: "open"; name: string } | { action: "huddles" };
 
 /** Enter in these inputs must not submit anything around them. */
 const noSubmit = (e: KeyboardEvent) => {
@@ -52,7 +53,7 @@ export function TeammateAvatar({ name, big }: { name: string; big?: boolean }) {
  * The dock's Team tab: teammates (huddle role presets), templates and the notes every teammate gets, in one place.
  * Teammates are saved for all boards by default, or for this board only; a board's own version overrides the other.
  */
-export function TeamTab({ slug, boardName, active, openTicket, request, onStartHuddle, onOpenHuddle }: {
+export function TeamTab({ slug, boardName, active, openTicket, request, onStartHuddle, onOpenHuddle, huddles = [] }: {
   slug: string;
   boardName: string;
   /** The tab is visible: usage and lists refresh each time it is shown again. */
@@ -64,11 +65,13 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
   onStartHuddle: (seed: HuddleSeed) => void;
   /** Open a ticket's Huddle tab (a huddle on this board). */
   onOpenHuddle?: (ticketId: string, huddleId?: string) => void;
+  /** The board's huddles (kept live by the App), for the Huddles view. */
+  huddles?: Huddle[];
 }) {
   const [view, setView] = useState<View>(() => {
     try {
       const v = localStorage.getItem(VIEW_KEY);
-      return v === "templates" || v === "notes" ? v : "teammates";
+      return v === "templates" || v === "huddles" || v === "notes" ? v : "teammates";
     } catch {
       return "teammates";
     }
@@ -110,6 +113,7 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
     if (!request) return;
     setErr(null);
     if (request.action === "new") return newTeammate();
+    if (request.action === "huddles") return setView("huddles");
     setView("teammates");
     setFilter("");
     if (request.action === "edit") return setEditing({ draft: { ...request.draft }, isNew: request.isNew, scope: request.scope, card: request.card });
@@ -136,19 +140,21 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
     }
   };
 
+  const liveCount = huddles.filter((h) => h.status === "live").length;
   const startHint = openTicket ? `Starts on the open ticket “${openTicket.title}”.` : "No ticket open: a new one is created in Planning.";
 
   return (
     <div className="team">
       <div className="team-bar">
         <div className="segmented" role="tablist" aria-label="Team">
-          {([["teammates", "Teammates", presets?.length], ["templates", "Templates", templates?.length], ["notes", "Notes for all", noteCount(ALL_ROLES)]] as const).map(([id, label, n]) => (
+          {([["teammates", "Teammates", presets?.length], ["templates", "Templates", templates?.length], ["huddles", "Huddles", undefined], ["notes", "Notes for all", noteCount(ALL_ROLES)]] as const).map(([id, label, n]) => (
             <button key={id} role="tab" aria-selected={view === id} className={view === id ? "on" : undefined} onClick={() => { setView(id); setErr(null); }}>
               {label}{n !== undefined ? ` · ${n}` : ""}
+              {id === "huddles" && liveCount > 0 && <span className="tab-count ok">{liveCount} live</span>}
             </button>
           ))}
         </div>
-        {view !== "notes" && (
+        {(view === "teammates" || view === "templates") && (
           <input className="team-filter" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={view === "templates" ? "Filter templates…" : "Filter teammates…"}
             aria-label="Filter" onKeyDown={(e) => { if (e.key === "Escape" && filter) { e.stopPropagation(); setFilter(""); } }} />
         )}
@@ -228,6 +234,12 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
           <TeamTemplates slug={slug} templates={shownTemplates} loading={templates === null} filtered={!!q} presets={presets} usage={usage?.templates ?? null}
             startHint={startHint} newRequest={newTemplate} onChanged={loadTemplates} onError={setErr}
             onStart={(name) => onStartHuddle({ template: name })} />
+        </div>
+      )}
+
+      {view === "huddles" && (
+        <div className="team-body single">
+          <HuddleList huddles={huddles} onOpen={onOpenHuddle} />
         </div>
       )}
 

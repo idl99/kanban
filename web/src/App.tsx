@@ -7,7 +7,7 @@ import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu, type MenuItem } from "./HeaderMenu";
 import { boardTags, hasTags, parseSearch, tagStyle } from "./tagText";
 import { TagFilter } from "./Tags";
-import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, DeviceIcon, GearIcon, KeyboardIcon, LoopIcon, Logo, PlugIcon, PlusIcon, SearchIcon, TeamIcon, TerminalIcon } from "./icons";
+import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, DeviceIcon, FolderIcon, GearIcon, KeyboardIcon, LoopIcon, Logo, PlugIcon, PlusIcon, SearchIcon, TeamIcon, TerminalIcon } from "./icons";
 import { Inbox } from "./Inbox";
 import { NowView } from "./NowView";
 import { NotificationsDialog } from "./NotificationsDialog";
@@ -179,20 +179,19 @@ export function App() {
   const [boardSwitcher, setBoardSwitcher] = useState(false);
   // Command to type into the dock's terminal (e.g. "claude mcp login x"); n makes repeats count.
   const [dockCommand, setDockCommand] = useState<{ text: string; n: number } | null>(null);
-  // Tab the dock should switch to (C opens the quick Claude chat).
+  // Item the bottom panel should show (Terminal, Files, Claude or Team); n makes repeats count.
   const [dockTab, setDockTab] = useState<{ tab: DockTab; n: number; team?: TeamRequest } | null>(null);
-  // Tab the open dock shows (reported by the dock), for the header buttons' on state.
+  // Item the open panel shows (reported by the panel), for the header buttons' on state.
   const [dockShown, setDockShown] = useState<DockTab | null>(null);
-  const chatOpen = dockOpen && dockShown === "claude";
-  const termOpen = dockOpen && (dockShown === "terminal" || dockShown === "files");
-  const teamOpen = dockOpen && dockShown === "team";
-  /** team: what the Team tab shows (the new-teammate editor, a proposal to edit, a teammate). */
+  const shownItem = dockOpen ? dockShown : null;
+  /** team: what the Team shows (the new-teammate editor, a proposal to edit, a teammate, the huddles). */
   const openDockOn = (tab: DockTab, team?: TeamRequest) => {
     setDockOpen(true);
     setDockTab({ tab, n: Date.now(), ...(team ? { team } : {}) });
   };
-  const toggleTeam = () => (teamOpen ? setDockOpen(false) : openDockOn("team"));
-  /** The quick chats with Claude: the Ask tab on phones, the panel's Claude tab on computers. */
+  /** A header button or its key: shows that item in the panel, or hides the panel when it already shows it. */
+  const toggleDock = (tab: DockTab) => (shownItem === tab ? setDockOpen(false) : openDockOn(tab));
+  /** The quick chats with Claude: the Ask tab on phones, the panel's Claude on computers. */
   const openChat = () => (phoneRef.current ? setPhoneTab("ask") : openDockOn("claude"));
   const [mcp, setMcp] = useState<McpState | null>(null);
   const [connections, setConnections] = useState(false);
@@ -367,7 +366,7 @@ export function App() {
       localStorage.setItem(DOCK_OPEN, dockOpen ? "1" : "0");
     } catch {}
   }, [dockOpen]);
-  // A tab request is one-shot: reopening the dock later keeps the user's last tab.
+  // An item request is one-shot: reopening the panel later shows the user's last item.
   useEffect(() => {
     if (!dockOpen) setDockTab(null);
   }, [dockOpen]);
@@ -382,14 +381,15 @@ export function App() {
   // Latest values for the window key handler below, which is bound once per dialog state.
   const live = useRef({ profiles, tickets, markDone: (_id: string) => {} });
 
-  // Shortcuts: N new ticket, / search, ? cheatsheet, C quick Claude chat, T Team, ⌘K command bar (tickets on every board, actions, boards), Ctrl+` terminal & files,
+  // Shortcuts: N new ticket, / search, ? cheatsheet, Ctrl+` Terminal, F Files, C Claude, T Team (each toggles its item in the bottom panel),
+  // ⌘K command bar (tickets on every board, actions, boards),
   // B board picker, [ ] previous / next board, 1…9 board N, J/K/H/L or arrows select a card, D marks a Review card done.
   // Esc is handled by the panel and dialogs (one layer at a time, see layers.ts).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey && !e.metaKey && !e.altKey && e.key === "`") {
         e.preventDefault();
-        setDockOpen((o) => !o);
+        if (slug) toggleDock("terminal");
         return;
       }
       if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "k") {
@@ -437,10 +437,14 @@ export function App() {
         setShortcuts(true);
       } else if (e.key === "c" || e.key === "C") {
         e.preventDefault();
-        if (slug) openChat();
+        if (slug) (phoneRef.current ? openChat() : toggleDock("claude"));
+      } else if (e.key === "f" || e.key === "F") {
+        if (!slug || phoneRef.current) return;
+        e.preventDefault();
+        toggleDock("files");
       } else if (e.key === "t" || e.key === "T") {
         e.preventDefault();
-        if (slug) toggleTeam();
+        if (slug) toggleDock("team");
       } else if (e.key === "b" || e.key === "B") {
         e.preventDefault();
         if (boards.length) setBoardSwitcher(true);
@@ -623,6 +627,7 @@ export function App() {
   const missing = health ? (["claude", "git", "gh"] as const).filter((k) => !health[k]) : [];
   // Every active ticket run (chat replies and Planning too); slots: the ones holding a maxParallel slot, as the server counts them.
   const running = runCounts(tickets, huddles);
+  const liveHuddles = huddles.filter((h) => h.status === "live").length;
   const queued = tickets.filter((t) => t.status === "ready" || waitsForSlot(t)).length;
 
   const updateKey = `update:${version?.latest}`;
@@ -706,11 +711,13 @@ export function App() {
   const commandActions: CommandAction[] = [
     ...(profile ? [
       { id: "new", label: "New ticket", keys: ["N"], run: () => setNewTicket(true) },
-      { id: "dock", label: "Open terminal & files", keys: ["Ctrl", "`"], icon: <TerminalIcon size={14} />, run: () => openDockOn("terminal") },
+      { id: "dock", label: "Open terminal", keys: ["Ctrl", "`"], icon: <TerminalIcon size={14} />, run: () => openDockOn("terminal") },
+      { id: "files", label: "Open files", keys: ["F"], icon: <FolderIcon size={14} />, hint: "browse this folder", run: () => openDockOn("files") },
       { id: "chat", label: "Quick Claude chat", keys: ["C"], icon: <ChatIcon size={14} />, run: () => openChat() },
     ] : []),
     ...(profile ? [
-      { id: "team", label: "Open Team", keys: ["T"], icon: <TeamIcon size={14} />, hint: "teammates, templates, notes", run: () => openDockOn("team") },
+      { id: "team", label: "Open Team", keys: ["T"], icon: <TeamIcon size={14} />, hint: "teammates, templates, huddles", run: () => openDockOn("team") },
+      { id: "huddles", label: liveHuddles ? `Huddles (${liveHuddles} live)` : "Huddles", icon: <TeamIcon size={14} />, hint: "in Team", run: () => openDockOn("team", { action: "huddles" }) },
       { id: "new-teammate", label: "New teammate…", run: () => openDockOn("team", { action: "new" }) },
     ] : []),
     ...(inbox.length ? [{ id: "inbox", label: `Open inbox (${inbox.length} need you)`, run: () => setInboxRequest(Date.now()) }] : []),
@@ -785,23 +792,29 @@ export function App() {
         <Inbox items={inbox} snoozed={snoozed} openRequest={inboxRequest} onPick={(i) => openFrom(i.profile, i.id)}
           onMarkDone={(i) => void inboxDone(i)} onSnooze={(i, on) => void inboxSnooze(i, on)} />
         {profile && (
-          <button className={`btn ghost icon-label${termOpen ? " on" : ""}`}
-            onClick={() => (termOpen ? setDockOpen(false) : openDockOn(dockShown === "files" ? "files" : "terminal"))}
-            aria-pressed={termOpen} title="Terminal and files for this folder (Ctrl+`)" aria-label="Terminal and files">
-            <TerminalIcon /><span className="label">Terminal & files</span><KeyHint keys="Ctrl+`" />
+          <button className={`btn ghost icon-label${shownItem === "terminal" ? " on" : ""}`} onClick={() => toggleDock("terminal")}
+            aria-pressed={shownItem === "terminal"} title="A terminal in this folder (Ctrl+`). Hiding it keeps the shell running." aria-label="Terminal">
+            <TerminalIcon /><span className="label">Terminal</span><KeyHint keys="Ctrl+`" />
           </button>
         )}
         {profile && (
-          <button className={`btn ghost icon-label${chatOpen ? " on" : ""}`}
-            onClick={() => (chatOpen ? setDockOpen(false) : openDockOn("claude"))}
-            aria-pressed={chatOpen} title="Quick chat with Claude in this folder, no ticket needed (C)" aria-label="Quick Claude chat">
+          <button className={`btn ghost icon-label${shownItem === "files" ? " on" : ""}`} onClick={() => toggleDock("files")}
+            aria-pressed={shownItem === "files"} title="Browse the files in this folder (F)" aria-label="Files">
+            <FolderIcon /><span className="label">Files</span><KeyHint keys="F" />
+          </button>
+        )}
+        {profile && (
+          <button className={`btn ghost icon-label${shownItem === "claude" ? " on" : ""}`} onClick={() => toggleDock("claude")}
+            aria-pressed={shownItem === "claude"} title="Quick chat with Claude in this folder, no ticket needed (C)" aria-label="Quick Claude chat">
             <ChatIcon /><span className="label">Claude</span><KeyHint keys="C" />
           </button>
         )}
         {profile && (
-          <button className={`btn ghost icon-label${teamOpen ? " on" : ""}`} onClick={toggleTeam}
-            aria-pressed={teamOpen} title="Teammates, templates and notes (T)" aria-label="Team">
-            <TeamIcon /><span className="label">Team</span><KeyHint keys="T" />
+          <button className={`btn ghost icon-label${shownItem === "team" ? " on" : ""}`} onClick={() => toggleDock("team")}
+            aria-pressed={shownItem === "team"} title={`Teammates, templates and huddles (T)${liveHuddles ? `. ${liveHuddles} ${liveHuddles === 1 ? "huddle" : "huddles"} live.` : ""}`} aria-label="Team">
+            <TeamIcon /><span className="label">Team</span>
+            {liveHuddles > 0 && <span className="tab-count ok">{liveHuddles} live</span>}
+            <KeyHint keys="T" />
           </button>
         )}
         {profile && (

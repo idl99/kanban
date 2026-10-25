@@ -3,16 +3,13 @@ import type { Huddle, Profile } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FilesView } from "./FilesView";
 import { TeamTab, type HuddleSeed, type TeamRequest } from "./Team";
-import { brakeLabel, guestTickets, huddleCost, huddleTitle, members, quietLabel, roundTag, sortHuddles } from "./huddle";
 import { CloseIcon, RefreshIcon } from "./icons";
 import { QuickChatPane } from "./QuickChat";
 import { TerminalView } from "./TerminalView";
-import { fullTime, timeAgo } from "./time";
-import { useNow } from "./useNow";
-import { costText } from "./usage";
 
-export type DockTab = "terminal" | "files" | "claude" | "huddles" | "team";
+export type DockTab = "terminal" | "files" | "claude" | "team";
 const TAB_KEY = "ckanban.dock.tab";
+/** Each item keeps its own height under `${HEIGHT_KEY}.<item>`; the old shared height seeds them. */
 const HEIGHT_KEY = "ckanban.dock.height";
 const MIN_HEIGHT = 140;
 
@@ -29,15 +26,28 @@ function store(key: string, value: string) {
   } catch {}
 }
 
-const TABS: [DockTab, string][] = [["terminal", "Terminal"], ["files", "Files"], ["claude", "Claude"], ["huddles", "Huddles"], ["team", "Team"]];
-const isTab = (v: string | null): v is DockTab => TABS.some(([t]) => t === v);
+export const DOCK_ITEMS: Record<DockTab, { label: string; height: number }> = {
+  terminal: { label: "Terminal", height: 280 },
+  files: { label: "Files", height: 400 },
+  claude: { label: "Claude", height: 380 },
+  team: { label: "Team", height: 340 },
+};
+const isTab = (v: string | null): v is DockTab => !!v && v in DOCK_ITEMS;
+/** The item shown when the panel opens without a request: the last one open (the old Huddles tab now lives in Team). */
+export function lastDockTab(): DockTab {
+  const t = stored(TAB_KEY);
+  return t === "huddles" ? "team" : isTab(t) ? t : "terminal";
+}
 
+const tildePath = (p: string) => p.replace(/^\/Users\/[^/]+/, "~");
 const clampHeight = (h: number) => Math.round(Math.max(MIN_HEIGHT, Math.min(window.innerHeight - 120, h)));
+const storedHeight = (tab: DockTab) => clampHeight(Number(stored(`${HEIGHT_KEY}.${tab}`)) || Number(stored(HEIGHT_KEY)) || DOCK_ITEMS[tab].height);
 
 /**
- * Bottom panel for the selected profile's folder: an interactive shell, a read-only file browser and the
- * quick chats with Claude (no ticket, see QuickChat.tsx). Closing it only hides it; the shell and Claude's
- * replies keep running on the server.
+ * Bottom panel for the selected profile's folder. It shows one item at a time, picked by the header buttons:
+ * an interactive shell, a read-only file browser, the quick chats with Claude (no ticket, see QuickChat.tsx)
+ * or the Team (teammates, templates, huddles). Hiding an item or the panel never stops it: the shell and
+ * Claude's replies keep running on the server.
  */
 export default function Dock({ profile, pty, onClose, command, onCommandSent, tabRequest, onTabChange, onOpenTicket, huddles = [], onOpenHuddle, openTicket = null, onStartHuddle }: {
   profile: Profile;
@@ -46,32 +56,33 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
   /** Typed into the shell and run (e.g. from Connections); `n` changes for each new request. */
   command?: { text: string; n: number } | null;
   onCommandSent?: () => void;
-  /** Switch to this tab (e.g. from a shortcut); `n` changes for each new request. team: what the Team tab shows. */
+  /** Show this item (e.g. from a header button or shortcut); `n` changes for each new request. team: what the Team shows. */
   tabRequest?: { tab: DockTab; n: number; team?: TeamRequest } | null;
-  /** The visible tab, so the header buttons can show which one is open. */
+  /** The shown item, so the header buttons can show which one is open. */
   onTabChange?: (tab: DockTab) => void;
   onOpenTicket?: (id: string) => void;
-  /** The board's huddles (kept live by the App), for the Huddles tab. */
+  /** The board's huddles (kept live by the App), for the Team's Huddles view. */
   huddles?: Huddle[];
-  /** Open a ticket's Huddle tab. */
   /** Open a ticket's Huddle tab; with huddleId, on that huddle (an earlier round). */
   onOpenHuddle?: (ticketId: string, huddleId?: string) => void;
-  /** The ticket open in the drawer (the Team tab's Start huddle goes there). */
+  /** The ticket open in the drawer (the Team's Start huddle goes there). */
   openTicket?: { id: string; title: string } | null;
-  /** The Team tab's Start huddle: a roster with a teammate, or a template. */
+  /** The Team's Start huddle: a roster with a teammate, or a template. */
   onStartHuddle?: (seed: HuddleSeed) => void;
 }) {
-  const [tab, setTab] = useState<DockTab>(() => {
-    const t = stored(TAB_KEY);
-    return isTab(t) ? t : "terminal";
+  const [tab, setTab] = useState<DockTab>(() => tabRequest?.tab ?? lastDockTab());
+  const [heights, setHeights] = useState(() => Object.fromEntries((Object.keys(DOCK_ITEMS) as DockTab[]).map((t) => [t, storedHeight(t)])) as Record<DockTab, number>);
+  const height = heights[tab];
+  const setHeight = (f: (h: number) => number) => setHeights((hs) => {
+    const h = f(hs[tab]);
+    store(`${HEIGHT_KEY}.${tab}`, String(h));
+    return { ...hs, [tab]: h };
   });
-  const [height, setHeight] = useState(() => clampHeight(Number(stored(HEIGHT_KEY)) || 320));
   const [restart, setRestart] = useState(0);
   const [confirmRestart, setConfirmRestart] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const drag = useRef<{ y: number; h: number } | null>(null);
-  const liveCount = huddles.filter((h) => h.status === "live").length;
-  // The Team tab stays mounted once shown, so its editor and selection survive switching tabs.
+  // The Team stays mounted once shown, so its editor and selection survive switching items.
   const [teamSeen, setTeamSeen] = useState(false);
   useEffect(() => {
     if (tab === "team") setTeamSeen(true);
@@ -81,7 +92,6 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
     store(TAB_KEY, tab);
     onTabChange?.(tab);
   }, [tab]);
-  useEffect(() => store(HEIGHT_KEY, String(height)), [height]);
   useEffect(() => {
     if (command) setTab("terminal");
   }, [command?.n]);
@@ -102,26 +112,22 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
   const onPointerMove = (e: React.PointerEvent) => {
-    if (drag.current) setHeight(clampHeight(drag.current.h + drag.current.y - e.clientY));
+    if (!drag.current) return;
+    const h = clampHeight(drag.current.h + drag.current.y - e.clientY);
+    setHeight(() => h);
   };
   const onPointerUp = () => (drag.current = null);
 
+  const label = DOCK_ITEMS[tab].label;
   return (
-    <section className="dock" style={{ height }} aria-label="Terminal, files and team">
-      <div className="dock-resize" role="separator" aria-orientation="horizontal" aria-label="Resize panel" tabIndex={0}
+    <section className="dock" style={{ height }} aria-label={label}>
+      <div className="dock-resize" role="separator" aria-orientation="horizontal" aria-label={`Resize ${label} panel`} tabIndex={0}
         aria-valuenow={height} aria-valuemin={MIN_HEIGHT}
         onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onKeyDown={onHandleKey}
-        onDoubleClick={() => setHeight(clampHeight(320))} title="Drag (or ↑↓) to resize · double-click to reset" />
+        onDoubleClick={() => setHeight(() => clampHeight(DOCK_ITEMS[tab].height))} title={`Drag (or ↑↓) to resize · double-click to reset. ${label} keeps its own height.`} />
       <div className="dock-head">
-        <div className="tabs" role="tablist" aria-label="Panel">
-          {TABS.map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>
-              {label}
-              {id === "huddles" && liveCount > 0 && <span className="tab-count ok" title={`${liveCount} live`}>{liveCount} live</span>}
-            </button>
-          ))}
-        </div>
-        <span className="dock-path" title={profile.path}>{profile.path.replace(/^\/Users\/[^/]+/, "~")}</span>
+        <span className="dock-title">{label}</span>
+        {tab !== "team" && <span className="dock-path" title={profile.path}>{tildePath(profile.path)}</span>}
         <div className="spacer" />
         {tab === "terminal" && pty && (
           <button className="btn ghost small" onClick={() => setConfirmRestart(true)} title="Kill this shell and start a new one">
@@ -131,7 +137,7 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
         {tab === "files" && (
           <button className="btn ghost small icon-label" onClick={() => setRefresh((n) => n + 1)}><RefreshIcon size={12} /> Refresh</button>
         )}
-        <button className="icon-btn" onClick={onClose} title="Hide panel (Ctrl+`). The shell and Claude chat keep running." aria-label="Hide terminal and files panel">
+        <button className="icon-btn" onClick={onClose} title={`Hide ${label}. The shell and Claude chats keep running.`} aria-label={`Hide ${label}`}>
           <CloseIcon />
         </button>
       </div>
@@ -149,67 +155,21 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
         <div className="dock-pane" hidden={tab !== "files"}>
           <FilesView key={profile.slug} slug={profile.slug} refreshSignal={refresh} />
         </div>
-        <div className="dock-pane" hidden={tab !== "huddles"}>
-          {tab === "huddles" && <HuddleList huddles={huddles} onOpen={onOpenHuddle} />}
-        </div>
         <div className="dock-pane" hidden={tab !== "team"}>
           {teamSeen && (
             <TeamTab key={profile.slug} slug={profile.slug} boardName={profile.name} active={tab === "team"} openTicket={openTicket} onOpenHuddle={onOpenHuddle}
               request={tabRequest?.tab === "team" && tabRequest.team ? { ...tabRequest.team, n: tabRequest.n } : null}
-              onStartHuddle={(seed) => onStartHuddle?.(seed)} />
+              onStartHuddle={(seed) => onStartHuddle?.(seed)} huddles={huddles} />
           )}
         </div>
       </div>
       {confirmRestart && (
         <ConfirmDialog title="Restart the shell?" confirmLabel="Restart" busyLabel="Restarting…"
           onCancel={() => setConfirmRestart(false)} onConfirm={() => { setConfirmRestart(false); setRestart((n) => n + 1); }}>
-          <p>Stops whatever is running in this terminal and starts a fresh shell in <code>{profile.path.replace(/^\/Users\/[^/]+/, "~")}</code>.</p>
+          <p>Stops whatever is running in this terminal and starts a fresh shell in <code>{tildePath(profile.path)}</code>.</p>
         </ConfirmDialog>
       )}
     </section>
-  );
-}
-
-/** The Huddles tab: live and recent huddles on this board; a row opens that huddle in its host ticket's Huddle tab. */
-function HuddleList({ huddles, onOpen }: { huddles: Huddle[]; onOpen?: (ticketId: string, huddleId: string) => void }) {
-  const now = useNow();
-  const list = sortHuddles(huddles);
-  if (!list.length) {
-    return <div className="dock-huddles"><div className="empty">No huddles on this board yet. Start one from a ticket's Huddle tab.</div></div>;
-  }
-  return (
-    <div className="dock-huddles" role="list">
-      {list.map((h) => {
-        const agents = members(h).length;
-        const tickets = 1 + guestTickets(h).length;
-        const brake = brakeLabel(h);
-        const quiet = quietLabel(h, now);
-        const failed = members(h).filter((p) => p.status === "failed").length;
-        const forYou = h.status === "closed" ? 0 : h.forYou ?? 0;
-        const host = h.hostTitle ?? h.hostTicket;
-        const round = roundTag(huddles, h);
-        return (
-          <button key={h.id} role="listitem" className={`huddle-row ${h.status}${brake ? " brake" : quiet ? " quiet" : ""}`} onClick={() => onOpen?.(h.hostTicket, h.id)}
-            title={`Open ${round ? `${round.toLowerCase()} of ` : ""}the huddle of ${host}: ${huddleTitle(h)} · started ${fullTime(h.createdAt)}`}>
-            <span className="hr-dot" aria-label={brake ?? (quiet ? "quiet" : h.status)} />
-            <span className="hr-title">{host}{round && <span className="hr-round"> · {round}</span>}</span>
-            <span className="hr-flags">
-              {brake && <span className="hr-brake">Huddle · {brake}</span>}
-              {quiet && <span className="hr-quiet">all quiet · {quiet}</span>}
-              {failed > 0 && <span className="hb-failed">{failed} failed</span>}
-              {forYou > 0 && <span className="for-you-pill">{forYou} for you</span>}
-            </span>
-            <span className="hr-meta">
-              {agents} {agents === 1 ? "agent" : "agents"} · {h.status === "closed" ? "closed" : `${tickets} ${tickets === 1 ? "ticket" : "tickets"}`}
-            </span>
-            <time className="hr-meta" dateTime={h.updatedAt} title={`Last activity ${fullTime(h.updatedAt)} · ${h.seq} ${h.seq === 1 ? "message" : "messages"}`}>
-              {h.status === "live" ? `last msg ${timeAgo(h.updatedAt)}` : timeAgo(h.updatedAt)}
-            </time>
-            <span className="hr-meta" title="What the huddle's agents have spent">{costText(huddleCost(h))}</span>
-          </button>
-        );
-      })}
-    </div>
   );
 }
 

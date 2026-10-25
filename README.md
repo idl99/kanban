@@ -65,7 +65,7 @@ Then open the board switcher (top left) → **New board…**, pick a folder you'
 
 ## More features
 
-Inbox of everything waiting on you, Changes tab with line comments, per-ticket folder setup (`.env` copy, install only when needed), auto-continue after a usage limit, one-click session recovery, schedules on a cron and one-time jobs, add-on tickets, a brief of related past tickets for every run, prompt snippets, terminal & files panel, MCP connections, branching a ticket, and keyboard shortcuts for nearly everything.
+Inbox of everything waiting on you, Changes tab with line comments, per-ticket folder setup (`.env` copy, install only when needed), auto-continue after a usage limit, one-click session recovery, schedules on a cron and one-time jobs, add-on tickets, a brief of related past tickets for every run, prompt snippets, terminal and files panel, MCP connections, branching a ticket, and keyboard shortcuts for nearly everything.
 
 Every feature in detail: **[docs/features.md](docs/features.md)**. What changed in each release: **[CHANGELOG.md](CHANGELOG.md)**.
 
