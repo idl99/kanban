@@ -282,8 +282,8 @@ export class Store {
     return comments;
   }
 
-  addComment(slug: string, id: string, author: Comment["author"], text: string): Comment {
-    const c: Comment = { id: newId(), author, text, at: nowIso() };
+  addComment(slug: string, id: string, author: Comment["author"], text: string, from?: string): Comment {
+    const c: Comment = { id: newId(), author, text, at: nowIso(), ...(from ? { from } : {}) };
     appendFileSync(join(this.ticketDir(slug, id), "comments.jsonl"), JSON.stringify(c) + "\n");
     return c;
   }

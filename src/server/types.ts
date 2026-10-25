@@ -187,6 +187,12 @@ export interface Ticket {
   doneAt?: string | null;
   /** Where the ticket was before a chat or the user moved it from Review/Done back to Planning or Backlog. */
   reopenedFrom?: Pick<Ticket, "status" | "outcome"> | null;
+  /**
+   * Another ticket's run started this ticket's latest run (move to Ready or Planning, a chat message, create): which
+   * ticket and how deep the chain of runs started by runs is (1 = started by a run the user started). The user starting
+   * it again clears it. See Board.runStart.
+   */
+  startedBy?: { ticketId: string; depth: number } | null;
   /** Set on a planner ticket once its plan was started: the board runs its children unattended. */
   plan?: Plan | null;
   /** Chat messages Claude has not read yet, oldest first: sent while it was working, or the one that started its reply. */
@@ -523,6 +529,8 @@ export interface Comment {
   author: "user" | "ai";
   text: string;
   at: string;
+  /** A note another ticket's run left (author ai): that ticket's id. The next run of this ticket gets it, labelled. */
+  from?: string;
 }
 
 export interface Config {

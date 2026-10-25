@@ -147,6 +147,13 @@ export async function removeWorktree(repo: string, dir: string, beforeRemove?: (
   return { removed: true };
 }
 
+/** The folder has changes that aren't in its version history yet (an unreadable status counts as changes). */
+export async function hasUncommittedChanges(dir: string): Promise<boolean> {
+  if (!existsSync(dir)) return false;
+  const status = await run(["git", "status", "--porcelain"], dir);
+  return status.code !== 0 || !!status.stdout.trim();
+}
+
 export async function branchExists(repo: string, branch: string): Promise<boolean> {
   return (await run(["git", "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], repo)).code === 0;
 }

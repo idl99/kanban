@@ -7,7 +7,7 @@ import { claudeDefaults, listClaudeProjects, listSessions, liveSessionMatch, pic
 import type { Bus, BusEvent } from "./events";
 import { EFFORT_HELP, listCommands, MODEL_HELP, validEffort, validModel } from "./commands";
 import { DiffError, folderDiff, ticketDiff } from "./diff";
-import { detectBaseBranch, enableVersionHistory, isGitRepo, repoKind, resolveBaseBranch, which } from "./git";
+import { detectBaseBranch, enableVersionHistory, hasUncommittedChanges, isGitRepo, repoKind, resolveBaseBranch, which } from "./git";
 import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, resolveConflicts, sendFailures, type PrDeps } from "./prpoller";
 import { resumeCommand } from "./prompts";
 import { cronError, describeCron, nextRuns, parseCron } from "./cron";
@@ -291,14 +291,16 @@ export function createServer(deps: ServerDeps) {
     return t;
   };
   /**
-   * Board runs send RUN_HEADER ("<profile>/<ticket id>") with ticket changes. Runs can't change the board, except:
+   * Board runs send RUN_HEADER ("<profile>/<ticket id>") with ticket changes. Who may change which ticket:
    * - a Planning chat answering the user's message (Board.userRequestRights) acts for the user on any ticket of its
    *   board but its own: returned as `requester`;
    * - a planner on its own child tickets: any run of a running plan, or a reply to the user's message in the
-   *   planner's chat (Board.plannerRights): returned as `planner`.
-   * Returns {} for the user. Huddle agents run as their host ticket but get neither.
+   *   planner's chat (Board.plannerRights): returned as `planner`;
+   * - any other active work run or chat reply (Board.runnerRights) on any other ticket of its board, when its task
+   *   calls for it: returned as `runner`. Starting runs that way is limited (Board.runStart), and so is closing work.
+   * Returns {} for the user. Huddle agents run as their host ticket but get none of these. Deleting stays the user's.
    */
-  const runRights = (req: Request, slug: string, target?: Ticket): { planner?: Ticket; requester?: Ticket } => {
+  const runRights = (req: Request, slug: string, target?: Ticket): { planner?: Ticket; requester?: Ticket; runner?: Ticket } => {
     const h = req.headers.get(RUN_HEADER);
     if (!h) return {};
     const [runSlug, runId] = h.split("/");
@@ -316,18 +318,30 @@ export function createServer(deps: ServerDeps) {
         "user asks for that in a message they typed in this ticket's chat; otherwise ask the user to change it on the board");
     }
     const planner = mine ? board.plannerRights(slug, runId) : null;
-    if (!planner) {
-      throw new HttpError(403, "changing the board is disabled inside a board run, so runs can't create or start other runs; " +
-        "only a Planning chat answering the user's message may change other tickets, and a planner its own child tickets: " +
-        "while its plan runs, or when the user asked for it in the planner's own chat");
+    if (planner && (!target || target.parentId === planner.id)) return { planner };
+    const runner = mine ? board.runnerRights(slug, runId) : null;
+    if (runner) return { runner };
+    if (planner) {
+      throw new HttpError(403, `${target!.id} is not a child ticket of plan ${planner.id}; the planner may only change its own child tickets`);
     }
-    if (target && target.parentId !== planner.id) {
-      throw new HttpError(403, `${target.id} is not a child ticket of plan ${planner.id}; the planner may only change its own child tickets`);
-    }
-    return { planner };
+    throw new HttpError(403, "changing the board is disabled inside a board run that isn't working right now (or is a Planning chat " +
+      "without the user's message, a reply to another ticket's question or a huddle helper): only a ticket's active run or chat reply, " +
+      "a Planning chat answering the user's message, and a planner on its own child tickets may change other tickets");
   };
   /** How a change made for the user from a Planning chat is credited on the changed ticket. */
   const byRequest = (requester: Ticket) => `by the Planning chat of ${requester.id} (user request)`;
+  /** How a change another ticket's run made is credited on the changed ticket. */
+  const byRun = (runner: Ticket) => `by the run of ${runner.id} ("${runner.title}")`;
+  /** Statuses whose move starts a Claude run: Ready (In progress queues there) and Planning (its interview). */
+  const startsRun = (st?: string) => st === "ready" || st === "in_progress" || st === "planning";
+  /** A run's start of another ticket's run, refused past the chain limits (Board.runStart). */
+  const runStart = (slug: string, runner: Ticket): NonNullable<Ticket["startedBy"]> => {
+    try {
+      return board.runStart(slug, runner.id);
+    } catch (e) {
+      throw new HttpError(409, (e as Error).message);
+    }
+  };
   /** The board run's ticket (RUN_HEADER), null outside runs; a run may only reach tickets on its own board. */
   const runTicket = (req: Request, slug: string): string | null => {
     const h = req.headers.get(RUN_HEADER);
@@ -1157,7 +1171,7 @@ export function createServer(deps: ServerDeps) {
         const b = await body(req);
         const title = String(b.title ?? "").trim();
         if (!title) throw new HttpError(400, "title is required");
-        const { planner, requester } = runRights(req, slug);
+        const { planner, requester, runner } = runRights(req, slug);
         let status: Status = STATUSES.includes(b.status) ? b.status : "backlog";
         let mode: "auto" | "interview" = b.mode === "auto" ? "auto" : "interview";
         let parentId = typeof b.parentId === "string" && b.parentId ? b.parentId : undefined;
@@ -1179,12 +1193,15 @@ export function createServer(deps: ServerDeps) {
           if (running) mode = "auto";
         }
         if (parentId && !store.getTicket(slug, parentId)) throw new HttpError(400, `parent ticket ${parentId} not found`);
+        const startedBy = runner && startsRun(status) ? runStart(slug, runner) : null;
         let t = await board.createTicket(slug, {
           title, body: String(b.body ?? ""), status: b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn, needs, tags,
           important: b.important === true,
         });
         if (planner) store.addComment(slug, t.id, "ai", `Created by the planner of plan ${planner.id}.`);
         if (requester) store.addComment(slug, t.id, "ai", `Created ${byRequest(requester)}.`);
+        if (runner) store.addComment(slug, t.id, "ai", `Created ${byRun(runner)}.`);
+        if (startedBy) board.markStartedBy(slug, t.id, startedBy);
         if (b.sessionId && !planner) {
           try {
             await board.linkSession(slug, t.id, String(b.sessionId));
@@ -1215,7 +1232,7 @@ export function createServer(deps: ServerDeps) {
         if (own && Object.keys(b).length === 1 && SELF_MOVES.includes(b.status) && board.requestSelfMove(slug, id, b.status as SelfMove)) {
           return json({ ...view(profile, target), selfMove: b.status });
         }
-        const { planner, requester } = own && onlyOwn ? {} : runRights(req, slug, target);
+        const { planner, requester, runner } = own && onlyOwn ? {} : runRights(req, slug, target);
         const patch: Parameters<Board["updateTicket"]>[2] = {};
         const deps = strings(b.dependsOn);
         if (deps) patch.dependsOn = deps;
@@ -1260,9 +1277,25 @@ export function createServer(deps: ServerDeps) {
           if (b.effort !== null && !(typeof b.effort === "string" && validEffort(b.effort))) throw new HttpError(400, `"${b.effort}" is not an effort level. Use ${EFFORT_HELP}.`);
           patch.effort = b.effort;
         }
-        if (planner || requester) {
+        if (planner || requester || runner) {
           delete patch.order;
           delete patch.notice;
+        }
+        let startedBy: Ticket["startedBy"] | undefined;
+        if (runner && patch.status === "done" && target.status !== "done") {
+          // Done removes the ticket's copy of the folder: a run never closes work that is under way or not saved yet.
+          if (board.isRunning(slug, id)) {
+            throw new HttpError(409, `${id} is working right now: stop it first with stop_ticket, or leave closing it to the user`);
+          }
+          if (!target.workdir && target.worktree && await hasUncommittedChanges(target.worktree)) {
+            throw new HttpError(409, `${id} has changes in its copy of the folder that aren't saved in its version history yet; ` +
+              "moving it to done could lose them, so only the user can close it (on the board)");
+          }
+        }
+        if (startsRun(patch.status) && patch.status !== target.status) {
+          // Who starts this run: another ticket's run (counted against the chain limits) or the user (clears it).
+          if (runner) startedBy = runStart(slug, runner);
+          else if (!planner) startedBy = null;
         }
         if (planner) {
           if (patch.status === "ready" && target.status !== "ready" && target.runCount > 0) {
@@ -1280,14 +1313,16 @@ export function createServer(deps: ServerDeps) {
           if (e instanceof ConflictError) throw e;
           throw new HttpError(400, (e as Error).message);
         }
-        const changer = planner ?? requester;
+        if (startedBy !== undefined) board.markStartedBy(slug, id, startedBy);
+        const changer = planner ?? requester ?? runner;
         if (own && onlyOwn && target.important !== t.important) store.addComment(slug, id, "ai", t.important ? "Claude marked this ticket ⭐ Important." : "Claude cleared ⭐ Important.");
         if (changer) {
           const what = Object.entries(patch)
             .map(([k, v]) => (k === "status" ? `moved it to ${v}` : k === "parentId" ? `released it from plan ${target.parentId}` : k === "important" ? (v ? "marked it ⭐ Important" : "cleared ⭐ Important") : `changed ${k}`)).join(", ");
-          if (what) store.addComment(slug, id, "ai", planner ? `Planner ${what}.` : `${what[0].toUpperCase()}${what.slice(1)} ${byRequest(changer)}.`);
+          const by = planner ? "" : requester ? byRequest(requester) : byRun(runner!);
+          if (what) store.addComment(slug, id, "ai", planner ? `Planner ${what}.` : `${what[0].toUpperCase()}${what.slice(1)} ${by}.`);
         }
-        return json(view(profile, t));
+        return json(view(profile, startedBy === undefined ? t : store.getTicket(slug, id)!));
       }
       if (m === "DELETE") {
         if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "deleting tickets is disabled inside a board run");
@@ -1568,22 +1603,29 @@ export function createServer(deps: ServerDeps) {
         const b = await body(req);
         const text = String(b.text ?? "").trim();
         if (!text) throw new HttpError(400, "text is required");
-        // The child reads user comments on its next run; mark who wrote this one.
-        const { planner, requester } = runRights(req, slug, store.getTicket(slug, id)!);
+        // The child reads user comments on its next run; mark who wrote this one. Another ticket's run leaves a note:
+        // shown as Claude's, and labelled for the next run, so it never reads as the user's.
+        const { planner, requester, runner } = runRights(req, slug, store.getTicket(slug, id)!);
+        if (runner) return json(board.addComment(slug, id, `Note from ticket ${runner.id} ("${runner.title}"): ${text}`, runner.id), 201);
         const by = planner ? "Planner: " : requester ? `From the Planning chat of ${requester.id} (user request): ` : "";
         return json(board.addComment(slug, id, by + text), 201);
       }
     }
     if (m === "POST" && action === "chat") {
-      const { planner, requester } = runRights(req, slug, store.getTicket(slug, id)!);
+      const { planner, requester, runner } = runRights(req, slug, store.getTicket(slug, id)!);
       const b = await body(req);
       const text = String(b.text ?? "").trim();
       if (!text) throw new HttpError(400, "text is required");
+      // A message starts the ticket's run, now or once its current run ends (queued): another ticket's run is counted
+      // against the chain limits either way; the user's message to a ticket that isn't working clears it.
+      const startedBy = runner ? runStart(slug, runner) : !planner && !requester && !board.isRunning(slug, id) ? null : undefined;
       // A message from a run never hands the user's rights on to the run it starts.
-      const t = await board.chat(slug, id, text, { fromPlanner: !!(planner || requester) });
+      const t = await board.chat(slug, id, runner ? `Message from ticket ${runner.id} ("${runner.title}"): ${text}` : text, { fromPlanner: !!(planner || requester || runner) });
+      if (startedBy !== undefined) board.markStartedBy(slug, id, startedBy);
       // A message the user typed (not a slash command) reached Claude: a pending follow-up hears about it, and stops if it was set to.
       if (!req.headers.get(RUN_HEADER) && !text.startsWith("/")) board.userReplied(slug, id);
       if (requester) store.addComment(slug, id, "ai", `Message sent ${byRequest(requester)}.`);
+      if (runner) store.addComment(slug, id, "ai", `Message sent ${byRun(runner)}.`);
       return json(view(profile, t), 202);
     }
     // A message Claude hasn't received: POST .../queued/<msgId> sends it (unsent only), PATCH { text } edits it, DELETE discards it.
@@ -1679,10 +1721,11 @@ export function createServer(deps: ServerDeps) {
       return json(await board.runSetup(slug, id));
     }
     if (m === "POST" && action === "stop") {
-      const { planner, requester } = runRights(req, slug, store.getTicket(slug, id)!);
+      const { planner, requester, runner } = runRights(req, slug, store.getTicket(slug, id)!);
       const stopped = board.stop(slug, id);
       if (planner && stopped) store.addComment(slug, id, "ai", "Planner stopped this run.");
       if (requester && stopped) store.addComment(slug, id, "ai", `Run stopped ${byRequest(requester)}.`);
+      if (runner && stopped) store.addComment(slug, id, "ai", `Run stopped ${byRun(runner)}.`);
       return json({ stopped });
     }
     // Start / pause / resume / mark done a planner's plan, or change how many children run at once.

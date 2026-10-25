@@ -111,6 +111,9 @@ const MODE = {
   description: "interview: Claude asks the user clarifying questions before working. auto: Claude just does it.",
 };
 
+/** What a board run may do to other tickets (see runRights in http.ts). */
+const IN_RUN = " Inside a board run: other tickets on this board, when your ticket's task calls for it (logged on that ticket); runs started this way are limited.";
+
 interface Tool {
   name: string;
   description: string;
@@ -1502,7 +1505,7 @@ export const TOOLS: Tool[] = [
       "Create a ticket on the board. Check list_tickets first so you don't add a duplicate. " +
       "Write a self-contained description in markdown (## Goal, ## Context with relevant files, ## Acceptance criteria), " +
       "because another Claude session will work on it later without this conversation. " +
-      "Leave status and mode at their defaults (backlog, interview) unless the user explicitly asks to start work or skip the interview.",
+      "Leave status and mode at their defaults (backlog, interview) unless the user explicitly asks to start work or skip the interview." + IN_RUN,
     inputSchema: {
       type: "object",
       properties: {
@@ -1543,7 +1546,7 @@ export const TOOLS: Tool[] = [
     description:
       "Edit a ticket's title, description, column, mode, dependsOn, needs, tags or ⭐ important. Moving it to ready starts a Claude run, " +
       "moving it to planning starts the interview in the board chat (same as dragging it on the board). " +
-      "A planner can take one of its children out of its plan with release: true.",
+      "A planner can take one of its children out of its plan with release: true." + IN_RUN,
     inputSchema: {
       type: "object",
       properties: {
@@ -1695,7 +1698,8 @@ export const TOOLS: Tool[] = [
   {
     name: "move_ticket",
     description: "Move a ticket to another column. ready starts a Claude run; planning starts the interview in the board chat. " +
-      "Your own ticket: only to done, backlog or ready, only when the user asked for it in a message they typed in this chat; it moves once your reply ends.",
+      "Your own ticket: only to done, backlog or ready, only when the user asked for it in a message they typed in this chat; it moves once your reply ends." + IN_RUN +
+      " A ticket that is working or has unsaved changes can't be moved to done from a run.",
     inputSchema: { type: "object", properties: { profile: PROFILE, id: ID, status: STATUS }, required: ["id", "status"] },
     changes: true,
     plannerScope: true,
@@ -1773,7 +1777,8 @@ export const TOOLS: Tool[] = [
     name: "chat_ticket",
     description:
       "Send a message to the Claude session working on a ticket (or start one), like typing in the board's ticket chat. " +
-      "Answering a question form or applying a proposed ticket can only be done in the board UI.",
+      "Answering a question form or applying a proposed ticket can only be done in the board UI." + IN_RUN +
+      " The message is labelled as coming from your ticket.",
     inputSchema: { type: "object", properties: { profile: PROFILE, id: ID, message: { type: "string" } }, required: ["id", "message"] },
     changes: true,
     plannerScope: true,
@@ -1785,7 +1790,7 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "stop_ticket",
-    description: "Stop the Claude run working on a ticket.",
+    description: "Stop the Claude run working on a ticket." + IN_RUN,
     inputSchema: { type: "object", properties: { profile: PROFILE, id: ID }, required: ["id"] },
     changes: true,
     plannerScope: true,
@@ -1798,7 +1803,8 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "comment_ticket",
-    description: "Add a comment to a ticket. Claude reads new comments at the start of its next run.",
+    description: "Add a comment to a ticket. Claude reads new comments at the start of its next run." + IN_RUN +
+      " From a run it is saved as a note from your ticket (\"Note from ticket …\"), never as the user's words.",
     inputSchema: { type: "object", properties: { profile: PROFILE, id: ID, text: { type: "string" } }, required: ["id", "text"] },
     changes: true,
     plannerScope: true,

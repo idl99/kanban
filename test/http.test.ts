@@ -742,6 +742,103 @@ test("a Planning chat answering the user's message may change any other ticket o
   }
 });
 
+test("a ticket's active run may change other tickets on its board: labelled notes, logged changes, limits on starting and closing", async () => {
+  const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Runner Proj", path: tempDir("ck-runner-") }))).json()) as any;
+  const tickets = `${base}/api/profiles/${p.slug}/tickets`;
+  const send = async (u: string, b: unknown, headers: Record<string, string> = {}, method = "POST") =>
+    fetch(u, { method, headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(b) });
+  const mk = async (title: string) => (await (await send(tickets, { title })).json()) as any;
+  const a = await mk("Post #006 again");
+  const old = await mk("Old #006");
+  const busy = await mk("Busy");
+  const dirty = await mk("Dirty");
+  const next = await mk("Next");
+  const run = { "x-ckanban-run": `${p.slug}/${a.id}` };
+  const errorOf = async (r: Response) => ((await r.json()) as any).error as string;
+  const lastNote = (id: string) => store.listComments(p.slug, id).at(-1)!;
+  const by = `by the run of ${a.id} ("Post #006 again")`;
+
+  // Not working right now: refused like before.
+  let r = await send(`${tickets}/${old.id}/comments`, { text: "replaced" }, run);
+  expect(r.status).toBe(403);
+  expect(await errorOf(r)).toContain("disabled inside a board run");
+
+  const realRights = board.runnerRights.bind(board);
+  const realRunning = board.isRunning.bind(board);
+  board.runnerRights = (slug, id) => (slug === p.slug && id === a.id ? store.getTicket(slug, id)! : realRights(slug, id));
+  board.isRunning = (slug, id) => id === busy.id || realRunning(slug, id);
+  try {
+    // A note: Claude's, labelled with the ticket that wrote it.
+    r = await send(`${tickets}/${old.id}/comments`, { text: "replaced by job 4f2k; nothing to post here" }, run);
+    expect(r.status).toBe(201);
+    const note = (await r.json()) as any;
+    expect([note.author, note.from, note.text]).toEqual(["ai", a.id, `Note from ticket ${a.id} ("Post #006 again"): replaced by job 4f2k; nothing to post here`]);
+    // Edits and moves are logged on the changed ticket.
+    r = await send(`${tickets}/${old.id}`, { title: "Old #006 (replaced)" }, run, "PATCH");
+    expect(r.status).toBe(200);
+    expect(lastNote(old.id).text).toBe(`Changed title ${by}.`);
+    r = await send(`${tickets}/${old.id}`, { status: "done" }, run, "PATCH");
+    expect(r.status).toBe(200);
+    expect(store.getTicket(p.slug, old.id)!.status).toBe("done");
+    expect(lastNote(old.id).text).toBe(`Moved it to done ${by}.`);
+    r = await send(tickets, { title: "Spin-off" }, run);
+    expect(r.status).toBe(201);
+    const made = (await r.json()) as any;
+    expect([made.parentId ?? null, made.status]).toEqual([null, "backlog"]);
+    expect(lastNote(made.id).text).toBe(`Created ${by}.`);
+
+    // Closing work that is under way or not saved yet: refused, the user can.
+    r = await send(`${tickets}/${busy.id}`, { status: "done" }, run, "PATCH");
+    expect(r.status).toBe(409);
+    expect(await errorOf(r)).toContain("working right now");
+    const wt = await makeRepo();
+    writeFileSync(join(wt, "draft.md"), "half done\n");
+    store.updateTicket(p.slug, dirty.id, { worktree: wt });
+    r = await send(`${tickets}/${dirty.id}`, { status: "done" }, run, "PATCH");
+    expect(r.status).toBe(409);
+    expect(await errorOf(r)).toContain("aren't saved in its version history");
+    expect(store.getTicket(p.slug, dirty.id)!.status).toBe("backlog");
+    r = await send(`${tickets}/${dirty.id}`, { status: "done" }, {}, "PATCH");
+    expect(r.status).toBe(200);
+
+    // Starting runs: past the chain limit refused; within it, the started ticket remembers who started it.
+    board.markStartedBy(p.slug, a.id, { ticketId: "t_20261001_root", depth: 2 });
+    r = await send(`${tickets}/${next.id}`, { status: "ready" }, run, "PATCH");
+    expect(r.status).toBe(409);
+    expect(await errorOf(r)).toContain("chain of runs started by runs stops at 2");
+    r = await send(`${tickets}/${next.id}/chat`, { text: "go" }, run);
+    expect(r.status).toBe(409);
+    expect(store.getTicket(p.slug, next.id)!.status).toBe("backlog");
+    board.markStartedBy(p.slug, a.id, null);
+    r = await send(`${tickets}/${next.id}/chat`, { text: "please pick this up" }, run);
+    expect(r.status).toBe(202);
+    expect(store.getTicket(p.slug, next.id)!.startedBy).toEqual({ ticketId: a.id, depth: 1 });
+    expect(store.getTicket(p.slug, next.id)!.status).not.toBe("planning");
+    expect(store.listComments(p.slug, next.id).some((c) => c.text === `Message sent ${by}.`)).toBe(true);
+    r = await send(`${tickets}/${busy.id}/stop`, {}, run);
+    expect(r.status).toBe(200);
+
+    // Still refused: deleting, its own ticket, and a huddle helper of the same ticket.
+    r = await fetch(`${tickets}/${next.id}`, { method: "DELETE", headers: run });
+    expect(r.status).toBe(403);
+    r = await send(`${tickets}/${a.id}`, { title: "x" }, run, "PATCH");
+    expect(r.status).toBe(403);
+    expect(await errorOf(r)).toContain("own ticket");
+    r = await send(`${tickets}/${next.id}/comments`, { text: "x" }, { ...run, "x-ckanban-huddle-agent": "reviewer" });
+    expect(r.status).toBe(403);
+    // Spending cap and model stay the user's; tickets on another board stay out of reach.
+    r = await send(`${tickets}/${next.id}`, { runCapUsd: 0 }, run, "PATCH");
+    expect(r.status).toBe(403);
+    const q = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Elsewhere Proj", path: tempDir("ck-else-") }))).json()) as any;
+    const far = (await (await send(`${base}/api/profiles/${q.slug}/tickets`, { title: "Far" })).json()) as any;
+    r = await send(`${base}/api/profiles/${q.slug}/tickets/${far.id}/comments`, { text: "hi" }, run);
+    expect(r.status).toBe(403);
+  } finally {
+    board.runnerRights = realRights;
+    board.isRunning = realRunning;
+  }
+});
+
 test("a ticket's own chat moves its own card to done, backlog or ready only at the user's request", async () => {
   const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Self Move", path: tempDir("ck-self-") }))).json()) as any;
   const tickets = `${base}/api/profiles/${p.slug}/tickets`;

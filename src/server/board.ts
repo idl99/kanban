@@ -16,7 +16,8 @@ import { recallBlock } from "./recall";
 import { lessonsBlock } from "./lessons";
 import { chatPrompt, firstRunPrompt, followUpWakePrompt, freshSessionPrompt, interruptedPrompt, orchestratorPrompt, planningCommand, planningPrompt, resumePrompt, setupNote, steerPrompt, type ChatMode, type PlanWake } from "./prompts";
 import {
-  childrenOf, DEFAULT_MAX_CONCURRENT, findCycle, isComplete, normalizeNeeds, planActive, planProblem, planStep, planTable, resolveDeps, wakeupCap,
+  childrenOf, DEFAULT_MAX_CONCURRENT, findCycle, isComplete, MAX_RUN_CHAIN, MAX_RUN_STARTS, normalizeNeeds, planActive, planProblem, planStep, planTable,
+  resolveDeps, wakeupCap,
 } from "./plan";
 import { run as runCmd } from "./git";
 import { parseResult } from "./result";
@@ -96,6 +97,8 @@ interface ActiveRun {
   restartRequested?: boolean;
   /** This run started an auto huddle (start_huddle): one per run. */
   autoHuddleStarted?: boolean;
+  /** Other tickets' runs this run started (see runStart). */
+  runStarts?: number;
   /** The user typed a message in the ticket's chat that was handed to this run while it worked (see userAskedRun). */
   userSteered?: boolean;
   /** Queued messages (ticket.queued) written to this claude process, keyed by id, with the text it was given. */
@@ -776,7 +779,7 @@ export class Board {
     const quiet = !!run.chat?.quiet;
     const profile = this.store.getProfile(slug)!;
     const runNo = t.runCount + 1;
-    const newComments = this.store.listComments(slug, id).filter((c) => c.author === "user" && (!t.lastRunAt || c.at > t.lastRunAt));
+    const newComments = this.store.listComments(slug, id).filter((c) => (c.author === "user" || c.from) && (!t.lastRunAt || c.at > t.lastRunAt));
     const outputDir = this.store.outputsDir(slug, id);
     // Start fresh session: a work run in a new session that picks up from the branch (until that session exists).
     const fresh = !!t.freshSession && !run.chat;
@@ -788,7 +791,9 @@ export class Board {
       ? this.freshPrompt(slug, t, session, outputDir)
       : t.runCount === 0 || !session.existed
       ? firstRunPrompt(t, {
-        repo: session.repo, inPlace: session.inPlace, home: { folder: profile.path, baseBranch: profile.baseBranch }, linked: !!t.workdir, comments: t.workdir || t.runCount > 0 ? newComments : [], outputDir,
+        repo: session.repo, inPlace: session.inPlace, home: { folder: profile.path, baseBranch: profile.baseBranch }, linked: !!t.workdir,
+        // Notes other tickets' runs left reach even a ticket's first run: nobody else passes them on.
+        comments: t.workdir || t.runCount > 0 ? newComments : newComments.filter((c) => c.from), outputDir,
         schedule: t.scheduleId ? { id: t.scheduleId, name: this.store.getSchedule(slug, t.scheduleId)?.name ?? null, board: slug } : undefined,
         autoHuddles: autoHuddlesOn(profile), artifacts: !!profile.artifacts, recall: this.recall(slug, t),
       })
@@ -1758,6 +1763,45 @@ export class Board {
   }
 
   /**
+   * The ticket whose run may change other tickets on its board on its own (see runRights in http.ts): a work run or a
+   * chat reply that acts on the ticket. Planning chats keep needing the user's message (userRequestRights), and a quiet
+   * reply to another session (a peer run) gets nothing, so asking a ticket a question can't hand it a chain of runs.
+   */
+  runnerRights(slug: string, runTicketId: string): Ticket | null {
+    const r = this.runs.get(this.key(slug, runTicketId));
+    if (!r || r.stopRequested || r.chat?.mode === "refine" || r.chat?.quiet) return null;
+    return this.store.getTicket(slug, runTicketId) ?? null;
+  }
+
+  /**
+   * A run starts another ticket's run: refused past MAX_RUN_CHAIN or MAX_RUN_STARTS, otherwise counted. Returns what
+   * goes in the started ticket's startedBy.
+   */
+  runStart(slug: string, runTicketId: string): NonNullable<Ticket["startedBy"]> {
+    const by = this.store.getTicket(slug, runTicketId)?.startedBy;
+    const depth = (by?.depth ?? 0) + 1;
+    if (depth > MAX_RUN_CHAIN) {
+      throw new Error(`this run was started by another ticket's run (${by!.ticketId}), and a chain of runs started by runs stops at ${MAX_RUN_CHAIN}: ` +
+        "it can't start more runs. Ask the user to start it on the board");
+    }
+    const r = this.runs.get(this.key(slug, runTicketId));
+    if (r) {
+      if ((r.runStarts ?? 0) >= MAX_RUN_STARTS) {
+        throw new Error(`this run already started ${MAX_RUN_STARTS} other tickets' runs, the most one run may start. Ask the user to start it on the board`);
+      }
+      r.runStarts = (r.runStarts ?? 0) + 1;
+    }
+    return { ticketId: runTicketId, depth };
+  }
+
+  /** Who started the ticket's latest run: another ticket's run (runStart), or null when the user started it. */
+  markStartedBy(slug: string, id: string, by: Ticket["startedBy"]): void {
+    const t = this.store.getTicket(slug, id);
+    if (!t || (!t.startedBy && !by)) return;
+    this.patch(slug, id, { startedBy: by ?? null });
+  }
+
+  /**
    * Manager mode: make existing tickets children of this one, so its plan runs them. Tickets on another board, the
    * ticket itself or its ancestors (a cycle), tickets in another plan and finished ones are skipped with a reason.
    */
@@ -2197,8 +2241,9 @@ export class Board {
     return { ticket: this.requeue(slug, id), external: false };
   }
 
-  addComment(slug: string, id: string, text: string) {
-    const c = this.store.addComment(slug, id, "user", text);
+  /** A comment: the user's (or a planner's), or with from, a note another ticket's run left (shown as Claude's). */
+  addComment(slug: string, id: string, text: string, from?: string) {
+    const c = this.store.addComment(slug, id, from ? "ai" : "user", text, from);
     this.emitTicket(slug, this.store.getTicket(slug, id)!);
     return c;
   }
