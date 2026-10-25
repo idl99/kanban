@@ -25,10 +25,11 @@ test("parseSearch: #words are tags, the rest is text", () => {
   expect(parseSearch("")).toEqual({ tags: [], text: "" });
 });
 
-test("hasTags needs every tag; boardTags counts, most used first", () => {
+test("hasTags needs any one of the tags; boardTags counts, most used first", () => {
   const ts = [{ tags: ["post", "xhs"] }, { tags: ["post"] }, { tags: ["website"] }, {}];
   expect(ts.filter((t) => hasTags(t, ["post"]))).toHaveLength(2);
-  expect(ts.filter((t) => hasTags(t, ["post", "xhs"]))).toHaveLength(1);
+  expect(ts.filter((t) => hasTags(t, ["post", "xhs"]))).toHaveLength(2);
+  expect(ts.filter((t) => hasTags(t, ["xhs", "website"]))).toHaveLength(2);
   expect(ts.filter((t) => hasTags(t, []))).toHaveLength(4);
   expect(boardTags(ts)).toEqual([{ name: "post", count: 2 }, { name: "website", count: 1 }, { name: "xhs", count: 1 }]);
 });

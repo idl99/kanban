@@ -30,9 +30,9 @@ export function parseSearch(query: string): { tags: string[]; text: string } {
   return { tags, text: words.join(" ").toLowerCase() };
 }
 
-/** The ticket has every one of these tags. */
+/** The ticket has at least one of these tags (no tags asked: every ticket), like the other filter chips. */
 export function hasTags(t: { tags?: string[] }, tags: string[]): boolean {
-  return tags.every((g) => t.tags?.includes(g));
+  return !tags.length || tags.some((g) => t.tags?.includes(g));
 }
 
 /** This board's tags, most used first (ties by name), with how many tickets have each. */

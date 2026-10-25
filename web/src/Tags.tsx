@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckIcon, CloseIcon } from "./icons";
 import { useLayer } from "./layers";
-import { normalizeTag, tagStyle } from "./tagText";
+import { MenuSheet } from "./MenuSheet";
+import { usePhone } from "./usePhone";
+import { boardTags, normalizeTag, tagStyle } from "./tagText";
 
 /** One tag as a colored `#name` chip; with onClick it filters the board (cards) instead of opening the ticket. */
 export function TagChip({ name, onClick }: { name: string; onClick?: () => void }) {
@@ -122,6 +124,80 @@ export function TagEditor({ tags, suggested = [], known, onChange, onSuggested, 
         </span>
       ) : (
         <button type="button" className="tag-add" disabled={disabled} onClick={start}>+ tag</button>
+      )}
+    </div>
+  );
+}
+
+/** Above this many tags the Tags list gets a find box. */
+const TAG_FIND_FROM = 8;
+
+/**
+ * "Tags ▾" filter chip in the board bar: a list of the board's tags (in their colors, with counts) to tick.
+ * Ticked tags are the board's tag filter, the same one the search box shows as chips. A bottom sheet on a phone.
+ */
+export function TagFilter({ tickets, picked, onChange }: {
+  tickets: { tags?: string[] }[];
+  picked: string[];
+  onChange: (tags: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [find, setFind] = useState("");
+  // No keyboard popping up over the sheet on a phone.
+  const phone = usePhone();
+  const root = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  const close = (focusButton = true) => {
+    setOpen(false);
+    setFind("");
+    if (focusButton) button.current?.focus();
+  };
+  useLayer(() => close(), { active: open });
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!root.current?.contains(e.target as Node)) close(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
+  const known = boardTags(tickets);
+  // A picked tag no ticket has any more stays in the list, so it can be unticked.
+  const all = [...known, ...picked.filter((g) => !known.some((k) => k.name === g)).map((name) => ({ name, count: 0 }))];
+  if (!all.length) return null;
+  const needle = normalizeTag(find);
+  const shown = needle ? all.filter((k) => k.name.includes(needle)) : all;
+  const toggle = (name: string) => onChange(picked.includes(name) ? picked.filter((g) => g !== name) : [...picked, name]);
+
+  return (
+    <div className="tag-filter" ref={root}>
+      <button ref={button} type="button" className={`chip${picked.length ? " on" : ""}`} aria-haspopup="dialog" aria-expanded={open}
+        title="Show only tickets with these tags" onClick={() => (open ? close() : setOpen(true))}>
+        Tags{picked.length > 0 && <span className="chip-count">· {picked.length}</span>} <span aria-hidden>▾</span>
+      </button>
+      {open && (
+        <MenuSheet onClose={() => close(false)}>
+          <div className="tag-filter-menu" role="dialog" aria-label="Filter by tag">
+            {all.length > TAG_FIND_FROM && (
+              <input className="tag-filter-find" autoFocus={!phone} value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find a tag" aria-label="Find a tag" />
+            )}
+            <div className="tag-filter-list">
+              {shown.map((k) => (
+                <label key={k.name} className="tag-filter-item">
+                  <input type="checkbox" checked={picked.includes(k.name)} onChange={() => toggle(k.name)}
+                    autoFocus={!phone && all.length <= TAG_FIND_FROM && k === shown[0]} />
+                  <span className="tag-chip" style={tagStyle(k.name)}>#{k.name}</span>
+                  <span className="tag-count">{k.count}</span>
+                </label>
+              ))}
+              {!shown.length && <p className="muted small tag-filter-none">No tag matches “{find}”.</p>}
+            </div>
+            {picked.length > 0 && (
+              <button type="button" className="link-btn small tag-filter-clear" onClick={() => onChange([])}>Clear tags</button>
+            )}
+          </div>
+        </MenuSheet>
       )}
     </div>
   );

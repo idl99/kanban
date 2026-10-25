@@ -6,6 +6,7 @@ import { AutomationsDialog } from "./AutomationsDialog";
 import { ConnectionsDialog } from "./ConnectionsDialog";
 import { HeaderMenu, type MenuItem } from "./HeaderMenu";
 import { boardTags, hasTags, parseSearch, tagStyle } from "./tagText";
+import { TagFilter } from "./Tags";
 import { AtIcon, BellIcon, BugIcon, ChatIcon, CheckIcon, ClockIcon, CloseIcon, CopyIcon, DeviceIcon, GearIcon, KeyboardIcon, LoopIcon, Logo, PlugIcon, PlusIcon, SearchIcon, TeamIcon, TerminalIcon } from "./icons";
 import { Inbox } from "./Inbox";
 import { NowView } from "./NowView";
@@ -891,6 +892,7 @@ export function App() {
                   </button>
                 );
               })}
+              <TagFilter tickets={tickets} picked={tagFilter} onChange={setTagFilter} />
             </div>
             {filtering && (
               <span className="muted small" aria-live="polite">
