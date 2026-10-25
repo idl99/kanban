@@ -66,3 +66,14 @@ test("a note from another ticket's run is saved as Claude's and labelled with it
   expect(store.listComments(slug, t.id).at(-1)).toEqual(c);
   expect(board.addComment(slug, t.id, "mine").author).toBe("user");
 });
+
+test("only a reply to the user's own typed message counts as asked by the user: not slash commands, peers or work runs", () => {
+  const { board, slug, mk, fakeRun } = setup();
+  const [chat, refine, slash, peer, work] = ["Chat", "Planning", "Slash", "Peer", "Work"].map(mk);
+  fakeRun(chat.id, { text: "make a ticket on the other board", mode: "act", user: true });
+  fakeRun(refine.id, { text: "make it there", mode: "refine", user: true });
+  fakeRun(slash.id, { text: "/compact", mode: "act", user: true, slash: true });
+  fakeRun(peer.id, { text: "q", mode: "act", raw: true, quiet: true });
+  fakeRun(work.id);
+  expect([chat, refine, slash, peer, work].map((t) => board.userAskedRun(slug, t.id))).toEqual([true, true, false, false, false]);
+});

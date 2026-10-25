@@ -190,9 +190,9 @@ export interface Ticket {
   /**
    * Another ticket's run started this ticket's latest run (move to Ready or Planning, a chat message, create): which
    * ticket and how deep the chain of runs started by runs is (1 = started by a run the user started). The user starting
-   * it again clears it. See Board.runStart.
+   * it again clears it; slug is set when that ticket is on another board. See Board.runStart.
    */
-  startedBy?: { ticketId: string; depth: number } | null;
+  startedBy?: { ticketId: string; depth: number; slug?: string } | null;
   /** Set on a planner ticket once its plan was started: the board runs its children unattended. */
   plan?: Plan | null;
   /** Chat messages Claude has not read yet, oldest first: sent while it was working, or the one that started its reply. */

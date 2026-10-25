@@ -843,6 +843,73 @@ test("a ticket's active run may change other tickets on its board: labelled note
   }
 });
 
+test("a chat answering the user's message changes tickets on another board; other runs stay on their own board", async () => {
+  const home = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Berry Best", path: tempDir("ck-home-b-") }))).json()) as any;
+  const far = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Fatt Interior", path: tempDir("ck-far-") }))).json()) as any;
+  const farTickets = `${base}/api/profiles/${far.slug}/tickets`;
+  const send = async (u: string, b: unknown, headers: Record<string, string> = {}, method = "POST") =>
+    fetch(u, { method, headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(b) });
+  const mk = async (u: string, title: string) => (await (await send(u, { title })).json()) as any;
+  const chat = await mk(`${base}/api/profiles/${home.slug}/tickets`, "Kitchen quote");
+  const work = await mk(`${base}/api/profiles/${home.slug}/tickets`, "Work run");
+  const existing = await mk(farTickets, "Measure the hallway");
+  const errorOf = async (r: Response) => ((await r.json()) as any).error as string;
+  const lastNote = (id: string) => store.listComments(far.slug, id).at(-1)!;
+  const asChat = { "x-ckanban-run": `${home.slug}/${chat.id}` };
+  const asWork = { "x-ckanban-run": `${home.slug}/${work.id}` };
+  const by = `by the chat of ${chat.id} on Berry Best (user request)`;
+
+  const realAsked = board.userAskedRun.bind(board);
+  const realRunner = board.runnerRights.bind(board);
+  board.userAskedRun = (slug, id) => (slug === home.slug && id === chat.id) || realAsked(slug, id);
+  // The work run may change its own board, but that never reaches another board.
+  board.runnerRights = (slug, id) => (slug === home.slug && id === work.id ? store.getTicket(slug, id)! : realRunner(slug, id));
+  try {
+    // Create: lands in Backlog with the credit line.
+    let r = await send(farTickets, { title: "Cross-board test", body: "from the kitchen chat" }, asChat);
+    expect(r.status).toBe(201);
+    const made = (await r.json()) as any;
+    expect([made.status, made.mode]).toEqual(["backlog", "interview"]);
+    expect(lastNote(made.id).text).toBe(`Created ${by}.`);
+    expect(store.getTicket(far.slug, made.id)!.startedBy ?? null).toBeNull();
+    // Edit, comment, move: logged with the source board and ticket.
+    r = await send(`${farTickets}/${existing.id}`, { title: "Measure the hallway twice" }, asChat, "PATCH");
+    expect(r.status).toBe(200);
+    expect(lastNote(existing.id).text).toBe(`Changed title ${by}.`);
+    r = await send(`${farTickets}/${existing.id}/comments`, { text: "bring the laser" }, asChat);
+    expect(r.status).toBe(201);
+    expect(lastNote(existing.id).text).toBe(`From the chat of ${chat.id} on Berry Best (user request): bring the laser`);
+    // Starting a run there counts against the chat's ticket on its own board, and remembers that board.
+    r = await send(`${farTickets}/${existing.id}`, { status: "ready" }, asChat, "PATCH");
+    expect(r.status).toBe(200);
+    expect(store.getTicket(far.slug, existing.id)!.startedBy).toEqual({ ticketId: chat.id, depth: 1, slug: home.slug });
+    board.markStartedBy(home.slug, chat.id, { ticketId: "t_20261001_root", depth: 2 });
+    r = await send(farTickets, { title: "Start me", status: "ready" }, asChat);
+    expect(r.status).toBe(409);
+    expect(await errorOf(r)).toContain("stops at 2");
+    board.markStartedBy(home.slug, chat.id, null);
+    // Spending cap and deleting stay the user's.
+    r = await send(`${farTickets}/${existing.id}`, { runCapUsd: 0 }, asChat, "PATCH");
+    expect(r.status).toBe(403);
+    r = await fetch(`${farTickets}/${made.id}`, { method: "DELETE", headers: asChat });
+    expect(r.status).toBe(403);
+
+    // A work run and a huddle helper of the chat's ticket: refused, saying why.
+    for (const headers of [asWork, { ...asChat, "x-ckanban-huddle-agent": "reviewer" }]) {
+      r = await send(farTickets, { title: "Nope" }, headers);
+      expect(r.status).toBe(403);
+      expect(await errorOf(r)).toContain("only works in a chat reply to a message the user typed");
+    }
+    expect(store.listTickets(far.slug).some((t) => t.title === "Nope")).toBe(false);
+    // Own board: unchanged, the work run still changes its own board's tickets.
+    r = await send(`${base}/api/profiles/${home.slug}/tickets/${chat.id}/comments`, { text: "note" }, asWork);
+    expect(r.status).toBe(201);
+  } finally {
+    board.userAskedRun = realAsked;
+    board.runnerRights = realRunner;
+  }
+});
+
 test("a ticket's own chat moves its own card to done, backlog or ready only at the user's request", async () => {
   const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Self Move", path: tempDir("ck-self-") }))).json()) as any;
   const tickets = `${base}/api/profiles/${p.slug}/tickets`;

@@ -112,7 +112,8 @@ const MODE = {
 };
 
 /** What a board run may do to other tickets (see runRights in http.ts). */
-const IN_RUN = " Inside a board run: other tickets on this board, when your ticket's task calls for it (logged on that ticket); runs started this way are limited.";
+const IN_RUN = " Inside a board run: other tickets on this board, when your ticket's task calls for it (logged on that ticket); runs started this way are limited. " +
+  "Another board's tickets (pass its profile; list_profiles lists them): only from a chat reply to a message the user typed in that chat.";
 
 interface Tool {
   name: string;

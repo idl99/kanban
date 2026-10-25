@@ -54,6 +54,12 @@ import { runCapFor, SELF_MOVES, STATUSES, type Profile, type SelfMove, type Sche
 import { nowIso, slugify } from "./util";
 import { applyDetection, detectSetup } from "./worktree-setup";
 
+/** A chat on another board acting for the user here (see runRights): its board and ticket. */
+interface Guest {
+  slug: string;
+  ticket: Ticket;
+}
+
 export interface ServerDeps {
   store: Store;
   bus: Bus;
@@ -305,12 +311,20 @@ export function createServer(deps: ServerDeps) {
    *   planner's chat (Board.plannerRights): returned as `planner`;
    * - any other active work run or chat reply (Board.runnerRights) on any other ticket of its board, when its task
    *   calls for it: returned as `runner`. Starting runs that way is limited (Board.runStart), and so is closing work.
+   * - a chat on another board answering a message the user typed there (Board.userAskedRun, checked on its own board)
+   *   acts for the user on any ticket of this board: returned as `guest`. Other runs stay on their own board.
    * Returns {} for the user. Huddle agents run as their host ticket but get none of these. Deleting stays the user's.
    */
-  const runRights = (req: Request, slug: string, target?: Ticket): { planner?: Ticket; requester?: Ticket; runner?: Ticket } => {
+  const runRights = (req: Request, slug: string, target?: Ticket): { planner?: Ticket; requester?: Ticket; runner?: Ticket; guest?: Guest } => {
     const h = req.headers.get(RUN_HEADER);
     if (!h) return {};
     const [runSlug, runId] = h.split("/");
+    if (runSlug !== slug && runId) {
+      const ticket = !req.headers.get(HUDDLE_HEADER) && board.userAskedRun(runSlug, runId) ? store.getTicket(runSlug, runId) : null;
+      if (ticket) return { guest: { slug: runSlug, ticket } };
+      throw new HttpError(403, `changing tickets on another board (${slug}) only works in a chat reply to a message the user typed in ` +
+        `that chat (on ${runSlug}); work runs, plan wake-ups, replies to other tickets and huddle helpers stay on their own board`);
+    }
     const mine = runSlug === slug && !!runId && !req.headers.get(HUDDLE_HEADER);
     const requester = mine ? board.userRequestRights(slug, runId) : null;
     if (requester) {
@@ -339,6 +353,8 @@ export function createServer(deps: ServerDeps) {
   const byRequest = (requester: Ticket) => `by the Planning chat of ${requester.id} (user request)`;
   /** How a change another ticket's run made is credited on the changed ticket. */
   const byRun = (runner: Ticket) => `by the run of ${runner.id} ("${runner.title}")`;
+  /** How a change a chat on another board made for the user is credited on the changed ticket. */
+  const byGuest = (g: Guest) => `by the chat of ${g.ticket.id} on ${store.getProfile(g.slug)?.name ?? g.slug} (user request)`;
   /** Statuses whose move starts a Claude run: Ready (In progress queues there) and Planning (its interview). */
   const startsRun = (st?: string) => st === "ready" || st === "in_progress" || st === "planning";
   /** A run's start of another ticket's run, refused past the chain limits (Board.runStart). */
@@ -349,6 +365,8 @@ export function createServer(deps: ServerDeps) {
       throw new HttpError(409, (e as Error).message);
     }
   };
+  /** A guest's start of a run here: counted against the guest's ticket on its own board (Board.runStart). */
+  const guestStart = (g: Guest): NonNullable<Ticket["startedBy"]> => ({ ...runStart(g.slug, g.ticket), slug: g.slug });
   /** The board run's ticket (RUN_HEADER), null outside runs; a run may only reach tickets on its own board. */
   const runTicket = (req: Request, slug: string): string | null => {
     const h = req.headers.get(RUN_HEADER);
@@ -1220,7 +1238,7 @@ export function createServer(deps: ServerDeps) {
         const b = await body(req);
         const title = String(b.title ?? "").trim();
         if (!title) throw new HttpError(400, "title is required");
-        const { planner, requester, runner } = runRights(req, slug);
+        const { planner, requester, runner, guest } = runRights(req, slug);
         let status: Status = STATUSES.includes(b.status) ? b.status : "backlog";
         let mode: "auto" | "interview" = b.mode === "auto" ? "auto" : "interview";
         let parentId = typeof b.parentId === "string" && b.parentId ? b.parentId : undefined;
@@ -1242,7 +1260,7 @@ export function createServer(deps: ServerDeps) {
           if (running) mode = "auto";
         }
         if (parentId && !store.getTicket(slug, parentId)) throw new HttpError(400, `parent ticket ${parentId} not found`);
-        const startedBy = runner && startsRun(status) ? runStart(slug, runner) : null;
+        const startedBy = runner && startsRun(status) ? runStart(slug, runner) : guest && startsRun(status) ? guestStart(guest) : null;
         let t = await board.createTicket(slug, {
           title, body: String(b.body ?? ""), status: b.sessionId && !planner ? "backlog" : status, mode, parentId, planKey, dependsOn, needs, tags,
           important: b.important === true,
@@ -1250,6 +1268,7 @@ export function createServer(deps: ServerDeps) {
         if (planner) store.addComment(slug, t.id, "ai", `Created by the planner of plan ${planner.id}.`);
         if (requester) store.addComment(slug, t.id, "ai", `Created ${byRequest(requester)}.`);
         if (runner) store.addComment(slug, t.id, "ai", `Created ${byRun(runner)}.`);
+        if (guest) store.addComment(slug, t.id, "ai", `Created ${byGuest(guest)}.`);
         if (startedBy) board.markStartedBy(slug, t.id, startedBy);
         if (b.sessionId && !planner) {
           try {
@@ -1281,7 +1300,7 @@ export function createServer(deps: ServerDeps) {
         if (own && Object.keys(b).length === 1 && SELF_MOVES.includes(b.status) && board.requestSelfMove(slug, id, b.status as SelfMove)) {
           return json({ ...view(profile, target), selfMove: b.status });
         }
-        const { planner, requester, runner } = own && onlyOwn ? {} : runRights(req, slug, target);
+        const { planner, requester, runner, guest } = own && onlyOwn ? {} : runRights(req, slug, target);
         const patch: Parameters<Board["updateTicket"]>[2] = {};
         const deps = strings(b.dependsOn);
         if (deps) patch.dependsOn = deps;
@@ -1326,12 +1345,12 @@ export function createServer(deps: ServerDeps) {
           if (b.effort !== null && !(typeof b.effort === "string" && validEffort(b.effort))) throw new HttpError(400, `"${b.effort}" is not an effort level. Use ${EFFORT_HELP}.`);
           patch.effort = b.effort;
         }
-        if (planner || requester || runner) {
+        if (planner || requester || runner || guest) {
           delete patch.order;
           delete patch.notice;
         }
         let startedBy: Ticket["startedBy"] | undefined;
-        if (runner && patch.status === "done" && target.status !== "done") {
+        if ((runner || guest) && patch.status === "done" && target.status !== "done") {
           // Done removes the ticket's copy of the folder: a run never closes work that is under way or not saved yet.
           if (board.isRunning(slug, id)) {
             throw new HttpError(409, `${id} is working right now: stop it first with stop_ticket, or leave closing it to the user`);
@@ -1344,6 +1363,7 @@ export function createServer(deps: ServerDeps) {
         if (startsRun(patch.status) && patch.status !== target.status) {
           // Who starts this run: another ticket's run (counted against the chain limits) or the user (clears it).
           if (runner) startedBy = runStart(slug, runner);
+          else if (guest) startedBy = guestStart(guest);
           else if (!planner) startedBy = null;
         }
         if (planner) {
@@ -1363,12 +1383,12 @@ export function createServer(deps: ServerDeps) {
           throw new HttpError(400, (e as Error).message);
         }
         if (startedBy !== undefined) board.markStartedBy(slug, id, startedBy);
-        const changer = planner ?? requester ?? runner;
+        const changer = planner ?? requester ?? runner ?? guest;
         if (own && onlyOwn && target.important !== t.important) store.addComment(slug, id, "ai", t.important ? "Claude marked this ticket ⭐ Important." : "Claude cleared ⭐ Important.");
         if (changer) {
           const what = Object.entries(patch)
             .map(([k, v]) => (k === "status" ? `moved it to ${v}` : k === "parentId" ? `released it from plan ${target.parentId}` : k === "important" ? (v ? "marked it ⭐ Important" : "cleared ⭐ Important") : `changed ${k}`)).join(", ");
-          const by = planner ? "" : requester ? byRequest(requester) : byRun(runner!);
+          const by = planner ? "" : requester ? byRequest(requester) : runner ? byRun(runner) : byGuest(guest!);
           if (what) store.addComment(slug, id, "ai", planner ? `Planner ${what}.` : `${what[0].toUpperCase()}${what.slice(1)} ${by}.`);
         }
         return json(view(profile, startedBy === undefined ? t : store.getTicket(slug, id)!));
@@ -1612,23 +1632,25 @@ export function createServer(deps: ServerDeps) {
         if (!text) throw new HttpError(400, "text is required");
         // The child reads user comments on its next run; mark who wrote this one. Another ticket's run leaves a note:
         // shown as Claude's, and labelled for the next run, so it never reads as the user's.
-        const { planner, requester, runner } = runRights(req, slug, store.getTicket(slug, id)!);
+        const { planner, requester, runner, guest } = runRights(req, slug, store.getTicket(slug, id)!);
         if (runner) return json(board.addComment(slug, id, `Note from ticket ${runner.id} ("${runner.title}"): ${text}`, runner.id), 201);
-        const by = planner ? "Planner: " : requester ? `From the Planning chat of ${requester.id} (user request): ` : "";
+        const by = planner ? "Planner: " : requester ? `From the Planning chat of ${requester.id} (user request): `
+          : guest ? `From the chat of ${guest.ticket.id} on ${store.getProfile(guest.slug)?.name ?? guest.slug} (user request): ` : "";
         return json(board.addComment(slug, id, by + text), 201);
       }
     }
     if (m === "POST" && action === "chat") {
-      const { planner, requester, runner } = runRights(req, slug, store.getTicket(slug, id)!);
+      const { planner, requester, runner, guest } = runRights(req, slug, store.getTicket(slug, id)!);
       const b = await body(req);
       const text = String(b.text ?? "").trim();
       if (!text) throw new HttpError(400, "text is required");
       // A message starts the ticket's run, now or once its current run ends (queued): another ticket's run is counted
       // against the chain limits either way; the user's message to a ticket that isn't working clears it.
-      const startedBy = runner ? runStart(slug, runner) : !planner && !requester && !board.isRunning(slug, id) ? null : undefined;
+      const startedBy = runner ? runStart(slug, runner) : guest ? guestStart(guest)
+        : !planner && !requester && !board.isRunning(slug, id) ? null : undefined;
       // A message from a run never hands the user's rights on to the run it starts.
       // Labelled with the sending ticket, so neither Claude nor the chat takes it for the user's own message.
-      const sender = runner ?? planner ?? requester;
+      const sender = runner ?? planner ?? requester ?? guest?.ticket;
       const t = await board.chat(slug, id, sender ? fromTicketText(sender.id, sender.title, text) : text,
         { fromPlanner: !!sender, ...(sender ? { from: { ticketId: sender.id, title: sender.title } } : {}) });
       if (startedBy !== undefined) board.markStartedBy(slug, id, startedBy);
@@ -1636,6 +1658,7 @@ export function createServer(deps: ServerDeps) {
       if (!req.headers.get(RUN_HEADER) && !text.startsWith("/")) board.userReplied(slug, id);
       if (requester) store.addComment(slug, id, "ai", `Message sent ${byRequest(requester)}.`);
       if (runner) store.addComment(slug, id, "ai", `Message sent ${byRun(runner)}.`);
+      if (guest) store.addComment(slug, id, "ai", `Message sent ${byGuest(guest)}.`);
       return json(view(profile, t), 202);
     }
     // A message Claude hasn't received: POST .../queued/<msgId> sends it (unsent only), PATCH { text } edits it, DELETE discards it.
@@ -1731,11 +1754,12 @@ export function createServer(deps: ServerDeps) {
       return json(await board.runSetup(slug, id));
     }
     if (m === "POST" && action === "stop") {
-      const { planner, requester, runner } = runRights(req, slug, store.getTicket(slug, id)!);
+      const { planner, requester, runner, guest } = runRights(req, slug, store.getTicket(slug, id)!);
       const stopped = board.stop(slug, id);
       if (planner && stopped) store.addComment(slug, id, "ai", "Planner stopped this run.");
       if (requester && stopped) store.addComment(slug, id, "ai", `Run stopped ${byRequest(requester)}.`);
       if (runner && stopped) store.addComment(slug, id, "ai", `Run stopped ${byRun(runner)}.`);
+      if (guest && stopped) store.addComment(slug, id, "ai", `Run stopped ${byGuest(guest)}.`);
       return json({ stopped });
     }
     // Start / pause / resume / mark done a planner's plan, or change how many children run at once.
