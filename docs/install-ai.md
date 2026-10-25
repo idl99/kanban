@@ -20,10 +20,12 @@ command -v gh && gh auth status
 ## 2. Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/leoawesome/kanban/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/leoawesome/ckanban/main/install.sh | bash
 ```
 
 This downloads the `ckanban` binary to `~/.local/bin/ckanban`, installs a launchd agent (`~/Library/LaunchAgents/io.ckanban.daemon.plist`), starts it, and opens http://localhost:7777.
+
+If `curl` can't reach raw.githubusercontent.com but Node is installed, `npx --yes ckanban` does the same steps.
 
 Options (environment variables, put before `bash`): `CKANBAN_VERSION=0.1.0` pins a version; `CKANBAN_BIN_DIR=/path` changes the install folder.
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ckanban installer (macOS).
-#   curl -fsSL https://raw.githubusercontent.com/leoawesome/kanban/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/leoawesome/ckanban/main/install.sh | bash
 # Env: CKANBAN_VERSION=0.1.0 (default: latest)  CKANBAN_BIN_DIR=~/.local/bin  CKANBAN_NO_DAEMON=1 (skip launchd)
 # The binary is checked against the release's SHA256SUMS before it is installed
 # (CKANBAN_DOWNLOAD_URL / CKANBAN_SUMS_URL override both URLs, e.g. for testing).
 set -euo pipefail
 
-REPO="leoawesome/kanban"
+REPO="leoawesome/ckanban"
 BIN_DIR="${CKANBAN_BIN_DIR:-$HOME/.local/bin}"
 VERSION="${CKANBAN_VERSION:-latest}"
 

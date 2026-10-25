@@ -38,16 +38,18 @@ All data lives in plain files under `~/.claude-kanban/`.
 You need [Claude Code](https://claude.com/claude-code) installed and logged in. `git` is optional: with it each ticket gets its own copy of the folder. For PRs, also install `gh` and run `gh auth login`.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/leoawesome/kanban/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/leoawesome/ckanban/main/install.sh | bash
 ```
 
 This downloads one self-contained binary to `~/.local/bin/ckanban` (no Bun/Node needed), starts it as a background service that launches at login, and opens http://localhost:7777.
+
+Or, if you have Node: `npx ckanban` does the same. After that, `npx ckanban` opens the board.
 
 Or paste this into Claude Code (or any coding assistant with a terminal):
 
 ```text
 Install ckanban for me by following
-https://raw.githubusercontent.com/leoawesome/kanban/main/docs/install-ai.md
+https://raw.githubusercontent.com/leoawesome/ckanban/main/docs/install-ai.md
 ```
 
 Then open the board switcher (top left) → **New board…**, pick a folder you've used Claude Code in, and create a ticket.

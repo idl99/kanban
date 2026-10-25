@@ -1,0 +1,34 @@
+{
+  "name": "ckanban",
+  "version": "0.14.0",
+  "description": "Kanban board for Claude Code: move a ticket to Ready and Claude works on it by itself. This package installs the Mac app.",
+  "type": "module",
+  "bin": {
+    "ckanban": "bin/ckanban.js"
+  },
+  "files": [
+    "bin/ckanban.js",
+    "lib/install.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "kanban",
+    "ai-agents",
+    "coding-agent",
+    "anthropic",
+    "task-board"
+  ],
+  "homepage": "https://github.com/leoawesome/ckanban#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leoawesome/ckanban.git",
+    "directory": "npm"
+  },
+  "bugs": "https://github.com/leoawesome/ckanban/issues",
+  "license": "MIT",
+  "author": "Leo"
+}

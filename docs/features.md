@@ -138,7 +138,7 @@ Add `--profile <slug>` to pick a board explicitly and `--json` for machine-reada
 
 ## Reporting bugs
 
-Found a bug in ckanban? Use **⋯ → Report a bug** in the header, or **Report a bug in ckanban** in a ticket's details to attach that ticket. You see everything that will be sent (version and OS, ticket details, last run result and log tail) and can untick any of it; home and data paths and secret-looking values are hidden. It's filed as an issue on `leoawesome/kanban` with `gh`. Without `gh` (or logged out) you get a prefilled GitHub link instead. `gh` can't upload images, so screenshots are listed for you to drag into the issue. In a ticket chat you can also ask Claude to "report this as a ckanban bug": it drafts the issue, asks you to confirm, then files it.
+Found a bug in ckanban? Use **⋯ → Report a bug** in the header, or **Report a bug in ckanban** in a ticket's details to attach that ticket. You see everything that will be sent (version and OS, ticket details, last run result and log tail) and can untick any of it; home and data paths and secret-looking values are hidden. It's filed as an issue on `leoawesome/ckanban` with `gh`. Without `gh` (or logged out) you get a prefilled GitHub link instead. `gh` can't upload images, so screenshots are listed for you to drag into the issue. In a ticket chat you can also ask Claude to "report this as a ckanban bug": it drafts the issue, asks you to confirm, then files it.
 
 ## claude.ai artifacts from board runs
 

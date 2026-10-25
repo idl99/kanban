@@ -150,7 +150,7 @@ function fakeClient() {
     planAction: rec("planAction", (_s, id) => ticket({ id, plan: { state: "running", maxConcurrent: 2 } })),
     stop: rec("stop", () => ({ stopped: true })),
     comment: rec("comment", () => ({ id: "c2", author: "user", text: "x", at: "" })),
-    reportBug: rec("reportBug", () => ({ url: "https://github.com/leoawesome/kanban/issues/7", fallbackUrl: "", error: null, screenshots: [] })),
+    reportBug: rec("reportBug", () => ({ url: "https://github.com/leoawesome/ckanban/issues/7", fallbackUrl: "", error: null, screenshots: [] })),
     listSchedules: rec("listSchedules", () => [schedule(), schedule({ id: "s2", name: "Paused one", enabled: false, nextRunAt: null })]),
     createSchedule: rec("createSchedule", (_s, input) => schedule(input)),
     updateSchedule: rec("updateSchedule", (_s, _id, patch) => schedule(patch)),
@@ -273,7 +273,7 @@ test("report_bug files from inside a board run, with the ticket attached", async
   const { ctx, calls } = ctxWith({ CKANBAN_TICKET: "site/t_9" }, "/elsewhere");
   const r = await callTool("report_bug", { title: " Chat froze ", description: "1. open", ticketId: "t_9" }, ctx);
   expect(r.isError).toBeUndefined();
-  expect(r.content[0].text).toBe("Created https://github.com/leoawesome/kanban/issues/7");
+  expect(r.content[0].text).toBe("Created https://github.com/leoawesome/ckanban/issues/7");
   expect(calls.at(-1)).toEqual({ fn: "reportBug", args: [{
     title: "Chat froze", description: "1. open", profile: "site", ticketId: "t_9", include: ["env", "ticket", "log"], source: "ai",
   }] });

@@ -21,7 +21,7 @@ function fakeGh(reply?: (args: string[], n: number) => { code: number; stdout?: 
   const calls: string[][] = [];
   const gh: GhRunner = async (args) => {
     calls.push(args);
-    const r = reply?.(args, calls.length) ?? { code: 0, stdout: "https://github.com/leoawesome/kanban/issues/42\n" };
+    const r = reply?.(args, calls.length) ?? { code: 0, stdout: "https://github.com/leoawesome/ckanban/issues/42\n" };
     return { code: r.code, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
   };
   return { gh, calls };
@@ -93,7 +93,7 @@ test("issue body: local screenshots are counted and replaced", () => {
 
 test("new-issue URL is prefilled and cut to fit", () => {
   const short = new URL(newIssueUrl("Crash", "body text"));
-  expect(short.origin + short.pathname).toBe("https://github.com/leoawesome/kanban/issues/new");
+  expect(short.origin + short.pathname).toBe("https://github.com/leoawesome/ckanban/issues/new");
   expect(short.searchParams.get("title")).toBe("Crash");
   expect(short.searchParams.get("body")).toBe("body text");
   expect(short.searchParams.get("labels")).toBe("bug");
@@ -110,8 +110,8 @@ test("new-issue URL is prefilled and cut to fit", () => {
 test("fileIssue creates with labels and returns the URL", async () => {
   const { gh, calls } = fakeGh();
   const r = await fileIssue("Crash", "body", ["bug", "from-ai"], gh);
-  expect(r).toMatchObject({ url: "https://github.com/leoawesome/kanban/issues/42", error: null });
-  expect(calls[0].slice(0, 4)).toEqual(["issue", "create", "--repo", "leoawesome/kanban"]);
+  expect(r).toMatchObject({ url: "https://github.com/leoawesome/ckanban/issues/42", error: null });
+  expect(calls[0].slice(0, 4)).toEqual(["issue", "create", "--repo", "leoawesome/ckanban"]);
   expect(flag(calls[0], "--title")).toBe("Crash");
   expect(calls[0].filter((a, i) => calls[0][i - 1] === "--label")).toEqual(["bug", "from-ai"]);
 });
@@ -119,9 +119,9 @@ test("fileIssue creates with labels and returns the URL", async () => {
 test("fileIssue retries without labels when one is missing", async () => {
   const { gh, calls } = fakeGh((_a, n) => n === 1
     ? { code: 1, stderr: "could not add label: 'from-ai' not found" }
-    : { code: 0, stdout: "https://github.com/leoawesome/kanban/issues/43" });
+    : { code: 0, stdout: "https://github.com/leoawesome/ckanban/issues/43" });
   const r = await fileIssue("Crash", "body", ["bug", "from-ai"], gh);
-  expect(r.url).toBe("https://github.com/leoawesome/kanban/issues/43");
+  expect(r.url).toBe("https://github.com/leoawesome/ckanban/issues/43");
   expect(calls.length).toBe(2);
   expect(calls[1]).not.toContain("--label");
 });
@@ -130,7 +130,7 @@ test("fileIssue falls back to the browser when gh is missing or logged out", asy
   const missing = await fileIssue("Crash", "body", ["bug"], fakeGh(() => ({ code: -1, stderr: "Executable not found in $PATH: \"gh\"" })).gh);
   expect(missing.url).toBeNull();
   expect(missing.error).toContain("not installed");
-  expect(missing.fallbackUrl).toStartWith("https://github.com/leoawesome/kanban/issues/new?");
+  expect(missing.fallbackUrl).toStartWith("https://github.com/leoawesome/ckanban/issues/new?");
 
   const out = await fileIssue("Crash", "body", ["bug"], fakeGh(() => ({ code: 4, stderr: "To get started with GitHub CLI, please run:  gh auth login" })).gh);
   expect(out.error).toContain("not logged in");
@@ -197,7 +197,7 @@ test("HTTP: draft, then submit with an unticked block", async () => {
   const r = await post("/api/bug-report", { title: "Run hangs", description: "Steps", profile: "repo", ticketId, include: ["env", "ticket"] });
   expect(r.status).toBe(201);
   const res: any = await r.json();
-  expect(res.url).toBe("https://github.com/leoawesome/kanban/issues/42");
+  expect(res.url).toBe("https://github.com/leoawesome/ckanban/issues/42");
   expect(res.screenshots).toEqual([`/api/attachments/${SHOT}`]);
   const body = flag(gh.calls[before], "--body");
   expect(body).toContain("Steps");
@@ -211,7 +211,7 @@ test("CLI: report-bug works inside a board run and labels it from-ai", async () 
   const lines: string[] = [];
   const io = { out: (s: string) => lines.push(s), client: new BoardClient(server.port!), cwd: join(repo, "src"), env: { CKANBAN_TICKET: "repo/t_x" } };
   await ticketCommand(["report-bug", ticketId, "--title", "Crash", "--body", "boom", "--no-logs"], io);
-  expect(lines[0]).toContain("Created https://github.com/leoawesome/kanban/issues/42");
+  expect(lines[0]).toContain("Created https://github.com/leoawesome/ckanban/issues/42");
   expect(lines[0]).toContain("1 screenshot(s)");
   const args = gh.calls.at(-1)!;
   expect(args).toContain("from-ai");

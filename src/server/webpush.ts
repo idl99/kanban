@@ -100,7 +100,7 @@ export function vapidJwt(audience: string, subject: string, keys: VapidKeys, now
 }
 
 /** Apple rejects a JWT without a real-looking contact; any https URL or mailto works. */
-export const VAPID_SUBJECT = "https://github.com/leoawesome/kanban";
+export const VAPID_SUBJECT = "https://github.com/leoawesome/ckanban";
 
 /** The HTTP request that delivers one encrypted message to a browser's push service. */
 export function pushRequest(target: PushTarget, payload: string, keys: VapidKeys, opts: { ttl?: number; nowSec?: number } = {}): { url: string; init: RequestInit } {

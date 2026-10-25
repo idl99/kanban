@@ -6,4 +6,4 @@ export const VERSION: string = typeof CKANBAN_VERSION === "string" ? CKANBAN_VER
 /** True inside a `bun build --compile` binary (sources live in Bun's virtual filesystem). */
 export const IS_BINARY: boolean = import.meta.dir.startsWith("/$bunfs");
 
-export const REPO = "leoawesome/kanban";
+export const REPO = "leoawesome/ckanban";
