@@ -110,19 +110,30 @@ export interface FileContent {
   tooLarge: boolean;
 }
 
-/** What a dock terminal is attached to: the profile's shell, or the quick Claude chat. */
-export type PtyKind = "shell" | "claude";
+/** WebSocket URL of the profile's interactive shell. */
+export const shellSocketUrl = (slug: string, cols: number, rows: number) =>
+  `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/profiles/${encodeURIComponent(slug)}/shell?cols=${cols}&rows=${rows}`;
 
-/** WebSocket URL of the profile's interactive shell (or quick Claude chat). */
-export const shellSocketUrl = (slug: string, cols: number, rows: number, kind: PtyKind = "shell") =>
-  `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/profiles/${encodeURIComponent(slug)}/${kind}?cols=${cols}&rows=${rows}`;
-
+/** A quick chat with Claude in the board's folder, no ticket (src/server/quickchat.ts QuickChatView). */
 export interface QuickChat {
-  sessionId: string | null;
-  running: boolean;
-  /** The session file exists (at least one message was sent). */
+  id: string;
+  sessionId: string;
+  /** The user's title, else the first message's first line. */
+  title: string;
+  renamed: boolean;
+  firstMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Claude saved the conversation (Make ticket needs it). */
   started: boolean;
-  title: string | null;
+  /** Make ticket turned it into this ticket; the conversation continues there. */
+  ticketId: string | null;
+  error: string | null;
+  running: boolean;
+  /** What Claude is doing now. */
+  activity: string | null;
+  /** Messages waiting for a board restart to finish. */
+  waiting: number;
 }
 
 export interface FollowUp { dueAt: string; note: string; cancelOnReply: boolean; setAt: string; missedAt?: string | null }
@@ -951,7 +962,10 @@ export type BusEvent =
   | { type: "huddle.updated"; profile: string; huddle: Huddle }
   | { type: "huddle.message"; profile: string; huddleId: string; message: HuddleMessage }
   | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number; contextTokens?: number }
-  | { type: "huddle.session"; profile: string; huddleId: string; handle: string };
+  | { type: "huddle.session"; profile: string; huddleId: string; handle: string }
+  | { type: "chat.updated"; profile: string; id: string; chat: QuickChat | null }
+  | { type: "chat.draft"; profile: string; id: string; text: string; final?: string }
+  | { type: "chat.activity"; profile: string; id: string; activity: string | null };
 
 /** Phone access over Tailscale (src/server/remote.ts). local: this page is open on the Mac, not the phone. */
 export interface RemoteState {
@@ -1091,6 +1105,9 @@ const jb = (slug: string, id?: string) =>
 const t = (slug: string, id?: string) =>
   `/api/profiles/${encodeURIComponent(slug)}/tickets${id ? `/${encodeURIComponent(id)}` : ""}`;
 
+const chatsUrl = (slug: string, id?: string) =>
+  `/api/profiles/${encodeURIComponent(slug)}/chats${id ? `/${encodeURIComponent(id)}` : ""}`;
+
 const sizes = new Map<string, Promise<number | null>>();
 
 export const api = {
@@ -1204,7 +1221,17 @@ export const api = {
   file: (slug: string, path: string) =>
     req<FileContent>("GET", `/api/profiles/${encodeURIComponent(slug)}/file?path=${encodeURIComponent(path)}`),
   ticket: (slug: string, id: string) => req<Ticket>("GET", t(slug, id)),
-  quickChat: (slug: string) => req<QuickChat>("GET", `/api/profiles/${encodeURIComponent(slug)}/claude/session`),
+  chats: (slug: string) => req<QuickChat[]>("GET", chatsUrl(slug)),
+  /** A new chat starts with its first message. */
+  newChat: (slug: string, text: string) => req<QuickChat>("POST", chatsUrl(slug), { text }),
+  chatSend: (slug: string, id: string, text: string) => req<QuickChat>("POST", `${chatsUrl(slug, id)}/messages`, { text }),
+  chatStop: (slug: string, id: string) => req<QuickChat>("POST", `${chatsUrl(slug, id)}/stop`, {}),
+  chatRename: (slug: string, id: string, title: string) => req<QuickChat>("PATCH", chatsUrl(slug, id), { title }),
+  chatDelete: (slug: string, id: string) => req<void>("DELETE", chatsUrl(slug, id)),
+  chatTicket: (slug: string, id: string) => req<{ ticket: Ticket; chat: QuickChat }>("POST", `${chatsUrl(slug, id)}/ticket`, {}),
+  chatConversation: (slug: string, id: string, before?: number) =>
+    req<{ entries: SessionEntry[]; start: number; total: number }>("GET", `${chatsUrl(slug, id)}/conversation${before !== undefined ? `?before=${before}` : ""}`),
+  chatTool: (slug: string, id: string, toolUseId: string) => req<ToolDetail>("GET", `${chatsUrl(slug, id)}/tool/${encodeURIComponent(toolUseId)}`),
   sessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/sessions`),
   addOnTicket: (slug: string, id: string, input: { title: string; body: string; start?: boolean; important?: boolean }) =>
     req<Ticket>("POST", `${t(slug, id)}/add-on`, input),

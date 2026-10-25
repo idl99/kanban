@@ -49,7 +49,11 @@ export class SpendIndex {
 
   /** The ticket's runs' cost (reads only what was appended to its activity log since the last call). */
   private runs(slug: string, id: string): TicketSpend {
-    const file = this.store.activityPath(slug, id);
+    return this.logSpend(this.store.activityPath(slug, id));
+  }
+
+  /** Cost of the result lines in one activity log (a ticket's, or a quick chat's). */
+  private logSpend(file: string): TicketSpend {
     let st = this.files.get(file);
     let size = 0;
     try {
@@ -115,7 +119,7 @@ export class SpendIndex {
     st.days.set(day, (st.days.get(day) ?? 0) + cost);
   }
 
-  /** What every board spent today (local day): its tickets' runs and its huddle agents. */
+  /** What every board spent today (local day): its tickets' runs, its quick chats and its huddle agents. */
   today(): TodaySpend {
     const now = this.now();
     const day = dayKey(now);
@@ -128,6 +132,12 @@ export class SpendIndex {
         // Untouched since midnight: nothing spent today.
         const mtime = Math.max(mtimeOf(this.store.activityPath(p.slug, id)), mtimeOf(this.store.sideSpendPath(p.slug, id)));
         if (mtime >= start) cost += this.ticket(p.slug, id).days.get(day) ?? 0;
+      }
+      // Quick chats (quickchat.ts) log their result lines next to each chat.
+      const chats = join(this.store.root, "profiles", p.slug, "chats");
+      for (const f of existsSync(chats) ? readdirSync(chats) : []) {
+        const file = join(chats, f);
+        if (f.endsWith(".activity.jsonl") && mtimeOf(file) >= start) cost += this.logSpend(file).days.get(day) ?? 0;
       }
       return { slug: p.slug, name: p.name, costUsd: cost };
     });

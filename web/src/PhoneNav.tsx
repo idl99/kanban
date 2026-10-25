@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 import type { MenuItem } from "./HeaderMenu";
-import { BoardIcon, ClockIcon, MoreIcon, NowIcon } from "./icons";
+import { BoardIcon, ChatIcon, ClockIcon, MoreIcon, NowIcon } from "./icons";
 import { useLayer } from "./layers";
 
-export type PhoneTab = "now" | "board";
+export type PhoneTab = "now" | "board" | "ask";
 
-/** Bottom tab bar on phones (≤720px): Now · Board · Schedules · More. */
+/** Bottom tab bar on phones (≤720px): Now · Board · Ask · Schedules · More. */
 export function PhoneNav({ tab, onTab, needYou, scheduleAlert, onSchedules, onMore, moreAlert }: {
   tab: PhoneTab;
   onTab: (t: PhoneTab) => void;
@@ -25,6 +25,7 @@ export function PhoneNav({ tab, onTab, needYou, scheduleAlert, onSchedules, onMo
     <nav className="phone-nav" aria-label="Sections">
       {item("Now", <NowIcon size={20} />, tab === "now", () => onTab("now"), needYou > 0 && <span className="pn-badge">{needYou}</span>)}
       {item("Board", <BoardIcon size={20} />, tab === "board", () => onTab("board"))}
+      {item("Ask", <ChatIcon size={20} />, tab === "ask", () => onTab("ask"))}
       {item("Schedules", <ClockIcon size={20} />, false, onSchedules, scheduleAlert && <span className="pn-dot" />)}
       {item("More", <MoreIcon size={20} />, false, onMore, moreAlert && <span className="pn-dot" />)}
     </nav>

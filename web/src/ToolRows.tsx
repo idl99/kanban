@@ -15,12 +15,14 @@ const opened = new Set<string>();
 const PENDING_POLL_MS = 2000;
 
 /** Tool calls as compact rows; clicking one opens a card with its full input and output. */
-export function ToolRows({ slug, ticketId, items, live, className }: {
+export function ToolRows({ slug, ticketId, items, live, className, load }: {
   slug: string; ticketId: string; items: ToolItem[]; live: boolean; className?: string;
+  /** Where the full calls come from (default: the ticket's session; see ToolRow). */
+  load?: (toolUseId: string) => Promise<ToolDetail>;
 }) {
   return (
     <div className={`tool-rows${className ? ` ${className}` : ""}`}>
-      {items.map((t) => <ToolRow key={t.key} slug={slug} ticketId={ticketId} item={t} live={live} />)}
+      {items.map((t) => <ToolRow key={t.key} slug={slug} ticketId={ticketId} item={t} live={live} load={load} />)}
     </div>
   );
 }

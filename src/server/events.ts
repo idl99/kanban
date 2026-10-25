@@ -1,5 +1,6 @@
 import type { HuddleView } from "./huddle";
 import type { McpState } from "./mcp";
+import type { QuickChatView } from "./quickchat";
 import type { SessionSummary } from "./session";
 import type { HuddleMessage, Job, Profile, Schedule, Ticket } from "./types";
 
@@ -35,7 +36,13 @@ export type BusEvent =
   /** What a huddle participant is doing now (lastActivity), without a whole huddle.updated. */
   | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number; contextTokens?: number }
   /** A huddle agent's session file changed (the session viewer refetches; polled, so at most every 2 s). */
-  | { type: "huddle.session"; profile: string; huddleId: string; handle: string };
+  | { type: "huddle.session"; profile: string; huddleId: string; handle: string }
+  /** A quick chat was created, changed (message, reply ended, renamed, made a ticket) or deleted (chat: null). */
+  | { type: "chat.updated"; profile: string; id: string; chat: QuickChatView | null }
+  /** Text Claude is writing right now in a quick chat; same rules as "draft". */
+  | { type: "chat.draft"; profile: string; id: string; text: string; final?: string }
+  /** A quick chat's run moved on (its conversation may have grown); activity: what Claude does now. */
+  | { type: "chat.activity"; profile: string; id: string; activity: string | null };
 
 export class Bus {
   private listeners = new Set<(e: BusEvent) => void>();

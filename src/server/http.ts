@@ -36,8 +36,9 @@ import { LISTENER_HEADER, LOGIN_HEADER, qrSvg, RemoteAccess, RemoteError, remote
 import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
 import { collectLinks } from "./links";
 import { SessionCache, type SessionSummary } from "./session";
-import { ptySupported, ShellManager, type PtyKind, type Shell } from "./shell";
+import { ptySupported, ShellManager, type Shell } from "./shell";
 import { AGENT_STEP_TAIL, settleAgent } from "./subagents";
+import { QuickChatError, QuickChats } from "./quickchat";
 import type { TerminalWatcher } from "./terminals";
 import { attachmentHeader, canCopyFile, copyFileToClipboard, markdownPage, markdownTitle, revealFile, ShareError } from "./share";
 import { UpdateChecker } from "./update";
@@ -80,6 +81,7 @@ export interface ServerDeps {
   jobs?: JobRunner;
   agents?: AgentRegistry;
   huddles?: Huddles;
+  quickChats?: QuickChats;
   /** Restart the daemon once no run is active (POST /api/restart); missing when not running as the daemon. */
   restart?: () => { running: number; alreadyPending: boolean };
   /** The daemon keeps the Mac awake for active work now (GET /api/awake); missing: never. */
@@ -113,10 +115,7 @@ interface ShareJob {
 }
 
 interface ShellSocket {
-  kind: PtyKind;
   slug: string;
-  /** Profile display name (the quick chat tells Claude which board it is on). */
-  name: string;
   cwd: string;
   cols: number;
   rows: number;
@@ -241,6 +240,7 @@ export function createServer(deps: ServerDeps) {
   const passes = deps.passes ?? new Passes(store.root, bus, { fetch: globalThis.fetch, now: () => new Date() }, callbackUrl);
   const agents = deps.agents ?? new AgentRegistry();
   const huddles = deps.huddles ?? new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
+  const quickChats = deps.quickChats ?? new QuickChats(store, bus, board, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const snippets = new Snippets(store, bus);
   const windowsFile = join(store.root, "usage-windows.json");
   const usage = new UsageCache(deps.usage ?? fetchUsage, (r) => recordWindow(windowsFile, r));
@@ -941,27 +941,71 @@ export function createServer(deps: ServerDeps) {
       if (!ptySupported()) throw new HttpError(501, `terminal needs Bun 1.3.5 or newer (running ${Bun.version})`);
       if (!isAllowedSocket(req, server.port ?? deps.port, remote.active(), listenerOf(req))) throw new HttpError(403, "forbidden");
       const dim = (k: string, d: number) => Math.min(1000, Math.max(1, Number(url.searchParams.get(k)) || d));
-      const data: ShellSocket = { kind: "shell", slug, name: profile.name, cwd: profile.path, cols: dim("cols", 80), rows: dim("rows", 24) };
+      const data: ShellSocket = { slug, cwd: profile.path, cols: dim("cols", 80), rows: dim("rows", 24) };
       if ((via.get(req)?.srv ?? server).upgrade(req, { data })) return undefined;
       throw new HttpError(400, "expected a WebSocket upgrade");
     }
 
-    // /profiles/:p/claude — WebSocket to the dock's quick Claude chat (interactive `claude` in the profile folder)
-    if (parts[2] === "claude" && parts.length === 3 && m === "GET") {
-      if (!ptySupported()) throw new HttpError(501, `terminal needs Bun 1.3.5 or newer (running ${Bun.version})`);
-      if (!isAllowedSocket(req, server.port ?? deps.port, remote.active(), listenerOf(req))) throw new HttpError(403, "forbidden");
-      const dim = (k: string, d: number) => Math.min(1000, Math.max(1, Number(url.searchParams.get(k)) || d));
-      const data: ShellSocket = { kind: "claude", slug, name: profile.name, cwd: profile.path, cols: dim("cols", 80), rows: dim("rows", 24) };
-      if ((via.get(req)?.srv ?? server).upgrade(req, { data })) return undefined;
-      throw new HttpError(400, "expected a WebSocket upgrade");
-    }
-
-    // /profiles/:p/claude/session — which Claude session the quick chat runs, and whether it has messages yet
-    if (parts[2] === "claude" && parts[3] === "session" && parts.length === 4 && m === "GET") {
-      const pty = shells.current(slug, "claude");
-      const id = pty?.sessionId ?? null;
-      const summary = id ? sessions.summary(id) : null;
-      return json({ sessionId: id, running: !!pty && !pty.exited, started: !!summary, title: summary?.title ?? null });
+    // /profiles/:p/chats — quick chats with Claude in the board's folder, no ticket (the Ask tab, the Claude panel)
+    if (parts[2] === "chats") {
+      // Only the user's browser: a board run, huddle agent or other program can't start Claude runs here (no runs starting runs).
+      const userAsks = () => userOnly(req, "Quick chats");
+      if (parts.length === 3 && m === "GET") return json(quickChats.list(slug).map((c) => quickChats.view(slug, c)));
+      // A new chat starts with its first message.
+      if (parts.length === 3 && m === "POST") {
+        await userAsks();
+        return json(quickChats.send(slug, null, String((await body(req))?.text ?? "")), 201);
+      }
+      const cid = parts[3];
+      const chat = quickChats.get(slug, cid);
+      if (!chat) throw new HttpError(404, "chat not found");
+      if (parts.length === 4 && m === "GET") return json(quickChats.view(slug, chat));
+      if (parts.length === 4 && m === "PATCH") {
+        await userAsks();
+        const b = (await body(req)) ?? {};
+        return json(quickChats.rename(slug, cid, typeof b.title === "string" ? b.title : null));
+      }
+      if (parts.length === 4 && m === "DELETE") {
+        await userAsks();
+        await quickChats.remove(slug, cid);
+        return new Response(null, { status: 204 });
+      }
+      if (parts.length === 5 && parts[4] === "messages" && m === "POST") {
+        await userAsks();
+        return json(quickChats.send(slug, cid, String((await body(req))?.text ?? "")));
+      }
+      if (parts.length === 5 && parts[4] === "stop" && m === "POST") {
+        await userAsks();
+        quickChats.stop(slug, cid);
+        return json(quickChats.view(slug, quickChats.get(slug, cid) ?? chat));
+      }
+      if (parts.length === 5 && parts[4] === "ticket" && m === "POST") {
+        await userAsks();
+        const r = await quickChats.makeTicket(slug, cid);
+        return json({ ticket: view(profile, store.getTicket(slug, r.ticket.id) ?? r.ticket), chat: r.chat }, 201);
+      }
+      // The conversation, newest last, paged like a ticket's (see the ticket conversation route).
+      if (parts.length === 5 && parts[4] === "conversation" && m === "GET") {
+        const parsed = sessions.get(chat.sessionId);
+        const all = parsed?.entries ?? [];
+        const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 100));
+        const before = url.searchParams.has("before") ? Number(url.searchParams.get("before")) : all.length;
+        const end = Math.max(0, Math.min(all.length, before));
+        const start = Math.max(0, end - limit);
+        const active = quickChats.isRunning(slug, cid);
+        const entries = all.slice(start, end).map((e) => {
+          if (!e.agent) return e;
+          const agent = settleAgent(e.agent, active);
+          return { ...e, agent: { ...agent, steps: agent.steps.slice(-AGENT_STEP_TAIL) } };
+        });
+        return json({ entries, start, total: all.length });
+      }
+      if (parts.length === 6 && parts[4] === "tool" && m === "GET") {
+        const d = sessions.toolDetail(chat.sessionId, parts[5]);
+        if (!d) throw new HttpError(404, "tool call not found");
+        return json(d);
+      }
+      throw new HttpError(404, "not found");
     }
 
     // /profiles/:p/schedules — recurring ticket templates
@@ -1997,15 +2041,12 @@ export function createServer(deps: ServerDeps) {
     return new Response("UI not built. Run: bun run build:web", { status: 404 });
   }
 
-  function attachShell(ws: import("bun").ServerWebSocket<ShellSocket>, restart = false, resumeChat = false) {
+  function attachShell(ws: import("bun").ServerWebSocket<ShellSocket>, restart = false) {
     const d = ws.data;
     d.unsubscribe?.();
     let shell: Shell;
     try {
-      // An exited quick chat that has messages comes back on the same session ("Start again").
-      const prev = shells.current(d.slug, d.kind);
-      const resume = resumeChat && !!prev?.sessionId && sessions.version(prev.sessionId) !== null;
-      shell = shells.get(d.slug, d.cwd, d.cols, d.rows, restart, d.kind, resume, d.name);
+      shell = shells.get(d.slug, d.cwd, d.cols, d.rows, restart);
     } catch (e) {
       ws.send(JSON.stringify({ type: "error", message: (e as Error).message }));
       return;
@@ -2048,6 +2089,7 @@ export function createServer(deps: ServerDeps) {
       if (e instanceof SnippetError) return json({ error: e.message }, e.status);
       if (e instanceof HuddleError) return json({ error: e.message }, e.status);
       if (e instanceof RemoteError) return json({ error: e.message }, e.status);
+      if (e instanceof QuickChatError) return json({ error: e.message }, e.status);
       if (e instanceof URIError) return json({ error: "malformed URL" }, 400);
       console.error(e);
       return json({ error: (e as Error).message ?? "internal error" }, 500);
@@ -2072,7 +2114,7 @@ export function createServer(deps: ServerDeps) {
       } else if (msg.type === "restart") {
         // Another tab may already have restarted it: then just join the new shell.
         ws.send(JSON.stringify({ type: "reset" }));
-        attachShell(ws, shells.current(ws.data.slug, ws.data.kind) === shell, msg.resume === true);
+        attachShell(ws, shells.current(ws.data.slug) === shell);
       }
     },
     close: (ws) => ws.data.unsubscribe?.(),

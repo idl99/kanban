@@ -1270,8 +1270,6 @@ textarea.drop-target { border-color: var(--accent); box-shadow: 0 0 0 3px var(--
 
 /* Padding lives on the view, not the host: FitAddon sizes rows from the host's computed height, which includes padding under border-box. */
 .terminal-view { flex: 1; min-width: 0; position: relative; display: flex; padding: 6px 0 0 10px; }
-/* The quick Claude chat is always dark: Claude Code's colours assume a dark terminal. */
-.terminal-view.dark { background: #242320; }
 .terminal-host { flex: 1; min-width: 0; }
 .terminal-host .xterm { height: 100%; }
 .terminal-host .xterm-viewport { background: transparent !important; }
@@ -2246,6 +2244,40 @@ button.hd-mode:disabled { cursor: default; }
 .pa-kv { font-size: 12.5px; color: var(--muted); }
 .pa-kv b { color: var(--text); font-weight: 600; }
 .pa-warn { padding: 8px 10px; border-radius: 9px; background: var(--warn-soft); color: var(--warn); font-size: 12.5px; }
+
+/* quick chats with Claude, no ticket (QuickChat.tsx): the computer's Claude panel and the phone's Ask tab */
+.qc { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.qc-list { width: 240px; flex: none; border-right: 1px solid var(--border); overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.qc-row { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; border: 0; background: none; color: inherit; padding: 7px 9px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+.qc-row:hover { background: var(--surface-2); }
+.qc-row.cur { background: var(--accent-soft); }
+.qc-new { flex-direction: row; align-items: center; gap: 6px; color: var(--accent); font-weight: 600; }
+.qc-row-title { display: flex; gap: 6px; align-items: center; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 560; }
+.qc-row-title .spinner { flex: none; }
+.qc-row-meta { display: flex; gap: 6px; align-items: center; font-size: 11.5px; color: var(--muted); }
+.qc-tag { font-size: 10.5px; font-weight: 600; color: var(--ok); background: var(--ok-soft); padding: 0 6px; border-radius: 99px; }
+.qc-tag.err { color: var(--err); background: var(--err-soft); }
+.qc-list-note { padding: 8px 9px; }
+.qc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.qc-head { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--border); flex: none; min-width: 0; }
+.qc-title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Messages keep a readable width on a wide screen. */
+.qc-thread { flex: 1; min-height: 0; gap: 0; }
+.qc-thread .chat-log { flex: 1; max-height: none; min-height: 0; gap: 12px; padding: 14px max(16px, calc((100% - 760px) / 2)) 10px; }
+.qc-thread .composer { flex: none; margin: 0 max(16px, calc((100% - 760px) / 2)) 12px; }
+.qc-empty { border: 1px dashed var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.qc-empty p { margin: 0; font-size: 13.5px; }
+.qc-closed { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.qc-closed-actions { display: flex; gap: 6px; }
+.qc-phone { flex-direction: column; }
+.qc-phone .qc-head { padding: 6px 8px; }
+.qc-phone .qc-title { flex: 1; text-align: center; }
+.qc-phone .qc-thread .chat-log { padding: 12px 12px 8px; }
+.qc-phone .qc-thread .composer { margin: 0 8px 8px; }
+.qc-sheet-head { margin: 0 12px 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.qc-sheet .qc-row { padding: 10px 12px; font-size: 15px; min-height: 48px; justify-content: center; }
+.qc-sheet .qc-row-meta { font-size: 12.5px; }
+.qc-sheet-new { color: var(--accent); font-weight: 600; }
 
 /* phone layout (≤720px, usePhone.ts): Now home + bottom tab bar, one board column at a time, full-screen ticket */
 .phone-only { display: none !important; }

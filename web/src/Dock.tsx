@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type Huddle, type Profile, type QuickChat } from "./api";
+import type { Huddle, Profile } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FilesView } from "./FilesView";
 import { TeamTab, type HuddleSeed, type TeamRequest } from "./Team";
 import { brakeLabel, guestTickets, huddleCost, huddleTitle, members, quietLabel, roundTag, sortHuddles } from "./huddle";
 import { CloseIcon, RefreshIcon } from "./icons";
+import { QuickChatPane } from "./QuickChat";
 import { TerminalView } from "./TerminalView";
 import { fullTime, timeAgo } from "./time";
 import { useNow } from "./useNow";
-import { toast } from "./toast";
 import { costText } from "./usage";
 
 export type DockTab = "terminal" | "files" | "claude" | "huddles" | "team";
@@ -35,9 +35,9 @@ const isTab = (v: string | null): v is DockTab => TABS.some(([t]) => t === v);
 const clampHeight = (h: number) => Math.round(Math.max(MIN_HEIGHT, Math.min(window.innerHeight - 120, h)));
 
 /**
- * Bottom panel for the selected profile's folder: an interactive shell, a read-only file browser and a
- * quick Claude chat (interactive `claude`, no ticket). Closing it only hides it; the shell and the chat
- * keep running on the server and reattach next time.
+ * Bottom panel for the selected profile's folder: an interactive shell, a read-only file browser and the
+ * quick chats with Claude (no ticket, see QuickChat.tsx). Closing it only hides it; the shell and Claude's
+ * replies keep running on the server.
  */
 export default function Dock({ profile, pty, onClose, command, onCommandSent, tabRequest, onTabChange, onOpenTicket, huddles = [], onOpenHuddle, openTicket = null, onStartHuddle }: {
   profile: Profile;
@@ -69,10 +69,6 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
   const [restart, setRestart] = useState(0);
   const [confirmRestart, setConfirmRestart] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  const [chatRestart, setChatRestart] = useState(0);
-  const [confirmNewChat, setConfirmNewChat] = useState(false);
-  const [chat, setChat] = useState<QuickChat | null>(null);
-  const [makingTicket, setMakingTicket] = useState(false);
   const drag = useRef<{ y: number; h: number } | null>(null);
   const liveCount = huddles.filter((h) => h.status === "live").length;
   // The Team tab stays mounted once shown, so its editor and selection survive switching tabs.
@@ -92,35 +88,6 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
   useEffect(() => {
     if (tabRequest) setTab(tabRequest.tab);
   }, [tabRequest?.n]);
-
-  // Make ticket needs the chat's session file, which appears after the first message: poll while visible.
-  const loadChat = () => api.quickChat(profile.slug).then(setChat).catch(() => setChat(null));
-  useEffect(() => {
-    setChat(null);
-    if (tab !== "claude" || !pty) return;
-    loadChat();
-    const timer = setInterval(loadChat, 3000);
-    return () => clearInterval(timer);
-  }, [tab, profile.slug, pty, chatRestart]);
-
-  const makeTicket = async () => {
-    if (!chat?.sessionId || !chat.started) return;
-    setMakingTicket(true);
-    try {
-      const title = chat.title?.trim() || `Quick chat ${new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`;
-      const t = await api.createTicket(profile.slug, {
-        title, body: "Started from a quick Claude chat in the dock.", status: "backlog", sessionId: chat.sessionId,
-      });
-      // The ticket owns that session now; give the dock a fresh one so two `claude`s never share a session file.
-      setChatRestart((n) => n + 1);
-      toast("Ticket created from the chat");
-      onOpenTicket?.(t.id);
-    } catch (e) {
-      toast(`Couldn't create the ticket: ${(e as Error).message}`, { tone: "error" });
-    } finally {
-      setMakingTicket(false);
-    }
-  };
 
   const onHandleKey = (e: React.KeyboardEvent) => {
     const step = e.shiftKey ? 120 : 40;
@@ -161,17 +128,6 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
             Restart
           </button>
         )}
-        {tab === "claude" && pty && (
-          <>
-            <button className="btn ghost small" onClick={makeTicket} disabled={!chat?.started || makingTicket}
-              title={chat?.started ? "Turn this chat into a Backlog ticket (the dock starts a fresh chat)" : "Send Claude a message first"}>
-              {makingTicket ? "Creating…" : "Make ticket"}
-            </button>
-            <button className="btn ghost small" onClick={() => setConfirmNewChat(true)} title="End this chat and start an empty one">
-              New chat
-            </button>
-          </>
-        )}
         {tab === "files" && (
           <button className="btn ghost small icon-label" onClick={() => setRefresh((n) => n + 1)}><RefreshIcon size={12} /> Refresh</button>
         )}
@@ -188,11 +144,7 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
           )}
         </div>
         <div className="dock-pane" hidden={tab !== "claude"}>
-          {pty ? (
-            <TerminalView key={profile.slug} slug={profile.slug} kind="claude" active={tab === "claude"} restartSignal={chatRestart} command={null} />
-          ) : (
-            <PtyUnsupported />
-          )}
+          <QuickChatPane profile={profile} phone={false} onOpenTicket={(id) => onOpenTicket?.(id)} />
         </div>
         <div className="dock-pane" hidden={tab !== "files"}>
           <FilesView key={profile.slug} slug={profile.slug} refreshSignal={refresh} />
@@ -208,12 +160,6 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
           )}
         </div>
       </div>
-      {confirmNewChat && (
-        <ConfirmDialog title="Start a new chat?" confirmLabel="New chat" busyLabel="Starting…"
-          onCancel={() => setConfirmNewChat(false)} onConfirm={() => { setConfirmNewChat(false); setChatRestart((n) => n + 1); }}>
-          <p>Ends the current Claude chat and starts an empty one. The old conversation stays in Claude Code's history.</p>
-        </ConfirmDialog>
-      )}
       {confirmRestart && (
         <ConfirmDialog title="Restart the shell?" confirmLabel="Restart" busyLabel="Restarting…"
           onCancel={() => setConfirmRestart(false)} onConfirm={() => { setConfirmRestart(false); setRestart((n) => n + 1); }}>

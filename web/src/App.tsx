@@ -15,6 +15,7 @@ import { PushHint } from "./PushHint";
 import { startPushClient } from "./push";
 import { PhoneAccessDialog } from "./PhoneAccessDialog";
 import { MoreSheet, PhoneNav, type PhoneTab } from "./PhoneNav";
+import { QuickChatPane } from "./QuickChat";
 import { usePhone } from "./usePhone";
 import { UsageBox, UsagePill } from "./UsagePill";
 import { useUsage } from "./useUsage";
@@ -191,6 +192,8 @@ export function App() {
     setDockTab({ tab, n: Date.now(), ...(team ? { team } : {}) });
   };
   const toggleTeam = () => (teamOpen ? setDockOpen(false) : openDockOn("team"));
+  /** The quick chats with Claude: the Ask tab on phones, the panel's Claude tab on computers. */
+  const openChat = () => (phoneRef.current ? setPhoneTab("ask") : openDockOn("claude"));
   const [mcp, setMcp] = useState<McpState | null>(null);
   const [connections, setConnections] = useState(false);
   const [schedules, setSchedules] = useState<Schedule[] | null>(null);
@@ -209,6 +212,8 @@ export function App() {
   const [autoTick, setAutoTick] = useState(0);
   const schedulesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const phone = usePhone();
+  const phoneRef = useRef(phone);
+  phoneRef.current = phone;
   // Phone home: the Now list or the board (bottom tab bar); More opens the header menu as a sheet.
   const [phoneTab, setPhoneTab] = useState<PhoneTab>("now");
   const [moreOpen, setMoreOpen] = useState(false);
@@ -432,7 +437,7 @@ export function App() {
         setShortcuts(true);
       } else if (e.key === "c" || e.key === "C") {
         e.preventDefault();
-        if (slug) openDockOn("claude");
+        if (slug) openChat();
       } else if (e.key === "t" || e.key === "T") {
         e.preventDefault();
         if (slug) toggleTeam();
@@ -702,7 +707,7 @@ export function App() {
     ...(profile ? [
       { id: "new", label: "New ticket", keys: ["N"], run: () => setNewTicket(true) },
       { id: "dock", label: "Open terminal & files", keys: ["Ctrl", "`"], icon: <TerminalIcon size={14} />, run: () => openDockOn("terminal") },
-      { id: "chat", label: "Quick Claude chat", keys: ["C"], icon: <ChatIcon size={14} />, run: () => openDockOn("claude") },
+      { id: "chat", label: "Quick Claude chat", keys: ["C"], icon: <ChatIcon size={14} />, run: () => openChat() },
     ] : []),
     ...(profile ? [
       { id: "team", label: "Open Team", keys: ["T"], icon: <TeamIcon size={14} />, hint: "teammates, templates, notes", run: () => openDockOn("team") },
@@ -857,7 +862,9 @@ export function App() {
           </button>
         </div>
       ) : (
-        phone && phoneTab === "now" ? (
+        phone && phoneTab === "ask" ? (
+          <QuickChatPane key={profile.slug} profile={profile} phone onOpenTicket={(id) => openTicket(id)} />
+        ) : phone && phoneTab === "now" ? (
           <NowView inbox={inbox} tickets={tickets} slug={profile.slug} onOpen={openFrom} onMarkDone={(i) => void inboxDone(i)} onSnooze={(i) => void inboxSnooze(i, true)} onSwitchBoard={switchBoard} />
         ) : <>
           <div className="board-bar">

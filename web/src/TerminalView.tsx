@@ -2,7 +2,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
-import { shellSocketUrl, type PtyKind } from "./api";
+import { shellSocketUrl } from "./api";
 import { keyToInput } from "./termKeys";
 
 function themeFromCss(): ITheme {
@@ -18,27 +18,14 @@ function themeFromCss(): ITheme {
   };
 }
 
-/** The quick Claude chat is always dark (the page's dark-mode colours): Claude Code's colours assume a dark terminal. */
-const DARK_THEME: ITheme = {
-  background: "#242320",
-  foreground: "#ecebe6",
-  cursor: "#e0805e",
-  cursorAccent: "#242320",
-  selectionBackground: "#3d2a22",
-  selectionForeground: "#ecebe6",
-};
-
-const themeFor = (kind: PtyKind) => (kind === "claude" ? DARK_THEME : themeFromCss());
-
 type State = "connecting" | "open" | "exited" | "closed";
 
 /**
- * xterm.js wired to the profile's shell (or quick Claude chat) over a WebSocket.
+ * xterm.js wired to the profile's shell over a WebSocket.
  * Binary frames are output; JSON text frames are control.
  */
-export function TerminalView({ slug, kind = "shell", active, restartSignal, command, onCommandSent }: {
+export function TerminalView({ slug, active, restartSignal, command, onCommandSent }: {
   slug: string;
-  kind?: PtyKind;
   active: boolean;
   restartSignal: number;
   command: { text: string; n: number } | null;
@@ -72,7 +59,7 @@ export function TerminalView({ slug, kind = "shell", active, restartSignal, comm
       cursorBlink: true,
       scrollback: 5000,
       macOptionIsMeta: true,
-      theme: themeFor(kind),
+      theme: themeFromCss(),
     });
     const f = new FitAddon();
     t.loadAddon(f);
@@ -84,10 +71,9 @@ export function TerminalView({ slug, kind = "shell", active, restartSignal, comm
     } catch {}
 
     const input = (data: string) => {
-      // An ended quick chat waits for the "Start again" button instead of any key.
-      if (stateRef.current === "exited") {
-        if (kind === "shell") send({ type: "restart" });
-      } else send({ type: "input", data });
+      // An exited shell restarts on any key.
+      if (stateRef.current === "exited") send({ type: "restart" });
+      else send({ type: "input", data });
     };
     const onData = t.onData(input);
     // Shift+Enter sends ESC CR so Claude Code inserts a newline instead of submitting.
@@ -108,7 +94,7 @@ export function TerminalView({ slug, kind = "shell", active, restartSignal, comm
     });
     ro.observe(host.current!);
     const dark = matchMedia("(prefers-color-scheme: dark)");
-    const onScheme = () => (t.options.theme = themeFor(kind));
+    const onScheme = () => (t.options.theme = themeFromCss());
     dark.addEventListener("change", onScheme);
     return () => {
       onData.dispose();
@@ -124,7 +110,7 @@ export function TerminalView({ slug, kind = "shell", active, restartSignal, comm
     const t = term.current!;
     t.reset();
     setState("connecting");
-    const sock = new WebSocket(shellSocketUrl(slug, t.cols, t.rows, kind));
+    const sock = new WebSocket(shellSocketUrl(slug, t.cols, t.rows));
     sock.binaryType = "arraybuffer";
     ws.current = sock;
     sock.onopen = () => {
@@ -147,7 +133,7 @@ export function TerminalView({ slug, kind = "shell", active, restartSignal, comm
         t.reset();
         setState("open");
       } else if (msg.type === "exit") {
-        if (kind === "shell") t.write(`\r\n\x1b[2m[shell exited${msg.code != null ? ` with code ${msg.code}` : ""}, press any key to restart]\x1b[0m\r\n`);
+        t.write(`\r\n\x1b[2m[shell exited${msg.code != null ? ` with code ${msg.code}` : ""}, press any key to restart]\x1b[0m\r\n`);
         setState("exited");
       } else if (msg.type === "error") {
         t.write(`\r\n\x1b[31m${msg.message}\x1b[0m\r\n`);
@@ -160,7 +146,7 @@ export function TerminalView({ slug, kind = "shell", active, restartSignal, comm
       ws.current = null;
       sock.close();
     };
-  }, [slug, kind, attempt]);
+  }, [slug, attempt]);
 
   useEffect(() => {
     if (state !== "closed") return;
@@ -207,23 +193,12 @@ export function TerminalView({ slug, kind = "shell", active, restartSignal, comm
     });
   }, [active]);
 
-  const startAgain = () => {
-    send({ type: "restart", resume: true });
-    term.current?.focus();
-  };
-
   return (
-    <div className={kind === "claude" ? "terminal-view dark" : "terminal-view"}>
+    <div className="terminal-view">
       <div ref={host} className="terminal-host" />
-      {state === "exited" && kind === "claude" && (
-        <div className="terminal-banner" role="status">
-          Claude session ended.{" "}
-          <button className="link-btn" onClick={startAgain}>Start again</button>
-        </div>
-      )}
       {state === "closed" && (
         <div className="terminal-banner" role="status">
-          Disconnected from the {kind === "claude" ? "Claude chat" : "shell"}.{retryIn !== null && ` Reconnecting in ${retryIn}s…`}{" "}
+          Disconnected from the shell.{retryIn !== null && ` Reconnecting in ${retryIn}s…`}{" "}
           <button className="link-btn" onClick={() => { retries.current = 0; setAttempt((n) => n + 1); }}>Reconnect now</button>
         </div>
       )}

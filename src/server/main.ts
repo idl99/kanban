@@ -5,6 +5,7 @@ import { StayAwake } from "./awake";
 import { Board } from "./board";
 import { Bus } from "./events";
 import { createServer } from "./http";
+import { QuickChats } from "./quickchat";
 import { Huddles } from "./huddle";
 import { withUtf8Locale } from "./locale";
 import { McpManager } from "./mcp";
@@ -70,6 +71,7 @@ export async function startDaemon(): Promise<void> {
     now: () => new Date(), sideCall: makeSideCaller({ cwd: join(store.root, "side-calls") }), shimDir: () => shimDir, port: () => port,
   });
   const huddles = new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
+  const quickChats = new QuickChats(store, bus, board, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
   const awake = new StayAwake({
@@ -77,10 +79,11 @@ export async function startDaemon(): Promise<void> {
     onChange: (held) => bus.emit({ type: "awake.updated", held }),
   });
   const remotePort = remoteListenPort(port, config.remotePort);
-  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, jobs, huddles, loops, passes, assets: WEB_ASSETS, restart, awake: () => awake.held(), notifier, push });
+  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, jobs, huddles, quickChats, loops, passes, assets: WEB_ASSETS, restart, awake: () => awake.held(), notifier, push });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   board.recover();
   huddles.recover();
+  quickChats.recover();
   huddles.startWatchdog();
   void board.sweepWorktrees();
   void detectMissing(store, (profile) => bus.emit({ type: "profile.updated", slug: profile.slug, profile }));
@@ -114,7 +117,7 @@ export async function startDaemon(): Promise<void> {
     stopMcp();
     stopNotifier();
     stopAwake();
-    await Promise.all([board.shutdown(), huddles.shutdown()]);
+    await Promise.all([board.shutdown(), huddles.shutdown(), quickChats.shutdown()]);
     server.stop(true);
     server.remoteServer?.stop(true);
     process.exit(0);

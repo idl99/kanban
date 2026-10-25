@@ -1,8 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { mcpConfig } from "./agents";
-import { helperArgv } from "./artifact";
 import { liveSessionMatch } from "./claude";
 import { run } from "./git";
 import { withUtf8Locale } from "./locale";
@@ -16,38 +13,6 @@ const MAX_SCROLLBACK = 200 * 1024;
 
 export type ShellListener = (e: { type: "data"; data: Uint8Array } | { type: "exit"; code: number | null }) => void;
 
-/** What runs on a profile's PTY: its interactive shell, or the dock's quick Claude chat. */
-export type PtyKind = "shell" | "claude";
-
-const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
-
-/** Shell script that replaces the login shell with interactive Claude Code on a known session. */
-export function claudeScript(bin: string, sessionId: string, resume = false, args: string[] = []): string {
-  return [`exec ${shQuote(bin)} ${resume ? "--resume" : "--session-id"} ${sessionId}`, ...args.map(shQuote)].join(" ");
-}
-
-/** The profile a quick chat belongs to. */
-export interface ChatProfile {
-  name: string;
-  slug: string;
-  path: string;
-}
-
-/**
- * Extra `claude` args for the quick chat: the board's MCP server (`ckanban mcp`) and a note on where it runs,
- * so asking it to "make a ticket" works without registering ckanban with Claude Code first.
- */
-export function quickChatArgs(profile: ChatProfile, serverArgv: string[] = [...helperArgv(), "mcp"]): string[] {
-  const note = [
-    `You are running in the quick Claude chat of ckanban, a local kanban board that runs tickets through Claude.`,
-    `This chat belongs to the board (profile) "${profile.name}" (slug: ${profile.slug}), whose folder is ${profile.path}.`,
-    `For board work (making, finding, updating or moving tickets) use the ckanban MCP tools: create_ticket, list_tickets, get_ticket, update_ticket, move_ticket, comment_ticket.`,
-    `Use profile "${profile.slug}" unless the user names another board. New tickets land in Backlog.`,
-    `Anything else, answer normally.`,
-  ].join(" ");
-  return ["--mcp-config", mcpConfig(serverArgv), "--append-system-prompt", note];
-}
-
 /** One interactive login shell on a PTY. Output is kept (bounded) so a reconnecting client can replay it. */
 export class Shell {
   private chunks: Uint8Array[] = [];
@@ -55,8 +20,6 @@ export class Shell {
   private listeners = new Set<ShellListener>();
   private proc: ReturnType<typeof Bun.spawn>;
   exitCode: number | null | undefined = undefined;
-  /** Claude session this PTY runs (quick chat only). */
-  sessionId: string | null = null;
 
   /** `script` runs via `shell -l -c` (login PATH, so it works under launchd); without it the shell is interactive. */
   constructor(cwd: string, cols: number, rows: number, opts: { shell?: string; script?: string } = {}) {
@@ -207,71 +170,43 @@ export async function closeSession(shell: Pick<Shell, "write">, pid: number, o: 
 }
 
 export interface SpawnRequest {
-  kind: PtyKind;
   cwd: string;
   cols: number;
   rows: number;
-  /** Quick chat: continue this session instead of starting a new one. */
-  resume?: string;
-  /** Quick chat: the profile it belongs to (name, slug; `cwd` is its folder). */
-  profile?: { name: string; slug: string };
 }
 
-export function defaultSpawn(claudeBin = process.env.CKANBAN_CLAUDE_BIN ?? "claude") {
-  return (r: SpawnRequest): Shell => {
-    if (r.kind === "shell") return new Shell(r.cwd, r.cols, r.rows);
-    const id = r.resume ?? randomUUID();
-    const args = r.profile ? quickChatArgs({ ...r.profile, path: r.cwd }) : [];
-    const s = new Shell(r.cwd, r.cols, r.rows, { script: claudeScript(claudeBin, id, !!r.resume, args) });
-    s.sessionId = id;
-    return s;
-  };
+export function defaultSpawn() {
+  return (r: SpawnRequest): Shell => new Shell(r.cwd, r.cols, r.rows);
 }
 
-/**
- * One shell and one quick Claude chat per profile, each kept alive across page reloads until restarted,
- * the profile is deleted or the daemon stops. The two have independent lifecycles.
- */
+/** One shell per profile, kept alive across page reloads until restarted, the profile is deleted or the daemon stops. */
 export class ShellManager {
   private shells = new Map<string, Shell>();
 
   constructor(private spawn: (r: SpawnRequest) => Shell = defaultSpawn()) {}
 
-  private key = (slug: string, kind: PtyKind) => `${kind}:${slug}`;
-
-  /**
-   * The profile's PTY of `kind`, starting one if there is none. `restart` replaces the current one;
-   * with `resume` an exited quick chat comes back on the same Claude session. `name` is the profile's display name.
-   */
-  get(slug: string, cwd: string, cols = 80, rows = 24, restart = false, kind: PtyKind = "shell", resume = false, name = slug): Shell {
-    const k = this.key(slug, kind);
-    let s = this.shells.get(k);
-    const previous = s?.sessionId ?? undefined;
+  /** The profile's shell, starting one if there is none. `restart` replaces the current one. */
+  get(slug: string, cwd: string, cols = 80, rows = 24, restart = false): Shell {
+    let s = this.shells.get(slug);
     if (s && restart) {
       s.kill();
       s = undefined;
     }
     if (!s) {
-      s = this.spawn({
-        kind, cwd, cols, rows,
-        resume: resume && kind === "claude" ? previous : undefined,
-        profile: kind === "claude" ? { name, slug } : undefined,
-      });
-      this.shells.set(k, s);
+      s = this.spawn({ cwd, cols, rows });
+      this.shells.set(slug, s);
     }
     return s;
   }
 
-  current(slug: string, kind: PtyKind = "shell"): Shell | undefined {
-    return this.shells.get(this.key(slug, kind));
+  current(slug: string): Shell | undefined {
+    return this.shells.get(slug);
   }
 
-  /** Stops the profile's PTYs (all kinds unless one is given). */
-  kill(slug: string, kind?: PtyKind) {
-    for (const k of kind ? [kind] : (["shell", "claude"] as PtyKind[])) {
-      this.shells.get(this.key(slug, k))?.kill();
-      this.shells.delete(this.key(slug, k));
-    }
+  /** Stops the profile's shell. */
+  kill(slug: string) {
+    this.shells.get(slug)?.kill();
+    this.shells.delete(slug);
   }
 
   /** A Claude session running in one of the board's PTYs (e.g. `claude --resume <id>` typed into the dock shell). */
