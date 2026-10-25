@@ -3,6 +3,7 @@ import { copy, type Ticket } from "./api";
 import { BranchIcon, BugIcon, CheckIcon, CloseIcon, CopyIcon, MoreIcon, RefreshIcon, TerminalIcon, TrashIcon } from "./icons";
 import { capInputText, parseCap } from "./capText";
 import { useLayer } from "./layers";
+import { MenuSheet } from "./MenuSheet";
 import { costText } from "./usage";
 
 /**
@@ -81,81 +82,83 @@ export function TicketMenu({ ticket, working, live, linkedLabel, boardCap, onCap
         {live && <span className="more-dot" aria-hidden />}
       </button>
       {open && (
-        <div className="inbox-menu ticket-menu" role="menu" aria-label="Ticket actions" ref={menu} onKeyDown={onKey}>
-          <div className="menu-heading">
-            Session
-            {live && <span className="badge ok live-badge"><span className="live-dot" /> open in terminal</span>}
-          </div>
-          {ticket.resumeCommand && (
-            <button role="menuitem" className="term-block" disabled={working}
-              title={working ? "Wait until Claude is done" : ticket.resumeCommand}
-              onClick={() => copyItem("resume", ticket.resumeCommand!)}>
-              <span className="term-bar">
-                <span>Resume in your terminal</span>
-                <span className="term-copy">{working ? "Wait until Claude is done" : copied === "resume" ? "Copied ✓" : "Click to copy"}</span>
-              </span>
-              <span className="term-line">{ticket.resumeCommand}</span>
+        <MenuSheet onClose={() => close(false)}>
+          <div className="inbox-menu ticket-menu" role="menu" aria-label="Ticket actions" ref={menu} onKeyDown={onKey}>
+            <div className="menu-heading">
+              Session
+              {live && <span className="badge ok live-badge"><span className="live-dot" /> open in terminal</span>}
+            </div>
+            {ticket.resumeCommand && (
+              <button role="menuitem" className="term-block" disabled={working}
+                title={working ? "Wait until Claude is done" : ticket.resumeCommand}
+                onClick={() => copyItem("resume", ticket.resumeCommand!)}>
+                <span className="term-bar">
+                  <span>Resume in your terminal</span>
+                  <span className="term-copy">{working ? "Wait until Claude is done" : copied === "resume" ? "Copied ✓" : "Click to copy"}</span>
+                </span>
+                <span className="term-line">{ticket.resumeCommand}</span>
+              </button>
+            )}
+            {ticket.branch && (
+              <button role="menuitem" className="menu-item" title={ticket.worktree ?? undefined} onClick={() => copyItem("branch", ticket.branch!)}>
+                <span className="menu-icon" aria-hidden>{copied === "branch" ? <CheckIcon size={14} /> : <CopyIcon size={14} />}</span>
+                <span className="menu-label">{copied === "branch" ? "Copied ✓" : "Copy branch"}</span>
+                <span className="menu-value">{ticket.branch}</span>
+              </button>
+            )}
+            <button role="menuitem" className="menu-item" onClick={() => copyItem("id", ticket.id)}>
+              <span className="menu-icon" aria-hidden>{copied === "id" ? <CheckIcon size={14} /> : <CopyIcon size={14} />}</span>
+              <span className="menu-label">{copied === "id" ? "Copied ✓" : "Copy ticket ID"}</span>
+              <span className="menu-value">{ticket.id}</span>
             </button>
-          )}
-          {ticket.branch && (
-            <button role="menuitem" className="menu-item" title={ticket.worktree ?? undefined} onClick={() => copyItem("branch", ticket.branch!)}>
-              <span className="menu-icon" aria-hidden>{copied === "branch" ? <CheckIcon size={14} /> : <CopyIcon size={14} />}</span>
-              <span className="menu-label">{copied === "branch" ? "Copied ✓" : "Copy branch"}</span>
-              <span className="menu-value">{ticket.branch}</span>
-            </button>
-          )}
-          <button role="menuitem" className="menu-item" onClick={() => copyItem("id", ticket.id)}>
-            <span className="menu-icon" aria-hidden>{copied === "id" ? <CheckIcon size={14} /> : <CopyIcon size={14} />}</span>
-            <span className="menu-label">{copied === "id" ? "Copied ✓" : "Copy ticket ID"}</span>
-            <span className="menu-value">{ticket.id}</span>
-          </button>
-          {ticket.session && (
-            <button role="menuitem" className="menu-item" disabled={working}
-              title={working ? "Wait until Claude is done" : "New ticket in Planning with a copy of this conversation and its own branch off this one's committed code"}
-              onClick={pick(onBranch)}>
-              <span className="menu-icon" aria-hidden><BranchIcon size={14} /></span>
-              <span className="menu-label">Branch ticket…</span>
-              <span className="menu-hint">{working ? "Wait until Claude is done" : "copy chat + code"}</span>
-            </button>
-          )}
-          {hasSession && !working && (
-            <>
+            {ticket.session && (
+              <button role="menuitem" className="menu-item" disabled={working}
+                title={working ? "Wait until Claude is done" : "New ticket in Planning with a copy of this conversation and its own branch off this one's committed code"}
+                onClick={pick(onBranch)}>
+                <span className="menu-icon" aria-hidden><BranchIcon size={14} /></span>
+                <span className="menu-label">Branch ticket…</span>
+                <span className="menu-hint">{working ? "Wait until Claude is done" : "copy chat + code"}</span>
+              </button>
+            )}
+            {hasSession && !working && (
+              <>
+                <button role="menuitem" className="menu-item" onClick={pick(onPickSession)}>
+                  <span className="menu-icon" aria-hidden><TerminalIcon size={14} /></span>
+                  <span className="menu-label">Change linked session…</span>
+                  {linkedLabel && <span className="menu-value">{linkedLabel}</span>}
+                </button>
+                <button role="menuitem" className="menu-item" onClick={pick(onUnlink)}>
+                  <span className="menu-icon" aria-hidden><CloseIcon size={14} /></span>
+                  <span className="menu-label">Unlink session</span>
+                </button>
+              </>
+            )}
+            {canLink && (
               <button role="menuitem" className="menu-item" onClick={pick(onPickSession)}>
                 <span className="menu-icon" aria-hidden><TerminalIcon size={14} /></span>
-                <span className="menu-label">Change linked session…</span>
-                {linkedLabel && <span className="menu-value">{linkedLabel}</span>}
+                <span className="menu-label">Link an existing Claude session…</span>
               </button>
-              <button role="menuitem" className="menu-item" onClick={pick(onUnlink)}>
-                <span className="menu-icon" aria-hidden><CloseIcon size={14} /></span>
-                <span className="menu-label">Unlink session</span>
+            )}
+            {ticket.prUrl && ticket.status === "review" && (
+              <button role="menuitem" className="menu-item" onClick={pick(onCheckPr)}>
+                <span className="menu-icon" aria-hidden><RefreshIcon size={14} /></span>
+                <span className="menu-label">Check PR status now</span>
               </button>
-            </>
-          )}
-          {canLink && (
-            <button role="menuitem" className="menu-item" onClick={pick(onPickSession)}>
-              <span className="menu-icon" aria-hidden><TerminalIcon size={14} /></span>
-              <span className="menu-label">Link an existing Claude session…</span>
+            )}
+            <div className="menu-sep" role="separator" />
+            <CapRow ticket={ticket} boardCap={boardCap} onCap={onCap} />
+            <div className="menu-sep" role="separator" />
+            <button role="menuitem" className="menu-item" title="Something wrong with ckanban on this ticket? File a GitHub issue with its details attached"
+              onClick={pick(onReportBug)}>
+              <span className="menu-icon" aria-hidden><BugIcon size={14} /></span>
+              <span className="menu-label">Report a bug in ckanban</span>
             </button>
-          )}
-          {ticket.prUrl && ticket.status === "review" && (
-            <button role="menuitem" className="menu-item" onClick={pick(onCheckPr)}>
-              <span className="menu-icon" aria-hidden><RefreshIcon size={14} /></span>
-              <span className="menu-label">Check PR status now</span>
+            <button role="menuitem" className="menu-item danger" onClick={pick(onDelete)}>
+              <span className="menu-icon" aria-hidden><TrashIcon size={14} /></span>
+              <span className="menu-label">Delete ticket…</span>
             </button>
-          )}
-          <div className="menu-sep" role="separator" />
-          <CapRow ticket={ticket} boardCap={boardCap} onCap={onCap} />
-          <div className="menu-sep" role="separator" />
-          <button role="menuitem" className="menu-item" title="Something wrong with ckanban on this ticket? File a GitHub issue with its details attached"
-            onClick={pick(onReportBug)}>
-            <span className="menu-icon" aria-hidden><BugIcon size={14} /></span>
-            <span className="menu-label">Report a bug in ckanban</span>
-          </button>
-          <button role="menuitem" className="menu-item danger" onClick={pick(onDelete)}>
-            <span className="menu-icon" aria-hidden><TrashIcon size={14} /></span>
-            <span className="menu-label">Delete ticket…</span>
-          </button>
-        </div>
+          </div>
+        </MenuSheet>
       )}
     </div>
   );

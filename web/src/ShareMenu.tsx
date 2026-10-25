@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { safeHref, type Ticket } from "./api";
 import { ChevronDownIcon, ClipIcon, CopyIcon, DownloadIcon, FolderOpenIcon, HashIcon, LinkIcon, MoreIcon, RefreshIcon } from "./icons";
 import { useLayer } from "./layers";
+import { MenuSheet } from "./MenuSheet";
 import {
   baseName, canPublish, copyFile, copyFormatted, copySource, copyText, downloadFile, isText, MARKDOWN, publishFile, revealFile,
 } from "./share";
@@ -97,75 +98,77 @@ export function ShareMenu({ slug, ticket, name, text, variant }: {
         </button>
       )}
       {open && createPortal(
-        <div className="share-menu" role="menu" aria-label={`Share ${baseName(name)}`} ref={menu} onKeyDown={onKey}
-          style={pos ? { top: pos.top, left: pos.left, maxHeight: pos.maxHeight } : { visibility: "hidden" }}>
-          <div className="menu-heading">Send as file</div>
-          {ticket.canCopyFile && (
-            <button role="menuitem" className="menu-item" onClick={pick(() => copyFile(slug, id, name))}>
-              <span className="menu-icon" aria-hidden><ClipIcon size={14} /></span>
-              <span className="menu-label">Copy file<small>Paste into Slack, email or Finder with ⌘V</small></span>
-            </button>
-          )}
-          <button role="menuitem" className="menu-item" onClick={pick(() => downloadFile(slug, id, name))}>
-            <span className="menu-icon" aria-hidden><DownloadIcon size={14} /></span>
-            <span className="menu-label">Download</span>
-          </button>
-          <button role="menuitem" className="menu-item" onClick={pick(() => revealFile(slug, id, name))}>
-            <span className="menu-icon" aria-hidden><FolderOpenIcon size={14} /></span>
-            <span className="menu-label">Show in Finder</span>
-          </button>
-
-          {textFile && (
-            <>
-              <div className="menu-heading">Paste as text</div>
-              {canPublish(name) && (
-                <button role="menuitem" className="menu-item" onClick={pick(() => copyFormatted(slug, id, name, text))}>
-                  <span className="menu-icon" aria-hidden><CopyIcon size={14} /></span>
-                  <span className="menu-label">Copy formatted<small>Slack, Notion, Docs keep headings and lists</small></span>
-                </button>
-              )}
-              <button role="menuitem" className="menu-item" onClick={pick(() => copySource(slug, id, name, text))}>
-                <span className="menu-icon" aria-hidden><HashIcon size={14} /></span>
-                <span className="menu-label">{MARKDOWN.test(name) ? "Copy markdown" : "Copy source"}</span>
+        <MenuSheet onClose={() => close(false)}>
+          <div className="share-menu" role="menu" aria-label={`Share ${baseName(name)}`} ref={menu} onKeyDown={onKey}
+            style={pos ? { top: pos.top, left: pos.left, maxHeight: pos.maxHeight } : { visibility: "hidden" }}>
+            <div className="menu-heading">Send as file</div>
+            {ticket.canCopyFile && (
+              <button role="menuitem" className="menu-item" onClick={pick(() => copyFile(slug, id, name))}>
+                <span className="menu-icon" aria-hidden><ClipIcon size={14} /></span>
+                <span className="menu-label">Copy file<small>Paste into Slack, email or Finder with ⌘V</small></span>
               </button>
-            </>
-          )}
+            )}
+            <button role="menuitem" className="menu-item" onClick={pick(() => downloadFile(slug, id, name))}>
+              <span className="menu-icon" aria-hidden><DownloadIcon size={14} /></span>
+              <span className="menu-label">Download</span>
+            </button>
+            <button role="menuitem" className="menu-item" onClick={pick(() => revealFile(slug, id, name))}>
+              <span className="menu-icon" aria-hidden><FolderOpenIcon size={14} /></span>
+              <span className="menu-label">Show in Finder</span>
+            </button>
 
-          {canPublish(name) && (
-            <>
-              <div className="menu-heading">Link</div>
-              {publishing ? (
-                <button role="menuitem" className="menu-item" disabled>
-                  <span className="menu-icon" aria-hidden><span className="spinner" /></span>
-                  <span className="menu-label">Publishing…<small>About 1-2 min. You can close this menu.</small></span>
+            {textFile && (
+              <>
+                <div className="menu-heading">Paste as text</div>
+                {canPublish(name) && (
+                  <button role="menuitem" className="menu-item" onClick={pick(() => copyFormatted(slug, id, name, text))}>
+                    <span className="menu-icon" aria-hidden><CopyIcon size={14} /></span>
+                    <span className="menu-label">Copy formatted<small>Slack, Notion, Docs keep headings and lists</small></span>
+                  </button>
+                )}
+                <button role="menuitem" className="menu-item" onClick={pick(() => copySource(slug, id, name, text))}>
+                  <span className="menu-icon" aria-hidden><HashIcon size={14} /></span>
+                  <span className="menu-label">{MARKDOWN.test(name) ? "Copy markdown" : "Copy source"}</span>
                 </button>
-              ) : !link && (
-                <button role="menuitem" className="menu-item" onClick={pick(() => publishFile(slug, id, name))}>
-                  <span className="menu-icon" aria-hidden><LinkIcon size={14} /></span>
-                  <span className="menu-label">{job?.state === "failed" ? "Try publishing again" : "Publish share link"}<small>claude.ai page anyone with the link can open</small></span>
-                </button>
-              )}
-              {job?.state === "failed" && <div className="share-error" role="alert">{job.error ?? "Publishing failed"}</div>}
-              {link && (
-                <div className="share-link">
-                  <span className="share-link-url">
-                    <span className="muted small">Published {timeAgo(link.at)}:</span>
-                    <a href={safeHref(link.url)} target="_blank" rel="noreferrer" title={link.url}>{link.url.replace(/^https:\/\//, "")}</a>
-                  </span>
-                  <button role="menuitem" className="btn small" onClick={pick(() => copyText(link.url, "Link copied"))}><CopyIcon size={12} /> Copy</button>
-                  <button role="menuitem" className="btn small" disabled={publishing} title="Republish the current file to the same link"
-                    onClick={pick(() => publishFile(slug, id, name))}><RefreshIcon size={12} /> Update</button>
-                </div>
-              )}
-            </>
-          )}
+              </>
+            )}
 
-          <div className="menu-heading">Location</div>
-          <div className="share-path">
-            <input readOnly value={path} aria-label="File location" onFocus={(e) => e.currentTarget.select()} />
-            <button role="menuitem" className="btn small" onClick={pick(() => copyText(path, "Path copied"))}>Copy</button>
+            {canPublish(name) && (
+              <>
+                <div className="menu-heading">Link</div>
+                {publishing ? (
+                  <button role="menuitem" className="menu-item" disabled>
+                    <span className="menu-icon" aria-hidden><span className="spinner" /></span>
+                    <span className="menu-label">Publishing…<small>About 1-2 min. You can close this menu.</small></span>
+                  </button>
+                ) : !link && (
+                  <button role="menuitem" className="menu-item" onClick={pick(() => publishFile(slug, id, name))}>
+                    <span className="menu-icon" aria-hidden><LinkIcon size={14} /></span>
+                    <span className="menu-label">{job?.state === "failed" ? "Try publishing again" : "Publish share link"}<small>claude.ai page anyone with the link can open</small></span>
+                  </button>
+                )}
+                {job?.state === "failed" && <div className="share-error" role="alert">{job.error ?? "Publishing failed"}</div>}
+                {link && (
+                  <div className="share-link">
+                    <span className="share-link-url">
+                      <span className="muted small">Published {timeAgo(link.at)}:</span>
+                      <a href={safeHref(link.url)} target="_blank" rel="noreferrer" title={link.url}>{link.url.replace(/^https:\/\//, "")}</a>
+                    </span>
+                    <button role="menuitem" className="btn small" onClick={pick(() => copyText(link.url, "Link copied"))}><CopyIcon size={12} /> Copy</button>
+                    <button role="menuitem" className="btn small" disabled={publishing} title="Republish the current file to the same link"
+                      onClick={pick(() => publishFile(slug, id, name))}><RefreshIcon size={12} /> Update</button>
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="menu-heading">Location</div>
+            <div className="share-path">
+              <input readOnly value={path} aria-label="File location" onFocus={(e) => e.currentTarget.select()} />
+              <button role="menuitem" className="btn small" onClick={pick(() => copyText(path, "Path copied"))}>Copy</button>
+            </div>
           </div>
-        </div>,
+        </MenuSheet>,
         document.body,
       )}
     </div>

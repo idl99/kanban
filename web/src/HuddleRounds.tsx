@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { Huddle } from "./api";
 import { huddleCost, huddleRound, huddleTitle, members } from "./huddle";
 import { useLayer } from "./layers";
+import { MenuSheet } from "./MenuSheet";
 import { fullTime } from "./time";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
@@ -71,37 +72,39 @@ export function HuddleRounds({ list, shown, onPick, onNew, onSummary }: {
         <span className="hd-rounds-label">{roundLabel(list, shown)}</span> <span aria-hidden>▾</span>
       </button>
       {open && (
-        <div className="hd-rounds-menu" role="menu" aria-label="Huddles of this ticket" ref={menu} onKeyDown={onKey}>
-          {list.map((h) => {
-            const handles = members(h).filter((p) => p.handle !== "main").map((p) => p.handle);
-            const n = h.findings.length;
-            return (
-              <div key={h.id} className={`hd-round${h.id === shown.id ? " on" : ""}`}>
-                <button role="menuitem" className="hd-round-pick" aria-current={h.id === shown.id || undefined}
-                  title={`Started ${fullTime(h.createdAt)}${h.closedAt ? ` · closed ${fullTime(h.closedAt)}` : ""}`}
-                  onClick={pick(() => onPick(h.id === current?.id ? null : h.id))}>
-                  <span className="hd-round-title">{roundLabel(list, h)}</span>
-                  <span className="hd-round-meta">
-                    {[handles.join(", ") || "no agents", span(h), money(huddleCost(h)), `${n} finding${n === 1 ? "" : "s"}`].join(" · ")}
-                  </span>
-                </button>
-                <span className={`hd-round-pill ${h.status}`}>{PILL[h.status]}</span>
-                {h.summary && (
-                  <button role="menuitem" className="link-btn hd-round-sum" title={`Open ${h.summary} in Outputs`} onClick={pick(() => onSummary(h))}>summary</button>
-                )}
-              </div>
-            );
-          })}
-          <div className="menu-sep" role="separator" />
-          <div className="hd-round">
-            <button role="menuitem" className="hd-round-pick hd-round-new" disabled={!!blocked} onClick={pick(onNew)}>
-              <span className="hd-round-title">+ New huddle</span>
-              <span className="hd-round-meta">
-                {blocked ? `Close round ${huddleRound(list, blocked)} first; only one huddle runs at a time` : `Starts round ${next}; earlier rounds stay here, read-only`}
-              </span>
-            </button>
+        <MenuSheet onClose={() => close(false)}>
+          <div className="hd-rounds-menu" role="menu" aria-label="Huddles of this ticket" ref={menu} onKeyDown={onKey}>
+            {list.map((h) => {
+              const handles = members(h).filter((p) => p.handle !== "main").map((p) => p.handle);
+              const n = h.findings.length;
+              return (
+                <div key={h.id} className={`hd-round${h.id === shown.id ? " on" : ""}`}>
+                  <button role="menuitem" className="hd-round-pick" aria-current={h.id === shown.id || undefined}
+                    title={`Started ${fullTime(h.createdAt)}${h.closedAt ? ` · closed ${fullTime(h.closedAt)}` : ""}`}
+                    onClick={pick(() => onPick(h.id === current?.id ? null : h.id))}>
+                    <span className="hd-round-title">{roundLabel(list, h)}</span>
+                    <span className="hd-round-meta">
+                      {[handles.join(", ") || "no agents", span(h), money(huddleCost(h)), `${n} finding${n === 1 ? "" : "s"}`].join(" · ")}
+                    </span>
+                  </button>
+                  <span className={`hd-round-pill ${h.status}`}>{PILL[h.status]}</span>
+                  {h.summary && (
+                    <button role="menuitem" className="link-btn hd-round-sum" title={`Open ${h.summary} in Outputs`} onClick={pick(() => onSummary(h))}>summary</button>
+                  )}
+                </div>
+              );
+            })}
+            <div className="menu-sep" role="separator" />
+            <div className="hd-round">
+              <button role="menuitem" className="hd-round-pick hd-round-new" disabled={!!blocked} onClick={pick(onNew)}>
+                <span className="hd-round-title">+ New huddle</span>
+                <span className="hd-round-meta">
+                  {blocked ? `Close round ${huddleRound(list, blocked)} first; only one huddle runs at a time` : `Starts round ${next}; earlier rounds stay here, read-only`}
+                </span>
+              </button>
+            </div>
           </div>
-        </div>
+        </MenuSheet>
       )}
     </div>
   );

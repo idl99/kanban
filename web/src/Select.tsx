@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties
 import { createPortal } from "react-dom";
 import { CheckIcon, PlusIcon } from "./icons";
 import { useLayer } from "./layers";
+import { MenuSheet } from "./MenuSheet";
 
 const GAP = 4;
 const MARGIN = 8;
@@ -166,26 +167,28 @@ export function Select<T extends string>({ value, options, onChange, footer, cla
       </button>
       {badge}
       {open && createPortal(
-        <div className={`select-menu ${menuClassName ?? ""}`} role="listbox" id={listId} aria-label={ariaLabel} ref={menu} style={pos}>
-          {items.map((it, i) =>
-            it.kind === "option" ? (
-              <div key={it.o.value} id={`${listId}-${i}`} role="option" aria-selected={it.o.value === value} aria-disabled={it.o.disabled}
-                className={`select-item ${i === active ? "active" : ""} ${it.o.value === value ? "selected" : ""} ${it.o.disabled ? "disabled" : ""}`}
-                onMouseEnter={() => setActive(i)} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(i)}>
-                {renderOption ? renderOption(it.o, it.o.value === value) : <>
-                  <span className="select-check" aria-hidden>{it.o.value === value && <CheckIcon size={12} />}</span>
-                  <span className="select-label">{it.o.label}{it.o.hint && <span className="select-hint">{it.o.hint}</span>}</span>
-                </>}
-              </div>
-            ) : (
-              <div key={`f${i}`} id={`${listId}-${i}`} role="option" aria-selected={false} className={`select-item footer ${i === active ? "active" : ""} ${i === options.length ? "first-footer" : ""}`}
-                onMouseEnter={() => setActive(i)} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(i)}>
-                <span className="select-check" aria-hidden>{it.f.icon ?? <PlusIcon size={12} />}</span>
-                <span className="select-label">{it.f.label}</span>
-              </div>
-            ),
-          )}
-        </div>,
+        <MenuSheet onClose={() => setOpen(false)}>
+          <div className={`select-menu ${menuClassName ?? ""}`} role="listbox" id={listId} aria-label={ariaLabel} ref={menu} style={pos}>
+            {items.map((it, i) =>
+              it.kind === "option" ? (
+                <div key={it.o.value} id={`${listId}-${i}`} role="option" aria-selected={it.o.value === value} aria-disabled={it.o.disabled}
+                  className={`select-item ${i === active ? "active" : ""} ${it.o.value === value ? "selected" : ""} ${it.o.disabled ? "disabled" : ""}`}
+                  onMouseEnter={() => setActive(i)} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(i)}>
+                  {renderOption ? renderOption(it.o, it.o.value === value) : <>
+                    <span className="select-check" aria-hidden>{it.o.value === value && <CheckIcon size={12} />}</span>
+                    <span className="select-label">{it.o.label}{it.o.hint && <span className="select-hint">{it.o.hint}</span>}</span>
+                  </>}
+                </div>
+              ) : (
+                <div key={`f${i}`} id={`${listId}-${i}`} role="option" aria-selected={false} className={`select-item footer ${i === active ? "active" : ""} ${i === options.length ? "first-footer" : ""}`}
+                  onMouseEnter={() => setActive(i)} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(i)}>
+                  <span className="select-check" aria-hidden>{it.f.icon ?? <PlusIcon size={12} />}</span>
+                  <span className="select-label">{it.f.label}</span>
+                </div>
+              ),
+            )}
+          </div>
+        </MenuSheet>,
         document.body,
       )}
     </div>

@@ -1,7 +1,7 @@
 // ckanban service worker: makes the board installable, keeps the app shell (HTML, JS, CSS, icons) for a quick
 // start, and shows "needs you" notifications sent by the daemon (src/server/push.ts). Never caches /api/ (board
 // data, events, sockets): those always go to the daemon.
-const CACHE = "ckanban-shell-v2";
+const CACHE = "ckanban-shell-v3";
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/", "/manifest.webmanifest", "/icon-192.png"])).then(() => self.skipWaiting()));

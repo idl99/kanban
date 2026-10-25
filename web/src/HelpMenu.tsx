@@ -134,7 +134,7 @@ export function HelpMenu({ help, phone, onAsk }: { help: HelpState; phone: boole
     <div className="help-menu-wrap" ref={root}>
       <button ref={button} className={`btn small help-btn ${open ? "on" : ""}`} aria-haspopup="menu" aria-expanded={open}
         aria-label="Help me understand" title="Plain-words answers about this ticket" onClick={() => (open ? close() : setOpen(true))}>
-        <span aria-hidden>💡</span><span className="help-btn-label"> Help me understand</span> <span aria-hidden>▾</span>
+        <span aria-hidden>💡</span><span className="help-btn-label"> Help me understand <span aria-hidden>▾</span></span>
       </button>
       {open && (phone
         ? <div className="sheet-wrap" onMouseDown={(e) => e.target === e.currentTarget && close(false)}>{list}</div>

@@ -294,6 +294,7 @@ button.badge.huddle.quiet { background: var(--ok-soft); color: var(--ok); }
 /* Messages waiting for the user: card badge, dock row, Huddle tab. */
 .for-you-pill { display: inline-block; background: var(--accent); color: #fff; border-radius: 99px; padding: 0 6px; font-size: 10px; font-weight: 650; line-height: 16px; margin-left: 4px; white-space: nowrap; }
 .badge .spinner { width: 9px; height: 9px; border-width: 1.5px; flex: none; }
+.badge-short { display: none; }
 .badge-time { font-weight: 450; opacity: 0.85; font-variant-numeric: tabular-nums; }
 
 .spinner {
@@ -703,10 +704,16 @@ body > .output-view.reader { position: fixed; }
 .chat-section { display: flex; flex-direction: column; }
 .chat { display: flex; flex-direction: column; gap: 10px; }
 .chat-log { display: flex; flex-direction: column; gap: 8px; max-height: 62vh; min-height: 160px; overflow-y: auto; padding: 2px 2px 8px; }
+/* Nothing in the chat may widen it (it would scroll sideways on a phone): long words wrap. */
+.chat-log, .huddle-log { overflow-wrap: anywhere; }
+:where(.chat-log, .huddle-log) > * { max-width: 100%; min-width: 0; }
 .chat-empty { border: 1px dashed var(--border); border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 .chat-empty p { margin: 0; font-size: 13.5px; }
 .chat-note { align-self: center; font-size: 11.5px; color: var(--muted); background: var(--surface-2); padding: 2px 10px; border-radius: 99px; }
-.chat-typing { align-self: flex-start; display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--accent); padding: 4px 6px; font-family: var(--mono); }
+.chat-typing { align-self: flex-start; display: flex; gap: 8px; align-items: center; max-width: 100%; font-size: 12.5px; color: var(--accent); padding: 4px 6px; font-family: var(--mono); }
+/* What Claude is doing can be one long word (a tool's input): wrap it instead of widening the chat. */
+.chat-typing > :last-child { min-width: 0; overflow-wrap: anywhere; }
+.chat-typing .spinner { flex: none; }
 .waiting-card { align-self: flex-start; min-width: min(440px, 100%); max-width: 92%; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); background: var(--surface); padding: 10px 14px; }
 .waiting-title { display: flex; gap: 8px; align-items: center; font-weight: 560; font-size: 13px; color: var(--accent); }
 .waiting-card ul { list-style: none; margin: 8px 0 4px; padding: 0; }
@@ -2279,6 +2286,22 @@ button.hd-mode:disabled { cursor: default; }
   .sheet-item.sep { border-bottom: 1px solid var(--border); border-radius: 10px 10px 0 0; }
   .sheet-label { flex: 1; }
   .sheet-foot { text-align: center; padding: 8px 0 0; }
+  /* Dropdown menus wrapped in MenuSheet: the menu itself becomes the sheet (overrides its desktop
+     position, width and the inline top/left/max-height the portaled menus set). */
+  .sheet-wrap.menu-sheet { z-index: 110; }
+  .menu-sheet > * {
+    position: static !important; inset: auto; visibility: visible !important; width: 100% !important; min-width: 0 !important; max-width: none !important;
+    max-height: 85dvh !important; overflow-y: auto; box-sizing: border-box; margin: 0; background: var(--surface);
+    border: 0; border-radius: 16px 16px 0 0; box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.18);
+    padding: 6px max(8px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    animation: sheet-up 0.16s ease-out;
+  }
+  .menu-sheet > .follow-up-menu { padding: 6px 16px max(16px, env(safe-area-inset-bottom)); }
+  .menu-sheet > *::before { content: ""; display: block; width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 4px auto 8px; }
+  .menu-sheet :is(.menu-item, .select-item, .inbox-item, .hd-round-pick) { min-height: 44px; font-size: 15px; }
+  .menu-sheet .menu-value { max-width: 50vw; }
+  .menu-sheet .select-item { align-items: center; white-space: normal; padding: 8px 12px 8px 8px; }
+  .menu-sheet .term-block { width: 100%; margin: 2px 0 6px; }
   /* More sheet: Claude plan usage box above the items */
   .usage-box { border: 1px solid var(--border); border-radius: 12px; margin: 0 4px 6px; padding: 4px 12px 0; }
   .usage-box-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
@@ -2309,12 +2332,14 @@ button.hd-mode:disabled { cursor: default; }
   .panel-title .title-input { font-size: 17px; }
   .panel-meta { padding: 0 14px 8px; }
   .panel-head .star-toggle, .panel-head .ticket-nav, .panel-head .save-state { display: none; }
-  /* The Your-turn pill shares the button row: its reason shortens with "…" on a narrow screen. */
-  .panel-head .your-turn.inline, .panel-head .badge { min-width: 0; flex: 0 1 auto; overflow: hidden; }
-  .panel-head .your-turn.inline .yt-why { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  .panel-head .your-turn.inline .yt-label { flex: none; }
+  /* One compact row: the status chip keeps only its short part (spinner and time, "Your turn",
+     "Auto huddle"); the rest stays in its title. */
+  .panel-head .badge.running:has(.badge-time) .badge-label, .panel-head .badge-sep,
+  .panel-head .badge .ah-reason, .panel-head .your-turn.inline .yt-why, .panel-head .badge:has(.badge-short) .badge-label { display: none; }
+  .panel-head .badge-short { display: inline; }
+  .panel-head .your-turn.inline, .panel-head .badge { font-size: 12px; padding: 3px 9px; }
   .panel-head .head-spacer { flex: 1 0 0; }
-  .panel-head > :not(.your-turn):not(.badge):not(.head-spacer) { flex-shrink: 0; }
+  .panel-head > :not(.head-spacer) { flex-shrink: 0; }
   .phone-back { width: 36px; height: 36px; }
   .phone-move .select-trigger { padding: 5px 10px; font-weight: 600; background: var(--surface-2); border-color: transparent; min-width: 0; }
   .panel-body.details-closed { grid-template-rows: minmax(0, 1fr); }
@@ -2593,6 +2618,7 @@ button.tag-chip:hover { border-color: currentColor; }
 .lesson-err { margin-top: 6px; color: var(--err); font-size: 12.5px; }
 @media (max-width: 720px) {
   .help-btn-label { display: none; }
+  .help-btn { width: 36px; height: 34px; padding: 0; justify-content: center; }
   .help-sheet .help-item { padding: 12px; min-height: 56px; justify-content: center; }
   .help-sheet .help-item b { font-size: 15px; }
   .help-sheet .help-item span { font-size: 13px; }

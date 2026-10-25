@@ -29,11 +29,17 @@ function Elapsed({ since }: { since: string }) {
     const timer = setInterval(() => setNow(Date.now()), fresh ? 1000 : 30_000);
     return () => clearInterval(timer);
   }, [fresh]);
-  return <span className="badge-time" title={`Started ${fullTime(since)}`}> · {elapsed(since, now)}</span>;
+  return <span className="badge-time" title={`Started ${fullTime(since)}`}><span className="badge-sep"> · </span>{elapsed(since, now)}</span>;
 }
 
 function workingBadge(label: string, since?: string | null) {
-  return <span className="badge running"><span className="spinner" /> {label}{since && <Elapsed since={since} />}</span>;
+  // The label hides in a phone's ticket header (just spinner and time there); the title keeps it.
+  return <span className="badge running" title={label}><span className="spinner" /> <span className="badge-label">{label}</span>{since && <Elapsed since={since} />}</span>;
+}
+
+/** Badge text plus a shorter form that a phone's ticket header shows instead (styles.css picks one). */
+function twoLabels(long: string, short: string) {
+  return <><span className="badge-label">{long}</span><span className="badge-short">{short}</span></>;
 }
 
 // Shown by the badge already, so the activity line would only repeat it.
@@ -42,11 +48,11 @@ const QUIET_ACTIVITY = new Set(["Starting…", "Claude is replying…"]);
 /** The ticket's auto huddle: reviewing its work ("Auto huddle · reason"), or waiting for the board's one slot. */
 export function autoHuddleChip(a: NonNullable<Ticket["autoHuddle"]>) {
   if (a.state === "waiting") {
-    return <span className="badge queued" title={`Another ticket has this board's auto huddle; this one resumes when it ends. Reason: ${a.reason}`}>Waiting for huddle slot</span>;
+    return <span className="badge queued" title={`Another ticket has this board's auto huddle; this one resumes when it ends. Reason: ${a.reason}`}>{twoLabels("Waiting for huddle slot", "Waiting")}</span>;
   }
   return (
     <span className="badge auto-huddle" title={`Claude started a review huddle (${a.template}) before landing: ${a.reason}`}>
-      <span className="live-dot" /> Auto huddle · <span className="ah-reason">{a.reason}</span>
+      <span className="live-dot" /> Auto huddle<span className="ah-reason"> · {a.reason}</span>
     </span>
   );
 }
@@ -64,11 +70,11 @@ export function outcomeBadge(t: Ticket) {
   if (t.status === "done") return null;
   switch (t.outcome) {
     case "blocked": return <span className="badge blocked">Blocked</span>;
-    case "needs_input": return <span className="badge blocked">Needs your input</span>;
+    case "needs_input": return <span className="badge blocked" title="Needs your input">{twoLabels("Needs your input", "Your input")}</span>;
     case "failed": return <span className="badge failed">Failed</span>;
     case "stopped": return <span className="badge stopped">Stopped</span>;
-    case "limit": return <span className="badge limit" title={t.limit?.message ?? t.error ?? undefined}>{limitLabel(t)}</span>;
-    case "done": return t.status === "review" ? <span className="badge ok">Ready for review</span> : null;
+    case "limit": return <span className="badge limit" title={t.limit?.message ?? t.error ?? limitLabel(t)}>{twoLabels(limitLabel(t), "Limit hit")}</span>;
+    case "done": return t.status === "review" ? <span className="badge ok" title="Ready for review">{twoLabels("Ready for review", "Review")}</span> : null;
     default: return null;
   }
 }

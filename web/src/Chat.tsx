@@ -742,19 +742,19 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           <div key={h.at} className="conv-msg assistant live">
             <div className="conv-head"><b>Claude</b></div>
             {liveView(h.text).text && <Markdown text={liveView(h.text).text} />}
-            {liveView(h.text).preparing && <div className="chat-typing"><span className="spinner" /> {liveView(h.text).preparing}</div>}
+            {liveView(h.text).preparing && <div className="chat-typing"><span className="spinner" /> <span>{liveView(h.text).preparing}</span></div>}
           </div>
         ))}
         {live && (
           <div className="conv-msg assistant live" aria-live="polite">
             <div className="conv-head"><b>Claude</b><span className="muted small">writing…</span></div>
             {liveView(live).text && <Markdown text={liveView(live).text} />}
-            {liveView(live).preparing && <div className="chat-typing"><span className="spinner" /> {liveView(live).preparing}</div>}
+            {liveView(live).preparing && <div className="chat-typing"><span className="spinner" /> <span>{liveView(live).preparing}</span></div>}
           </div>
         )}
         {running && !live && !!ticket.waitingOn?.length && <WaitingCard tasks={ticket.waitingOn} />}
         {running && !live && !ticket.waitingOn?.length && (
-          <div className="chat-typing"><span className="spinner" /> {ticket.lastActivity && ticket.lastActivity !== "Starting…" && !repeats(ticket.lastActivity, onScreen) ? ticket.lastActivity : "Claude is working…"}</div>
+          <div className="chat-typing"><span className="spinner" /> <span>{ticket.lastActivity && ticket.lastActivity !== "Starting…" && !repeats(ticket.lastActivity, onScreen) ? ticket.lastActivity : "Claude is working…"}</span></div>
         )}
         {pending.filter((p) => p.steer && !queued.some((q) => q.text === p.text)).map((p, i) => (
           <div key={i} className="conv-msg user pending">

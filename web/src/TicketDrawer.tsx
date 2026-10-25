@@ -761,7 +761,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
           </button>}
           <StarToggle on={!!ticket.important} onChange={toggleStar} keyHint="S" />
           {att && (
-            <span className={`your-turn inline att-${att.kind}`}>
+            <span className={`your-turn inline att-${att.kind}`} title={att.kind === "limit" ? limitLabel(ticket) : att.label}>
               <span className="yt-dot" aria-hidden /><span className="yt-label">Your turn</span><span className="yt-why">{att.kind === "limit" ? limitLabel(ticket) : att.label}</span>
             </span>
           )}

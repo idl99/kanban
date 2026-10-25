@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
 import { MoreIcon } from "./icons";
 import { useLayer } from "./layers";
+import { MenuSheet } from "./MenuSheet";
 
 export interface MenuItem {
   label: string;
@@ -55,20 +56,22 @@ export function HeaderMenu({ items, footer, alert, keyHint }: { items: MenuItem[
         {keyHint}
       </button>
       {open && (
-        <div className="inbox-menu header-menu-list" role="menu" ref={menu} onKeyDown={onKey}>
-          {items.map((it) => (
-            <Fragment key={it.label}>
-              <button role="menuitem" className="menu-item" title={it.title} onClick={() => { setOpen(false); it.onSelect(); }}>
-                <span className="menu-icon" aria-hidden>{it.icon}</span>
-                <span className="menu-label">{it.label}</span>
-                {it.badge}
-                {it.hint && <kbd>{it.hint}</kbd>}
-              </button>
-              {it.separator && <div className="menu-sep" role="separator" />}
-            </Fragment>
-          ))}
-          {footer && <div className="menu-footer muted small">{footer}</div>}
-        </div>
+        <MenuSheet onClose={() => setOpen(false)}>
+          <div className="inbox-menu header-menu-list" role="menu" ref={menu} onKeyDown={onKey}>
+            {items.map((it) => (
+              <Fragment key={it.label}>
+                <button role="menuitem" className="menu-item" title={it.title} onClick={() => { setOpen(false); it.onSelect(); }}>
+                  <span className="menu-icon" aria-hidden>{it.icon}</span>
+                  <span className="menu-label">{it.label}</span>
+                  {it.badge}
+                  {it.hint && <kbd>{it.hint}</kbd>}
+                </button>
+                {it.separator && <div className="menu-sep" role="separator" />}
+              </Fragment>
+            ))}
+            {footer && <div className="menu-footer muted small">{footer}</div>}
+          </div>
+        </MenuSheet>
       )}
     </div>
   );

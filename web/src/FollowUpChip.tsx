@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { api, type Ticket } from "./api";
 import { followUpCount, followUpDate, followUpHistory, followUpLabel, followUpWhen } from "./followUpText";
 import { useLayer } from "./layers";
+import { MenuSheet } from "./MenuSheet";
 
 const MENU_WIDTH = 340;
 
@@ -84,25 +85,27 @@ export function FollowUpChip({ slug, ticket, onError, disabled }: {
         <span aria-hidden>↻</span> {followUpLabel(f, now)}
       </button>
       {open && createPortal(
-        <div className="follow-up-menu" role="dialog" aria-label="Follow-up" ref={menu} onClick={(e) => e.stopPropagation()}
-          style={pos ? { top: pos.top, left: pos.left } : { visibility: "hidden" }}>
-          <h3>{f.missedAt ? "Claude missed a follow-up" : "Claude follows up on this ticket"}</h3>
-          <div className="fu-when">
-            {f.missedAt
-              ? `It was due ${followUpDate(f.dueAt)}, while the board was off.`
-              : `Next: ${followUpDate(f.dueAt)}${new Date(f.dueAt) > now ? ` (${followUpWhen(f.dueAt, now)})` : ""}`}
+        <MenuSheet onClose={close}>
+          <div className="follow-up-menu" role="dialog" aria-label="Follow-up" ref={menu} onClick={(e) => e.stopPropagation()}
+            style={pos ? { top: pos.top, left: pos.left } : { visibility: "hidden" }}>
+            <h3>{f.missedAt ? "Claude missed a follow-up" : "Claude follows up on this ticket"}</h3>
+            <div className="fu-when">
+              {f.missedAt
+                ? `It was due ${followUpDate(f.dueAt)}, while the board was off.`
+                : `Next: ${followUpDate(f.dueAt)}${new Date(f.dueAt) > now ? ` (${followUpWhen(f.dueAt, now)})` : ""}`}
+            </div>
+            <div className="fu-note"><b>Claude's note:</b> {f.note}</div>
+            {history.length > 0 && <ul className="fu-hist">{history.map((h, i) => <li key={i}>{h}</li>)}</ul>}
+            <div className="fu-row">
+              <button className="btn primary small" disabled={!!busy || !!ticket.running} title={ticket.running ? "Claude is working on this ticket" : undefined} onClick={act("now")}>
+                {busy === "now" ? "Starting…" : "Follow up now"}
+              </button>
+              <button className="btn small" disabled={!!busy} onClick={act("stop")}>{busy === "stop" ? "Stopping…" : "Stop following up"}</button>
+              <span className="fu-cost">{followUpCount(ticket.followUpLog)}</span>
+            </div>
+            {f.cancelOnReply && <div className="fu-foot">Writing in this ticket's chat also stops it.</div>}
           </div>
-          <div className="fu-note"><b>Claude's note:</b> {f.note}</div>
-          {history.length > 0 && <ul className="fu-hist">{history.map((h, i) => <li key={i}>{h}</li>)}</ul>}
-          <div className="fu-row">
-            <button className="btn primary small" disabled={!!busy || !!ticket.running} title={ticket.running ? "Claude is working on this ticket" : undefined} onClick={act("now")}>
-              {busy === "now" ? "Starting…" : "Follow up now"}
-            </button>
-            <button className="btn small" disabled={!!busy} onClick={act("stop")}>{busy === "stop" ? "Stopping…" : "Stop following up"}</button>
-            <span className="fu-cost">{followUpCount(ticket.followUpLog)}</span>
-          </div>
-          {f.cancelOnReply && <div className="fu-foot">Writing in this ticket's chat also stops it.</div>}
-        </div>,
+        </MenuSheet>,
         document.body,
       )}
     </>
