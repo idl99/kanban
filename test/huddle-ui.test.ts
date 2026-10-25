@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { resetTitle, scopeChip, usageText } from "../web/src/teamText";
 import {
-  applyProposedTemplate, applyTemplate, brakeLabel, stoppedWhenDone, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity, contextText, BIG_CONTEXT_TOKENS, participantRole, clampSideWidth, SIDE_DEFAULT, handInGroups, handInStatus,
+  applyProposedTemplate, applyTemplate, brakeLabel, brakeHeadline, budgetRaise, clause, stoppedWhenDone, cardHuddleBadge, digestPreview, digestSenders, parseDigest, draftError, draftTags, idleFor, isForYou, untaggedHint, draftSize, guestTickets, handleInitials, mentionCandidates, mentionQuery, mergeMessages, participantActivity, pickHuddle, huddleRound, huddleTitle, ticketHuddles, rosterDraft, rowHandle, shortTicketId, sortHuddles, sourceLabel, upsertHuddle, withActivity, contextText, BIG_CONTEXT_TOKENS, participantRole, clampSideWidth, SIDE_DEFAULT, handInGroups, handInStatus,
 } from "../web/src/huddleText";
 import { mergeSteps, modelLabel, sessionMeta, sessionState, shortSession, toolIcon } from "../web/src/sessionText";
 
@@ -317,4 +317,24 @@ test("stoppedWhenDone: only a budget stop after a close request, or one the serv
   expect(stoppedWhenDone({ status: "stopped", stopReason: "budget" })).toBe(false);
   expect(stoppedWhenDone({ status: "stopped", stopReason: "messages", closeRequest: close })).toBe(false);
   expect(stoppedWhenDone({ status: "live", stopReason: null, closeRequest: close })).toBe(false);
+});
+
+test("brakeHeadline: the brake dock's one line says why it paused and what comes next", () => {
+  expect(brakeHeadline("budget", 5, true)).toBe("Paused at the $5 budget. Work looks finished.");
+  expect(brakeHeadline("budget", 20, false)).toBe("Paused at the $20 budget. Add budget to go on.");
+  expect(brakeHeadline("messages", 5, false)).toContain("message limit");
+  expect(brakeHeadline("loop", 5, false)).toContain("without you");
+});
+
+test("clause: a reason inside a sentence loses its closing full stops, so the sentence ends with one", () => {
+  expect(`asks to close: ${clause("proposed as an add-on ticket.")}.`).toBe("asks to close: proposed as an add-on ticket.");
+  expect(clause("  done...  ")).toBe("done");
+  expect(clause("v2.1 is merged")).toBe("v2.1 is merged");
+});
+
+test("budgetRaise: +$step adds the step to the budget, or to the spend when the huddle already went past its budget", () => {
+  expect(budgetRaise(3, 5, 10)).toBe(10); // budget 15
+  expect(budgetRaise(5, 5, 5)).toBe(5); // budget 10
+  expect(budgetRaise(39.14, 5, 5)).toBe(39.14); // budget 44.14: $5 left to spend
+  expect(budgetRaise(39.14, 5, 20)).toBe(54.14);
 });

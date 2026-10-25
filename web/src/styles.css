@@ -836,6 +836,17 @@ body > .output-view.reader { position: fixed; }
 /* Tags, model and effort in one row; the model and effort chips sit at the right end. */
 .panel-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 0 20px 10px; border-bottom: 1px solid var(--border); }
 .panel-meta .tag-editor { min-width: 0; }
+/* The header shrinks to one line while the chat or huddle feed scrolls down (useShrinkHeader): title and tags fold away. */
+.panel-top { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 0.22s ease, opacity 0.18s ease; }
+.panel-top-in { min-height: 0; }
+.panel.head-slim .panel-top { grid-template-rows: 0fr; opacity: 0; }
+.panel.head-slim .panel-top-in { overflow: hidden; }
+.head-title { display: none; flex: 1 1 0; min-width: 0; font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel.head-slim .head-title { display: block; }
+.panel.head-slim .head-spacer { display: none; }
+.panel-head { transition: padding 0.22s ease; }
+.panel.head-slim .panel-head { padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+@media (prefers-reduced-motion: reduce) { .panel-top, .panel-head { transition: none; } }
 .panel-body {
   flex: 1; min-height: 0; display: grid; position: relative;
   grid-template-columns: var(--side-w, 340px) minmax(0, 1fr); transition: grid-template-columns 0.18s ease;
@@ -1964,9 +1975,29 @@ div.huddle { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .hd-over { color: var(--err); font-weight: 600; }
 .hd-jump { color: var(--accent); font-size: 12px; font-weight: 560; }
 .hd-banner { margin: 10px 24px 0; padding: 9px 14px; border-radius: 8px; display: flex; gap: 10px; align-items: center; font-size: 13px; flex-wrap: wrap; }
-.hd-banner.brake { background: var(--err-soft); color: var(--err); }
 .hd-banner.quiet { background: var(--ok-soft); color: var(--ok); }
 .hd-banner .btn.small:not(.primary) { color: var(--text); }
+/* A brake stopped the huddle (HuddlePanel BrakeDock): a calm card with a red edge where the message box was. */
+.hd-dock { margin: 0 24px 14px; background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--err); border-radius: 12px; box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.05); font-size: 13px; }
+.hd-dock-head { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 12px 8px; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.hd-dock-line { flex: 1; min-width: 0; }
+.hd-dock-line b { color: var(--err); font-weight: 600; }
+.hd-dock-chev { color: var(--muted); transition: transform 0.2s ease; }
+.hd-dock.open .hd-dock-chev { transform: rotate(180deg); }
+.hd-dock-body { padding: 0 12px; }
+.hd-dock-body p { margin: 0 0 8px; line-height: 1.45; }
+.hd-dock-who { color: var(--info); }
+.hd-meter.wide { display: block; width: auto; margin-bottom: 4px; }
+.hd-dock-spend { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.hd-dock-acts { display: flex; gap: 8px; padding: 2px 12px 12px; }
+.hd-dock-acts .btn { flex: 1; justify-content: center; }
+.hd-dock-more { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px; margin-top: -2px; }
+.hd-dock-write { margin-left: auto; }
+.hd-steps { display: inline-flex; gap: 4px; }
+.hd-steps-label { color: var(--muted); font-size: 12px; }
+/* Stopped with Stop agents: Resume first, writing is one tap away. */
+.hd-stopped-box { margin: 0 24px 14px; padding: 10px 12px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; border: 1px dashed var(--border); border-radius: 12px; background: var(--surface); }
+.hd-stopped-text { flex: 1; min-width: 160px; color: var(--muted); }
 /* Learnings to review (HuddlePanel Learnings): a drawer over the feed, opened from the bar's 🎓 Learnings button. */
 .btn.small.hd-learn-btn { display: inline-flex; align-items: center; gap: 5px; }
 .btn.small.hd-learn-btn.pending { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
@@ -2339,6 +2370,11 @@ button.hd-mode:disabled { cursor: default; }
   .panel-head .badge-short { display: inline; }
   .panel-head .your-turn.inline, .panel-head .badge { font-size: 12px; padding: 3px 9px; }
   .panel-head .head-spacer { flex: 1 0 0; }
+  /* Shrunk: back, the title cut short, the status chip as a dot, ⋯. */
+  .panel.head-slim .panel-head .help-menu-wrap, .panel.head-slim .panel-head .job-chip, .panel.head-slim .panel-head .phone-move,
+  .panel.head-slim .panel-head .your-turn.inline .yt-label, .panel.head-slim .panel-head .badge-label, .panel.head-slim .panel-head .badge-short { display: none; }
+  .panel.head-slim .panel-head .your-turn.inline { padding: 3px 7px; }
+  .panel.head-slim .panel-head > .head-title { flex: 1 1 0; }
   .panel-head > :not(.head-spacer) { flex-shrink: 0; }
   .phone-back { width: 36px; height: 36px; }
   .phone-move .select-trigger { padding: 5px 10px; font-weight: 600; background: var(--surface-2); border-color: transparent; min-width: 0; }
@@ -2431,6 +2467,9 @@ button.hd-mode:disabled { cursor: default; }
   .hd-msg-body { overflow-wrap: anywhere; }
   .panel-main .huddle .composer { margin: 0 12px max(10px, env(safe-area-inset-bottom)); }
   .huddle-closed { margin: 0 12px max(10px, env(safe-area-inset-bottom)); }
+  .hd-dock, .hd-stopped-box { margin: 0 12px max(10px, env(safe-area-inset-bottom)); }
+  .hd-dock .btn { min-height: 40px; }
+  .hd-dock-more .btn.small, .hd-stopped-box .btn.small { min-height: 36px; }
   .hd-banner { margin: 8px 12px 0; padding: 8px 10px; gap: 6px 8px; }
   .hd-banner .btn.small { min-height: 36px; }
   .huddle-close-ask { padding-left: 12px; padding-right: 12px; }

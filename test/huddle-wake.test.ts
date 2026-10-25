@@ -152,8 +152,8 @@ test("budget brake: @main's huddle replies count, the leads are warned at 80%, e
   const warn = messages(h).find((m) => m.text.includes("(83%)"))!;
   expect(warn.mentions).toEqual(["main"]);
   expect(heardBy(store.getTicket("p", t.id)!.sessionId!).join("\n")).toContain("(83%)");
-  expect(log.at(-1)).toContain("budget and stopped");
-  expect(log.at(-1)).toContain("Spent: @main $0.01, @reviewer $0.01.");
+  expect(log.at(-1)).toContain("Paused at the $0.01 budget");
+  expect(log.at(-1)).toContain("spent: @main $0.01, @reviewer $0.01); every run was stopped.");
   // Work still going and no close request: the usual stop, which suggests more budget.
   expect(log.at(-1)).toContain("resume it with more budget if it should go on");
   expect(stopped.finishedAtStop).toBeFalsy();
@@ -196,14 +196,16 @@ test("budget runs out after a close request: the stop points to Close; resuming 
   const h = huddles.create("p", t.id, [{ preset: "reviewer" }], { maxCostUsd: 100 });
   await idle();
   // @main asked to close, and the budget is already spent: the reviewer's next turn stops the huddle.
-  store.saveHuddle("p", { ...store.getHuddle("p", h.id)!, maxCostUsd: huddleCost(store.getHuddle("p", h.id)!), closeRequest: { by: "main", at: new Date().toISOString(), reason: "all fixed" } });
+  store.saveHuddle("p", { ...store.getHuddle("p", h.id)!, maxCostUsd: huddleCost(store.getHuddle("p", h.id)!), closeRequest: { by: "main", at: new Date().toISOString(), reason: "all fixed." } });
   huddles.post("p", h.id, you(h), "@reviewer one last look");
   await until(() => store.getHuddle("p", h.id)!.status === "stopped");
   await idle();
   const stopped = store.getHuddle("p", h.id)!;
   expect(stopped).toMatchObject({ stopReason: "budget", finishedAtStop: true });
   const stop = messages(h).at(-1)!;
-  expect(stop.text).toContain("@main already asked to close it: all fixed.");
+  // One line: the close request is in the board's brake dock, not repeated here.
+  expect(stop.text).toMatch(/^■ Paused at the \$[\d.]+ budget \(\$[\d.]+ spent[^)]*\); every run was stopped\. @you: /);
+  expect(stop.text).not.toContain("all fixed");
   expect(stop.text).toContain("close the huddle");
   expect(stop.text).not.toContain("if it should go on");
   expect(stop.mentions).toEqual(["you"]);

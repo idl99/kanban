@@ -1577,7 +1577,8 @@ export class Huddles {
     if (!existsSync(summary)) {
       throw new HuddleError(409, `write the huddle summary first: ${summary} (what was decided, the findings and their state, what is left to do), then call huddle_close again`);
     }
-    const why = reason.trim() || "the work is done";
+    // Without a closing full stop: the reason goes inside sentences that add their own.
+    const why = reason.trim().replace(/\.+$/, "") || "the work is done";
     // An auto huddle runs while the user is away: its coordinator closes it itself.
     if (h.auto && isCoordinator(h, by)) return this.close(slug, hid, `closed by @main (${why})`);
     this.update(slug, hid, (x) => void (x.closeRequest = { by: by.handle, at: nowIso(), reason: why }));
@@ -1647,17 +1648,17 @@ export class Huddles {
     const max = h.maxCostUsd ?? DEFAULT_MAX_COST_USD;
     const spent = huddleCost(h);
     if (spent >= max) {
+      // One line: the board's brake dock shows the details (the close request, the ways on).
       const by = h.participants.filter((p) => (p.costUsd ?? 0) > 0).map((p) => `@${p.handle} ${money(p.costUsd!)}`).join(", ");
-      const stop = `The huddle spent ${money(spent)} of its ${money(max)} budget and stopped; every run was stopped.${by ? ` Spent: ${by}.` : ""}`;
+      const stop = `■ Paused at the ${money(max)} budget (${money(spent)} spent${by ? `: ${by}` : ""}); every run was stopped.`;
       // The last wrap-up turn can tip it over after the work is finished: then Close is the next step, not more budget.
       const finished = !!h.closeRequest || this.quiet(slug, h, this.store.readHuddleMessages(slug, hid)).quiet;
       if (!finished) {
         this.halt(slug, hid, "budget", `${stop} @you: resume it with more budget if it should go on.`);
         return;
       }
-      const why = h.closeRequest ? `@${h.closeRequest.by} already asked to close it: ${h.closeRequest.reason}.` : "Nobody was working and nothing was open.";
       this.update(slug, hid, (x) => void (x.finishedAtStop = true));
-      this.halt(slug, hid, "budget", `${stop} ${why} @you: the work looks finished, so check the result and close the huddle. Resume with more budget only if you want more done.`);
+      this.halt(slug, hid, "budget", `${stop} @you: the work looks finished, so check the result and close the huddle.`);
       return;
     }
     if (spent >= max * BUDGET_WARN && !h.budgetWarned) {

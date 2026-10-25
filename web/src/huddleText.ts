@@ -253,9 +253,29 @@ export function brakeLabel(h: { status: string; stopReason?: BoardHuddleLike["st
   return h.stopReason === "messages" ? "paused: message limit" : "paused: waiting for you";
 }
 
+/** The brake dock's one line: why the huddle paused and what comes next. */
+export function brakeHeadline(reason: NonNullable<BoardHuddleLike["stopReason"]>, max: number, done: boolean): string {
+  if (reason === "budget") return `Paused at the ${dollars(max)} budget. ${done ? "Work looks finished." : "Add budget to go on."}`;
+  return reason === "messages" ? "Paused at the message limit. Resume if more is needed." : "Paused: many messages went by without you.";
+}
+
+/** What Resume can add to the budget, in dollars. */
+export const BUDGET_STEPS = [5, 10, 20] as const;
+
+/**
+ * What to add to the budget for "+$step": the step on top of the budget, or on top of the spend when the huddle
+ * already spent past its budget (a last turn can overshoot it), so every step resumes with that much left to spend.
+ */
+export function budgetRaise(spent: number, max: number, step: number): number {
+  return Math.round((Math.max(max, spent) + step - max) * 100) / 100;
+}
+
+/** A reason put inside a sentence ("asks to close: <reason>."): without the full stops it may already end with. */
+export const clause = (s: string) => s.trim().replace(/\.+$/, "");
+
 /**
  * The budget stopped the huddle after its work was finished (a close request was open, or nothing was going on):
- * the brake banner then suggests Close, with Resume as the second choice.
+ * the brake dock then suggests Close, with Resume as the second choice.
  */
 export function stoppedWhenDone(h: { status: string; stopReason?: BoardHuddleLike["stopReason"]; finishedAtStop?: boolean; closeRequest?: unknown }): boolean {
   return h.status === "stopped" && h.stopReason === "budget" && (!!h.closeRequest || !!h.finishedAtStop);

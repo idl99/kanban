@@ -39,6 +39,7 @@ import { HuddlePanel } from "./HuddlePanel";
 import type { HuddleSeed, TeamRequest } from "./Team";
 import { StarToggle } from "./StarToggle";
 import { usePhone } from "./usePhone";
+import { useShrinkHeader } from "./useShrinkHeader";
 import { toast } from "./toast";
 import { FollowUpChip } from "./FollowUpChip";
 import { FileLinksProvider } from "./FileViewer";
@@ -358,6 +359,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const { stopping, stop } = useStop(slug, ticket, working, (m) => setPanelError(m));
   const bodyRef = useRef<HTMLDivElement>(null);
   const side = useSidebarWidth(bodyRef);
+  // Scrolling the chat or huddle feed down shrinks the header to one line; scrolling up brings it back.
+  const slim = useShrinkHeader(bodyRef, tab === "chat" || tab === "huddle", tab);
   // Opens fitted to the sidebar plus the chat's reading column; dragging can make it wider.
   const panel = usePanelWidth((detailsShown ? side.pref : 0) + CHAT_ROOM);
   const { dragging, handle } = panel;
@@ -743,7 +746,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   return (
     <FileLinksProvider slug={slug} ticketId={ticket.id} panel={panelRef}>
     <div className="drawer-wrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside ref={panelRef} className={`panel ${dragging ? "resizing" : ""} ${slideIn ? "" : "no-slide"}`} role="dialog" aria-modal="true" aria-label={ticket.title} style={{ width }} tabIndex={-1}>
+      <aside ref={panelRef} className={`panel ${dragging ? "resizing" : ""} ${slideIn ? "" : "no-slide"}${slim ? " head-slim" : ""}`} role="dialog" aria-modal="true" aria-label={ticket.title} style={{ width }} tabIndex={-1}>
         <div className="drawer-resize" role="separator" aria-orientation="vertical" aria-label="Resize panel" tabIndex={0}
           title="Drag to resize · double-click to reset" {...handle} />
 
@@ -760,6 +763,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             </svg>
           </button>}
           <StarToggle on={!!ticket.important} onChange={toggleStar} keyHint="S" />
+          {/* The shrunk header's one line: the title, cut short (the full one is in .panel-top). */}
+          <span className="head-title" aria-hidden={!slim}>{ticket.title}</span>
           {att && (
             <span className={`your-turn inline att-${att.kind}`} title={att.kind === "limit" ? limitLabel(ticket) : att.label}>
               <span className="yt-dot" aria-hidden /><span className="yt-label">Your turn</span><span className="yt-why">{att.kind === "limit" ? limitLabel(ticket) : att.label}</span>
@@ -799,6 +804,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             onDelete={() => setConfirmDelete(true)} />
           {!phone && <button className="icon-btn" onClick={onClose} aria-label="Close" title="Close (Esc)"><CloseIcon /><KeyHint keys="Esc" /></button>}
         </header>
+        {/* Title and tags fold away while the header is shrunk. */}
+        <div className="panel-top" aria-hidden={slim || undefined}><div className="panel-top-in">
         {/* The whole title, wrapping to as many lines as it needs, under the buttons. */}
         <div className="panel-title">
           <textarea ref={titleRef} className="title-input" rows={1} value={title} aria-label="Title"
@@ -817,6 +824,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             onSuggested={(suggestedTags) => api.updateTicket(slug, ticket.id, { suggestedTags }).catch((e) => onError(`Tags not saved: ${e.message}`))} />
           <RunSettings profile={profile} ticket={ticket} onError={onError} />
         </div>
+        </div></div>
 
         <div ref={bodyRef} className={`panel-body ${detailsShown ? "" : "details-closed"} ${side.dragging ? "resizing" : ""}`}
           style={{ "--side-w": `${side.width}px` } as React.CSSProperties}>

@@ -173,10 +173,12 @@ test("huddle_close: only @main and leads ask, after writing the summary; only th
   expect(text(missing)).toContain(summaryFile(h.id));
   mkdirSync(join(store.outputsDir("p", t.id), "huddles", h.id), { recursive: true });
   writeFileSync(join(store.outputsDir("p", t.id), summaryFile(h.id)), "# Summary\n");
-  expect(text(await callTool("huddle_close", { reason: "all reviewed" }, mainCtx(h)))).toContain("Only they close it");
+  // A reason ending in a full stop is stored without it: the texts around it add their own.
+  expect(text(await callTool("huddle_close", { reason: "all reviewed." }, mainCtx(h)))).toContain("Only they close it");
   const s = store.getHuddle("p", h.id)!;
   expect(s.status).toBe("live");
   expect(s.closeRequest).toMatchObject({ by: "main", reason: "all reviewed" });
+  expect(messages(h).at(-1)!.text).toContain("asks to close the huddle: all reviewed. The summary");
   expect(messages(h).at(-1)!.mentions).toEqual(["you"]);
   // Closing itself stays with the user.
   const res = await fetch(`${client.url}/api/profiles/p/huddles/${h.id}/close`, {

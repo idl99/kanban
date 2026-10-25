@@ -10,7 +10,9 @@ import {
 } from "./huddle";
 import { DEFAULT_MAX, draftError, RosterEditor, rosterDraft, startFromDraft, TemplatePicker, usePresets, useTemplates, type RosterDraft } from "./HuddleRoster";
 import { autoGrow } from "./autoGrow";
-import { applyTemplate, BRIEF_MAX, clampSideWidth, DEFAULT_BUDGET, handInGroups, handInStatus, participantRole, POST_MAX, SIDE_DEFAULT, stoppedWhenDone } from "./huddleText";
+import {
+  applyTemplate, brakeHeadline, BRIEF_MAX, budgetRaise, BUDGET_STEPS, clampSideWidth, clause, DEFAULT_BUDGET, handInGroups, handInStatus, participantRole, POST_MAX, SIDE_DEFAULT, stoppedWhenDone,
+} from "./huddleText";
 import { CloseIcon, MoreIcon } from "./icons";
 import { KeyHint } from "./KeyHint";
 import { useLayer } from "./layers";
@@ -36,15 +38,21 @@ const clock = (iso: string) => {
 };
 const money = (n: number) => `$${n.toFixed(2)}`;
 const STATE_LABEL = { live: "● Live", stopped: "■ Stopped", closed: "Closed" } as const;
-/** The brake banner's headline. */
-const BRAKE_TEXT = {
-  budget: (max: number) => `Huddle paused: ${dollars(max)} budget reached.`,
-  messages: () => "Huddle paused: message limit reached.",
-  loop: () => "Huddle paused: many messages went by without you.",
-} as const;
 const STOP_AGENTS_TIP = "Stops huddle agents only. The ticket's own run keeps going.";
-/** What Resume adds when the budget is spent. */
+/** The budget step a single Resume button adds (the dock's unfolded part offers every step). */
 const BUDGET_STEP = 10;
+
+/** Resume with +$5, +$10 or +$20 to spend; each button's tooltip says the new budget. */
+function BudgetSteps({ spent, max, onResume, primary }: { spent: number; max: number; onResume: (add: number) => void; primary?: number }) {
+  return (
+    <span className="hd-steps" role="group" aria-label="Resume with more budget">
+      {BUDGET_STEPS.map((n) => (
+        <button key={n} className={`btn small${n === primary ? " primary" : ""}`} onClick={() => onResume(budgetRaise(spent, max, n))}
+          title={`Resume and raise the budget to ${money(max + budgetRaise(spent, max, n))}`}>+{dollars(n)}</button>
+      ))}
+    </span>
+  );
+}
 
 function Avatar({ handle, small }: { handle: string; small?: boolean }) {
   return <span className={`hd-av${small ? " small" : ""}`} style={{ background: handleColor(handle) }} aria-hidden>{handleInitials(handle)}</span>;
@@ -287,7 +295,6 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
   const max = h.maxCostUsd ?? DEFAULT_BUDGET;
   const overBudget = spent >= max;
   const brake = h.status === "stopped" && h.stopReason ? h.stopReason : null;
-  const plainFirst = !!brake && brake !== "budget" && !overBudget;
   // Out of budget after the work was finished: Close is the next step, not more budget.
   const doneStop = stoppedWhenDone(h);
   const quiet = h.status === "live" && !!h.quiet;
@@ -349,7 +356,10 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
     if (h.status === "stopped") {
       if (!brake) {
         if (!overBudget) actions.push({ label: "▶ Resume", onSelect: () => resume() });
-        actions.push({ label: `▶ Resume +${money(BUDGET_STEP)}`, onSelect: () => resume(BUDGET_STEP) });
+        for (const n of BUDGET_STEPS) {
+          const add = budgetRaise(spent, max, n);
+          actions.push({ label: `▶ Resume +${dollars(n)}`, title: `Raise the budget to ${money(max + add)}`, onSelect: () => resume(add) });
+        }
       }
     } else actions.push({ label: "■ Stop agents", danger: true, title: STOP_AGENTS_TIP, onSelect: () => setConfirm("stop") });
     actions.push({ label: "Close huddle", onSelect: () => setConfirm("close") });
@@ -416,12 +426,12 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
                 onChange={(id) => run(api.inviteToHuddle(slug, h.id, id))} />
             )}
             {h.status === "stopped" ? (
-              // A brake's Resume buttons are in its banner.
+              // A brake's Resume buttons are in its dock.
               !brake && (
                 <>
                   {!overBudget && <button className="btn small" onClick={() => resume()}>▶ Resume</button>}
-                  <button className="btn small" title={`Resume and raise the budget to ${money(max + BUDGET_STEP)}`}
-                    onClick={() => resume(BUDGET_STEP)}>▶ Resume +{money(BUDGET_STEP)}</button>
+                  <span className="hd-steps-label">{overBudget ? "▶ Resume" : "or"}</span>
+                  <BudgetSteps spent={spent} max={max} onResume={resume} />
                 </>
               )
             ) : (
@@ -439,39 +449,6 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
         items={invitable.map((t) => ({ label: t.title, badge: <span className="muted small">{t.id}</span>, onSelect: () => run(api.inviteToHuddle(slug, h.id, t.id)) }))} />}
       {sheet === "rounds" && <MoreSheet label="Huddles of this ticket" items={roundItems} onClose={() => setSheet(null)}
         footer={current && current.status !== "closed" ? "Only one huddle runs at a time: close the current one to start a new round." : null} />}
-      {brake && (
-        <div className="hd-banner brake" role="alert">
-          <span aria-hidden>⛔</span>
-          {doneStop ? (
-            <span>
-              <b>Huddle paused: {dollars(max)} budget reached after the work finished.</b>{" "}
-              {h.closeRequest ? <><b>@{h.closeRequest.by}</b> asks to close it: {h.closeRequest.reason}.</> : "Nobody was working and nothing was open."}{" "}
-              Check the result, then close the huddle.
-            </span>
-          ) : <span>
-            <b>{BRAKE_TEXT[brake](max)}</b> No agent will wake until you act.
-            {spenders.length > 0 && <> Spent: {spenders.slice(0, 3).map((p) => `${p.handle} ${money(p.costUsd ?? 0)}`).join(" · ")}{spenders.length > 3 ? " · …" : ""}</>}
-          </span>}
-          <span className="spacer" />
-          {doneStop ? (
-            <>
-              {h.summary && <button className="btn small" onClick={() => onOpenOutput(h.summary!)}>Summary</button>}
-              <button className="btn small primary" onClick={() => setConfirm("close")}>Close huddle</button>
-              <button className="btn small" onClick={() => resume(BUDGET_STEP)} title={`Resume and raise the budget to ${money(max + BUDGET_STEP)}`}>
-                Resume (+{dollars(BUDGET_STEP)} budget)
-              </button>
-            </>
-          ) : <>
-          {/* Out of budget: adding budget is the way on. Any other brake: plain Resume is. */}
-          {plainFirst && <button className="btn small primary" onClick={() => resume()}>Resume</button>}
-          <button className={`btn small${plainFirst ? "" : " primary"}`} onClick={() => resume(BUDGET_STEP)} title={`Resume and raise the budget to ${money(max + BUDGET_STEP)}`}>
-            Resume (+{dollars(BUDGET_STEP)} budget)
-          </button>
-          {!plainFirst && <button className="btn small" onClick={() => resume()} disabled={overBudget} title={overBudget ? "The budget is spent: add budget to resume" : undefined}>Resume</button>}
-          <button className="btn small" onClick={() => setConfirm("close")}>Close</button>
-          </>}
-        </div>
-      )}
       {quiet && !h.closeRequest && (
         <div className="hd-banner quiet">
           <span aria-hidden>✓</span>
@@ -480,19 +457,19 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
           <button className="btn small primary" onClick={() => setConfirm("close")}>Close huddle</button>
         </div>
       )}
-      {/* The brake banner already shows the close request when the budget stopped a finished huddle. */}
+      {/* The brake dock already shows the close request when the budget stopped a finished huddle. */}
       {h.closeRequest && !closed && !doneStop && (phone ? (
         // Phone: one line (tap to read it all) with the two things to do about it.
         <div className={`huddle-close-ask compact${askOpen ? " open" : ""}`}>
           <button className="hd-ask-text" aria-expanded={askOpen} onClick={() => setAskOpen((o) => !o)}>
-            <b>@{h.closeRequest.by}</b> asks to close: {h.closeRequest.reason}
+            <b>@{h.closeRequest.by}</b> asks to close: {clause(h.closeRequest.reason)}
           </button>
           {h.summary && <button className="btn small" onClick={() => onOpenOutput(h.summary!)}>Summary</button>}
           <button className="btn small primary" onClick={() => setConfirm("close")}>Close</button>
         </div>
       ) : (
         <div className="huddle-close-ask">
-          <b>@{h.closeRequest.by}</b> asks to close the huddle: {h.closeRequest.reason}.{" "}
+          <b>@{h.closeRequest.by}</b> asks to close the huddle: {clause(h.closeRequest.reason)}.{" "}
           {h.summary ? <>Read the <button className="link-btn" onClick={() => onOpenOutput(h.summary!)}>summary</button> in the ticket's outputs.</> : "The summary is in the ticket's outputs."}
         </div>
       ))}
@@ -500,7 +477,16 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
       <div className={`huddle-body${side.dragging ? " resizing" : ""}`} ref={body} style={{ "--hd-side-w": `${side.width}px` } as React.CSSProperties}>
         {(!phone || pane === "chat") && <div className="huddle-feed">
           <Feed slug={slug} huddle={h} state={state} handles={handles} scroller={log} onSeen={(seq) => run(api.huddleSeen(slug, h.id, seq))} onError={onError} />
-          <Composer slug={slug} ticket={ticket} huddle={h} onError={onError} prefill={prefill} onPrefilled={() => setPrefill(null)} onOpenOutput={onOpenOutput} />
+          {brake && !closed ? (
+            // A brake stopped it: the dock takes the message box's place (its unfolded part can still open the box).
+            <BrakeDock slug={slug} ticket={ticket} huddle={h} reason={brake} spent={spent} max={max} done={doneStop} spenders={spenders} prefill={prefill}
+              onResume={resume} onClose={() => setConfirm("close")} onOpenOutput={onOpenOutput}>
+              <Composer slug={slug} ticket={ticket} huddle={h} onError={onError} prefill={prefill} onPrefilled={() => setPrefill(null)} onOpenOutput={onOpenOutput} />
+            </BrakeDock>
+          ) : (
+            <Composer slug={slug} ticket={ticket} huddle={h} onError={onError} prefill={prefill} onPrefilled={() => setPrefill(null)} onOpenOutput={onOpenOutput}
+              stopped={h.status === "stopped" ? { spent, max, overBudget, onResume: resume } : undefined} />
+          )}
         </div>}
         {viewed && (
           <SessionPanel slug={slug} huddle={h} participant={viewed} onClose={() => setViewing(null)} onStep={stepViewing}
@@ -897,17 +883,86 @@ function MentionText({ text, handles }: { text: string; handles: string[] }) {
 }
 
 /** The user's message box, with @ autocomplete (@main, @all, handles). */
-function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOpenOutput }: {
+/**
+ * A brake (budget, message limit, loop) stopped the huddle: a card where the message box was. Folded (the default,
+ * remembered per huddle) it is one line and the next step; unfolded it adds the close request, the spend and every
+ * way to resume, and can open the message box (`children`).
+ */
+function BrakeDock({ slug, ticket, huddle: h, reason, spent, max, done, spenders, prefill, onResume, onClose, onOpenOutput, children }: {
+  slug: string; ticket: Ticket; huddle: Huddle; reason: NonNullable<Huddle["stopReason"]>; spent: number; max: number; done: boolean;
+  /** Message @handle from a session: opens the message box. */
+  prefill: { n: number } | null;
+  spenders: HuddleParticipant[]; onResume: (add?: number) => void; onClose: () => void; onOpenOutput: (name: string) => void; children: React.ReactNode;
+}) {
+  const [open, setOpen] = usePersistentState(formKey(slug, ticket.id, `huddle-dock-${h.id}`), () => false, (v) => !v, (v) => typeof v === "boolean");
+  const [writing, setWriting] = useState(false);
+  useEffect(() => {
+    if (!prefill) return;
+    setOpen(true);
+    setWriting(true);
+  }, [prefill?.n]);
+  const spentOut = spent >= max;
+  const summary = h.summary ? <button className="btn" onClick={() => onOpenOutput(h.summary!)} title={`Open ${h.summary} in Outputs`}>Summary</button> : null;
+  return (
+    <>
+      <div className={`hd-dock${open ? " open" : ""}`} role="status">
+        <button className="hd-dock-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <span aria-hidden>⛔</span>
+          <span className="hd-dock-line"><b>{brakeHeadline(reason, max, done)}</b></span>
+          <span className="hd-dock-chev" aria-hidden>⌄</span>
+        </button>
+        {open && (
+          <div className="hd-dock-body">
+            {h.closeRequest ? <p><b className="hd-dock-who">@{h.closeRequest.by}</b> asks to close it: {clause(h.closeRequest.reason)}.</p>
+              : done ? <p>Nobody was working and nothing was open.</p>
+              : <p>No agent will wake until you act.</p>}
+            <span className={`hd-meter wide${spentOut ? " over" : ""}`} aria-hidden><i style={{ width: `${Math.min(100, (spent / max) * 100)}%` }} /></span>
+            <p className="hd-dock-spend">
+              Spent {money(spent)} of {dollars(max)}
+              {spenders.slice(0, 4).map((p) => <span key={p.handle}> · @{p.handle} {money(p.costUsd ?? 0)}</span>)}
+              {spenders.length > 4 && " · …"}
+            </p>
+          </div>
+        )}
+        <div className="hd-dock-acts">
+          {done ? (
+            <>{summary}<button className="btn primary" onClick={onClose}>Close huddle</button></>
+          ) : spentOut ? (
+            <><button className="btn primary" onClick={() => onResume(budgetRaise(spent, max, BUDGET_STEP))}
+              title={`Resume and raise the budget to ${money(max + budgetRaise(spent, max, BUDGET_STEP))}`}>Resume +{dollars(BUDGET_STEP)}</button>
+              <button className="btn" onClick={onClose}>Close huddle</button></>
+          ) : (
+            <><button className="btn primary" onClick={() => onResume()}>Resume</button><button className="btn" onClick={onClose}>Close huddle</button></>
+          )}
+        </div>
+        {open && (
+          <div className="hd-dock-more">
+            <span className="muted">Resume with:</span>
+            {!spentOut && !done && <button className="btn small" onClick={() => onResume()}>no extra</button>}
+            <BudgetSteps spent={spent} max={max} onResume={onResume} />
+            {!writing && <button className="link-btn hd-dock-write" onClick={() => setWriting(true)}>Write a message</button>}
+          </div>
+        )}
+      </div>
+      {open && writing && children}
+    </>
+  );
+}
+
+function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOpenOutput, stopped }: {
   slug: string; ticket: Ticket; huddle: Huddle; onError: (m: string) => void; prefill: { handle: string; n: number } | null;
   /** The prefill is applied: cleared, so a remount (the phone's Chat pane) doesn't apply it again. */
   onPrefilled: () => void;
   onOpenOutput: (name: string) => void;
+  /** Stopped with Stop agents: the box offers Resume first (a message posted now wakes nobody). */
+  stopped?: { spent: number; max: number; overBudget: boolean; onResume: (add?: number) => void };
 }) {
   const [draft, setDraft] = usePersistentState(draftKey(slug, `${ticket.id}.huddle`), () => "", (v) => !v.trim(), (v) => typeof v === "string");
   const [sending, setSending] = useState(false);
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [closedPopup, setClosedPopup] = useState(false);
+  const [writing, setWriting] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const phone = usePhone();
   const closed = h.status === "closed";
@@ -917,10 +972,11 @@ function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOp
   const tooLong = draft.trim().length > POST_MAX;
   const hint = tooLong ? `${draft.trim().length} / ${POST_MAX} characters: too long to post. Shorten it or split it.` : h.status === "live" ? untaggedHint(draft, h) : null;
   useEffect(() => setActive(0), [q?.query, q?.start]);
-  useLayoutEffect(() => autoGrow(ref.current), [draft, phone]);
+  useLayoutEffect(() => autoGrow(ref.current), [draft, phone, writing]);
   // Message @handle (session viewer): the draft starts with the tag, and the box gets the focus.
   useEffect(() => {
     if (!prefill) return;
+    setWriting(true);
     const tag = `@${prefill.handle} `;
     const next = draft.startsWith(tag) ? draft : tag + draft.replace(/^\s+/, "");
     setDraft(next);
@@ -987,6 +1043,17 @@ function Composer({ slug, ticket, huddle: h, onError, prefill, onPrefilled, onOp
       <div className="huddle-closed muted small">
         This huddle is closed: the history stays, read-only.
         {h.summary && <> <button className="link-btn" onClick={() => onOpenOutput(h.summary!)} title={`Open ${h.summary} in Outputs`}>Read its summary</button></>}
+      </div>
+    );
+  }
+  if (h.status === "stopped" && stopped && !writing && !draft.trim()) {
+    return (
+      <div className="hd-stopped-box">
+        <span className="hd-stopped-text">Resume the huddle to send messages</span>
+        {stopped.overBudget ? <BudgetSteps spent={stopped.spent} max={stopped.max} onResume={stopped.onResume} primary={BUDGET_STEP} />
+          : <button className="btn small primary" onClick={() => stopped.onResume()}>▶ Resume</button>}
+        <button className="link-btn" onClick={() => { setWriting(true); requestAnimationFrame(() => ref.current?.focus()); }}
+          title="Post without resuming: nobody wakes until you resume">Write anyway</button>
       </div>
     );
   }
