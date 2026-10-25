@@ -263,6 +263,9 @@ interface AgentRun {
 const isCoordinator = (h: Huddle, p: HuddleParticipant) => p.kind === "ticket-main" && p.ticketId === h.hostTicket;
 const canManage = (h: Huddle, p: HuddleParticipant) => p.kind === "human" || isCoordinator(h, p) || p.lead;
 /** A read-only agent in the shared workspace: it works in a detached snapshot of the host's HEAD. */
+/** A Done host's huddle started before the host last moved to Done (or the move's time isn't known) ends with it. */
+const endedByDone = (h: Pick<Huddle, "createdAt">, t: Pick<Ticket, "doneAt">) => !t.doneAt || h.createdAt <= t.doneAt;
+
 /** closeForTicket's default reason: the host ticket is gone, so nobody writes a summary. */
 const DELETED = "the host ticket was deleted";
 
@@ -308,10 +311,10 @@ export class Huddles {
         return this.mainResult(e.profile, e.id, e.event);
       }
       if (e.type !== "ticket.updated" || this.shuttingDown) return;
-      // The host ticket is done: so is its huddle.
+      // The host ticket moved to Done: so did its huddles from before then (one started on a Done card keeps going).
       if (e.ticket.status === "done") {
         const { profile, ticket } = e;
-        if (this.store.listHuddles(profile).some((h) => h.hostTicket === ticket.id && h.status !== "closed")) {
+        if (this.store.listHuddles(profile).some((h) => h.hostTicket === ticket.id && h.status !== "closed" && endedByDone(h, ticket))) {
           queueMicrotask(() => this.closeForTicket(profile, ticket.id, "the host ticket moved to Done"));
         }
       }
@@ -2197,7 +2200,10 @@ export class Huddles {
 
   /** The host ticket was deleted or moved to Done: its huddles close (a deleted one's without a summary). */
   closeForTicket(slug: string, ticketId: string, why = DELETED): void {
-    for (const h of this.store.listHuddles(slug)) if (h.hostTicket === ticketId && h.status !== "closed") this.close(slug, h.id, why, why !== DELETED);
+    const t = why === DELETED ? null : this.store.getTicket(slug, ticketId);
+    for (const h of this.store.listHuddles(slug)) {
+      if (h.hostTicket === ticketId && h.status !== "closed" && (!t || endedByDone(h, t))) this.close(slug, h.id, why, why !== DELETED);
+    }
   }
 
   /**
@@ -2339,7 +2345,8 @@ export class Huddles {
       const slug = profile.slug;
       for (const h of this.store.listHuddles(slug)) {
         if (h.status === "closed") continue;
-        if (this.store.getTicket(slug, h.hostTicket)?.status === "done") {
+        const host = this.store.getTicket(slug, h.hostTicket);
+        if (host?.status === "done" && endedByDone(h, host)) {
           this.close(slug, h.id, "the host ticket moved to Done");
           continue;
         }

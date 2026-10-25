@@ -519,7 +519,7 @@ If the message asks for new or add-on tickets from this ticket: do not modify an
 ${BRANCH_FORMAT}
 ${TEAMMATE_FORMAT}
 ${HUDDLE_NOW_RULE}
-If proposing tickets, a branch or a teammate was all the message asked for (or starting or proposing a huddle), put <ckanban-stay/> on its own line before the result line: the card then stays in its column.
+If proposing tickets, a branch, a teammate or a huddle was all the message asked for, put <ckanban-stay/> on its own line before the result line: the card then stays in its column. Not after starting a huddle: the card waits in Review while it runs.
 
 ${MANAGE_RULE}
 If managing tickets (adopting, ordering, starting the plan) was all the message asked for, also end with <ckanban-stay/>.

@@ -199,6 +199,7 @@ export class Store {
       next.order = this.entryOrder(slug, patch.status);
     }
     if (patch.body === undefined) next.body = current.body;
+    if (next.status === "done" && current.status !== "done") next.doneAt = next.updatedAt;
     atomicWrite(this.ticketPath(slug, id), serializeTicket(next));
     return next;
   }

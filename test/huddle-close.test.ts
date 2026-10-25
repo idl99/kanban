@@ -49,6 +49,46 @@ test("the huddle closes when its host ticket moves to Done", async () => {
   await idle();
 }, 20000);
 
+test("a huddle started on a Done card survives later updates and restarts, until the card moves to Done again", async () => {
+  const t = await host();
+  await board.updateTicket("p", t.id, { status: "done" });
+  await Bun.sleep(5);
+  const h = huddles.create("p", t.id, [{ preset: "reviewer" }]);
+  await idle();
+  // Comments, activity and other patches on the Done card don't close it.
+  await board.updateTicket("p", t.id, { title: "Login page v2" });
+  store.addComment("p", t.id, "user", "any news?");
+  bus.emit({ type: "ticket.updated", profile: "p", ticket: store.getTicket("p", t.id)! });
+  await idle();
+  expect(store.getHuddle("p", h.id)!.status).not.toBe("closed");
+  huddles.recover();
+  expect(store.getHuddle("p", h.id)!.status).not.toBe("closed");
+  // A real move into Done still closes it.
+  await board.updateTicket("p", t.id, { status: "review" });
+  await board.updateTicket("p", t.id, { status: "done" });
+  await until(() => store.getHuddle("p", h.id)!.status === "closed");
+  await idle();
+}, 20000);
+
+test("a chat on a Done card that leaves a huddle open lands in Review, even with the stay tag", async () => {
+  const t = await host();
+  await board.updateTicket("p", t.id, { status: "done" });
+  await Bun.sleep(5);
+  const h = huddles.create("p", t.id, [{ preset: "reviewer" }]);
+  await idle();
+  process.env.FAKE_EXTRA = "\nStarted a huddle.\n<ckanban-stay/>";
+  try {
+    await board.chat("p", t.id, "start a huddle on the payment plan");
+    await idle();
+  } finally {
+    delete process.env.FAKE_EXTRA;
+  }
+  expect(store.getTicket("p", t.id)!.status).toBe("review");
+  expect(store.getHuddle("p", h.id)!.status).not.toBe("closed");
+  huddles.close("p", h.id);
+  await idle();
+}, 20000);
+
 test("closing removes helpers' copies whose changes were all handed in, and lists the ones kept", async () => {
   const t = await host();
   const h = huddles.create("p", t.id, [{ preset: "engineer", count: 4 }]);

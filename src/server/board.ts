@@ -721,7 +721,14 @@ export class Board {
   /** Where the card lands after a run: refine chats and replies to other tickets never move it. */
   private endStatus(run: ActiveRun): Partial<Ticket> {
     if (run.chat?.mode === "refine" || run.chat?.quiet) return run.targetStatus ? { status: run.targetStatus } : {};
-    return { status: run.targetStatus ?? run.chat?.returnTo ?? "review" };
+    const status = run.targetStatus ?? run.chat?.returnTo ?? "review";
+    // Done would close the ticket's open huddle: the card waits in Review until the user closes it.
+    return { status: status === "done" && !run.targetStatus && this.huddleOpen(run.slug, run.id) ? "review" : status };
+  }
+
+  /** The ticket hosts a huddle that isn't closed. */
+  private huddleOpen(slug: string, id: string): boolean {
+    return this.hostHuddles(slug).has(id);
   }
 
   /**
@@ -979,8 +986,9 @@ export class Board {
       return;
     }
     // A Review/Done message that only asked for new tickets: the card goes back where it was, outcome unchanged.
+    // Not while the ticket hosts an open huddle: back in Done would close it, so the card goes to Review.
     const from = run.chat?.from;
-    if (run.chat?.mode === "act" && !run.chat.raw && !run.targetStatus && from && from.status !== "in_progress" && result?.status !== "blocked" && STAY_RE.test(finalText)) {
+    if (run.chat?.mode === "act" && !run.chat.raw && !run.targetStatus && from && from.status !== "in_progress" && result?.status !== "blocked" && STAY_RE.test(finalText) && !this.huddleOpen(slug, id)) {
       this.patch(slug, id, { ...base, status: from.status, outcome: from.outcome, error: null, lastActivity: null });
       return;
     }

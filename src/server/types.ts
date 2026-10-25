@@ -183,6 +183,8 @@ export interface Ticket {
   addOnOf?: string | null;
   /** Branch the first worktree starts from instead of the base branch (an add-on to a ticket still in Review). */
   startFrom?: string | null;
+  /** When the ticket last moved into Done (the store sets it): its huddles from before then close. */
+  doneAt?: string | null;
   /** Where the ticket was before a chat or the user moved it from Review/Done back to Planning or Backlog. */
   reopenedFrom?: Pick<Ticket, "status" | "outcome"> | null;
   /** Set on a planner ticket once its plan was started: the board runs its children unattended. */

@@ -215,7 +215,8 @@ test("every ticket chat can offer a branch; first runs can't", () => {
   expect(chatPrompt(t, "branch this", "refine", "/o")).toContain("`propose_branch` tool");
   const act = chatPrompt(t, "branch this", "act", "/o");
   expect(act).toContain("`propose_branch` tool");
-  expect(act).toContain("proposing tickets, a branch or a teammate was all");
+  expect(act).toContain("proposing tickets, a branch, a teammate or a huddle was all");
+  expect(act).toContain("Not after starting a huddle");
   expect(firstRunPrompt(t, { repo: "remote" as const, outputDir: "/o" })).not.toContain("propose_branch");
 });
 
