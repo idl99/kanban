@@ -4,6 +4,28 @@ What changed in each ckanban release. Get the latest with `ckanban update`.
 
 ## Unreleased
 
+## [0.14.0] - 2026-10-25
+
+### Added
+- **Ask Claude without a ticket, on your phone too**: phones get an *Ask* tab in the bottom bar. On a computer, the *Claude* button opens the same chats as bubbles, with a list of past chats. Chats are kept, so you can reopen one, rename or delete it, and carry on from phone or computer. *Make ticket* turns a chat into a Backlog ticket that continues the conversation.
+- **Tags filter**: a *Tags* chip next to *Has PR* lists the board's tags with how many tickets have each. Tick the ones you want. On a phone it opens as a sheet from the bottom.
+- When you ask in a ticket's own chat, Claude can move that card to Done, Backlog or Ready.
+- Resume a paused huddle with +$5, +$10 or +$20.
+
+### Changed
+- **Bottom panel shows one thing at a time**: the top buttons are now *Terminal*, *Files* (`F`), *Claude* and *Team*, and each opens just that. Click another to switch, or the lit one to hide it. Each keeps its own height. Huddles moved into *Team*, and the *Team* button shows how many huddles are live.
+- The old terminal-style Claude tab is replaced by the saved chats. You can still run `claude` in the Terminal.
+- Picking several tags now shows tickets with any of them, not only tickets with all of them.
+- Sending a message on a Backlog card moves it to Planning.
+- On a phone, menus open as a sheet from the bottom, the ticket header stays on one row, and the app icon and opening screen look right on the home screen.
+- In a huddle, scrolling down shrinks the ticket header to one line. A paused huddle shows a small folded box where the message box was, with *Summary*, *Close* or *Resume*.
+
+### Fixed
+- A long Claude reply could vanish from the chat while Claude was still using tools.
+- A huddle started from a Done ticket's chat closed at once. It now keeps running, and the card waits in Review.
+- A huddle's budget counted the ticket's earlier chat spend, so it could stop on its first reply.
+- Long words in the chat or huddle no longer push the page sideways on phones.
+
 ## [0.13.0] - 2026-10-25
 
 ### Added
@@ -259,6 +281,7 @@ First release.
 - Terminal & file explorer panel, Connections panel for MCP servers, scheduled tickets on a cron, claude.ai artifacts from runs.
 - Standalone binary, installer, `ckanban update` and a background service that starts at login.
 
+[0.14.0]: https://github.com/leoawesome/kanban/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/leoawesome/kanban/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/leoawesome/kanban/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/leoawesome/kanban/compare/v0.10.0...v0.11.0

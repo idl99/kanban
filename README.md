@@ -24,7 +24,8 @@
 - 🗺️ **Plans.** Split a big ticket into child tickets that run unattended in dependency order; Claude is only woken when one needs it.
 - 🗣️ **Huddles.** A team of Claude teammates (reviewer, QA, researcher, UX critic, facilitator, ...) discuss one ticket in a shared room, tag each other and pin findings, with a budget you set. While you're away, Claude starts a review huddle on its own before landing ⭐ Important or risky work.
 - ⏰ **Follow-ups and scheduled jobs.** Claude comes back to a ticket by itself when work waits on someone ("check for a reply every morning"), and can start a ticket or run a command at a set time.
-- 📎 **Files and tags.** Attach PDFs, Office, text and code files, preview them in Outputs, tap a file name in the chat to open it. Tag tickets and filter the board by tag.
+- 📱 **Ask Claude without a ticket.** Quick chats from the *Ask* tab on your phone or the *Claude* button on your computer, the same saved chats on both. *Make ticket* turns one into a ticket.
+- 📎 **Files and tags.** Attach PDFs, Office, text and code files, preview them in Outputs, tap a file name in the chat to open it. Tag tickets and filter the board by tag with the *Tags* chip.
 - 💡 **Help me understand.** Ask what happened while you were away, have the changes explained, get a reply in simpler words, or turn your corrections into project rules.
 - ✅ **Review with PR checks.** See the diff, comment on lines, watch the PR's checks on the card, send failures back to Claude, or **Merge & done**.
 - 👥 **Team tab.** Your teammates, their prompts and the notes they've learned, for every board or just one.
