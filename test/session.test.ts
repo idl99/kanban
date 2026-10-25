@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Bus, type BusEvent } from "../src/server/events";
-import { SessionCache, findSessionFile, parseNewTickets, parseProposal, parseSession, pollSessions } from "../src/server/session";
+import { SessionCache, findSessionFile, fromTicket, fromTicketText, parseNewTickets, parseProposal, parseSession, pollSessions } from "../src/server/session";
 import { Store } from "../src/server/store";
 import { tempDir } from "./helpers";
 
@@ -404,6 +404,26 @@ test("parseSession: huddle digests are huddle entries, not the user's; Claude's 
   const replied = parseSession(`${raw}\n${asst([{ type: "text", text: "Posted in the huddle." }], "2026-10-10T01:00:03Z")}`);
   expect(replied.lastMessage).toMatchObject({ role: "assistant", peerReply: true });
   expect(parseSession(RAW).lastMessage?.from).toBeUndefined();
+});
+
+test("parseSession: a message another ticket sent (chat_ticket) is tagged with that ticket, not shown as the user's", () => {
+  const sent = fromTicketText("t_20261020_y0i0", "Post #006", "Job for #006 is queued.\n\nOver to you.");
+  const raw = [
+    asst([{ type: "tool_use", id: "q1", name: "mcp__ckanban__ask_questions", input: { questions: [{ question: "Which?", options: [{ label: "A" }, { label: "B" }] }] } }], "2026-10-25T01:00:00Z"),
+    user(`${sent}\n\n<ckanban-context note="">\nrules\n</ckanban-context>`, "2026-10-25T01:00:01Z"),
+    // Steered while Claude worked: saved as a queued_command attachment.
+    L({ type: "attachment", uuid: "att1", timestamp: "2026-10-25T01:00:02Z", attachment: { type: "queued_command", commandMode: "prompt", prompt: `${fromTicketText("t_1", "Plan", "and one more")}\n\n<ckanban-context note="">x</ckanban-context>` } }),
+  ].join("\n");
+  const s = parseSession(raw);
+  expect(s.entries.at(-2)).toMatchObject({ role: "user", kind: "text", text: "Job for #006 is queued.\n\nOver to you.", peer: { dir: "in", ticketId: "t_20261020_y0i0", title: "Post #006" } });
+  expect(s.entries.at(-2)!.huddleId).toBeUndefined();
+  expect(s.entries.at(-1)).toMatchObject({ text: "and one more", peer: { dir: "in", ticketId: "t_1", title: "Plan" } });
+  // Still answers Claude's questions (a planner answers its child's questions this way) and isn't a huddle message.
+  expect(s.openQuestions).toBe(0);
+  expect(s.lastMessage?.from).toBeUndefined();
+  // The user's own message, even one that mentions a ticket, stays theirs.
+  expect(parseSession(user("Message from ticket t_1 about X", "2026-10-25T01:00:03Z")).entries[0].peer).toBeUndefined();
+  expect(fromTicket(sent)).toEqual({ ticketId: "t_20261020_y0i0", title: "Post #006", text: "Job for #006 is queued.\n\nOver to you." });
 });
 
 test("parseSession: a propose_huddle card with a template and no roster", () => {

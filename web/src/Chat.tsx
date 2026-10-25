@@ -27,7 +27,10 @@ import { RecoveryBanner } from "./RecoveryBanner";
 import { SetupRow } from "./SetupRow";
 import { HelpCardView, HelpPending, type HelpState } from "./HelpMenu";
 import { useSimpler } from "./Simpler";
-import { simplifiable } from "./simplifyText";
+import { replyText, simplifiable } from "./simplifyText";
+import { ErrorTurn, LetterAvatar, ReplyActions, SendOrStop, StepsLine, TimeDivider, Turn, WorkingRow } from "./ConvTurn";
+import { fromTicket, layoutTurns, type TurnLayout } from "./chatTurns";
+import { StallActions, stallWait } from "./StallActions";
 import { useSnippetPicker } from "./SnippetPicker";
 import { useSlashCommands, useSlashPicker } from "./SlashPicker";
 import { commandNote, messageCommand, type SlashCommand } from "./slashText";
@@ -93,6 +96,17 @@ function UserText({ text, commands, command }: { text: string; commands: SlashCo
 /** tools: a run of tool calls folded into one line; agents: a run of subagent rows. */
 type Block = { kind: "entry"; e: SessionEntry; index: number } | { kind: "tools"; items: SessionEntry[] } | { kind: "agents"; items: SessionEntry[] };
 
+/** Who a block is from, for grouping rows into turns. */
+function speaker(b: Block): string {
+  if (b.kind !== "entry") return "claude";
+  const e = b.e;
+  if (e.kind === "board") return "board";
+  if (e.huddleId) return "huddle";
+  if (e.peer?.ticketId) return `peer:${e.peer.ticketId}`;
+  if (e.role === "user") return "user";
+  return e.commandOutput ? "command" : "claude";
+}
+
 /** Copied history of a branched ticket: entries from before the branch point (at = the branch time). */
 const before = (e: SessionEntry, at: string | undefined) => !!at && !!e.at && e.at < at;
 
@@ -120,6 +134,9 @@ const RESEND = {
   proposal: "The board couldn't read your ticket proposal. Please resend it with the propose_ticket tool.",
   tickets: "The board couldn't read your proposed tickets. Please resend them with the propose_tickets tool.",
 } as const;
+
+/** What Retry under a failed run sends. */
+const RETRY = "That run stopped with an error. Please try again from where you stopped.";
 
 const REFINE = (s: Ticket["status"]) => s === "backlog" || s === "planning";
 
@@ -302,7 +319,9 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
 
   // A message Claude hasn't received yet (not sent after Stop, or waiting for a slot or a restart): the user can
   // still edit or discard it. With Claude running it was handed over at once.
-  const editable = (q: QueuedMessage) => q.state === "unsent" || (!q.peer && !running);
+  const editable = (q: QueuedMessage) => !q.from && (q.state === "unsent" || (!q.peer && !running));
+  // Another ticket's message: shown as that ticket's, not as the user's.
+  const fromUser = (q: QueuedMessage) => !q.peer && !q.from;
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const discarded = useRef(new Set<string>());
   const cancelEdit = () => {
@@ -330,7 +349,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const prevQueued = useRef(queued);
   useEffect(() => {
     // Peer messages show up in the session as another ticket's message, not as the user's bubble.
-    const read = prevQueued.current.filter((q) => q.state === "queued" && !q.peer && !discarded.current.has(q.id) && !queued.some((n) => n.id === q.id)).map((q) => q.text);
+    const read = prevQueued.current.filter((q) => q.state === "queued" && fromUser(q) && !discarded.current.has(q.id) && !queued.some((n) => n.id === q.id)).map((q) => q.text);
     prevQueued.current = queued;
     // The reply's own message already has its plain bubble.
     if (read.length) setPending((ps) => [...ps, ...read.filter((text) => !ps.some((p) => !p.steer && p.text === text)).map((text) => ({ text, steer: false }))]);
@@ -433,7 +452,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
 
   // A reply still on its way to the session file counts too, so the form doesn't offer "Send answers" again.
   const replying = pending.some((p) => !p.steer);
-  const answeredAfter = (index: number) => replying || entries.slice(index + 1).some((e) => e.role === "user" && e.kind === "text" && !e.peer);
+  const answeredAfter = (index: number) => replying || entries.slice(index + 1).some((e) => e.role === "user" && e.kind === "text" && !e.huddleId);
   const isApplied = (p: { title: string; description: string; important?: true }) =>
     (!p.title || p.title === ticket.title) && (!p.description || p.description.trim() === ticket.body.trim()) && (!p.important || !!ticket.important);
 
@@ -527,23 +546,31 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   }, [pendingProposal?.uuid]);
   useEffect(() => () => onPendingProposal?.(null), []);
 
-  /** One block of the conversation; old = copied history of a branched ticket (shown dimmed). */
-  const renderBlock = (b: Block, old: boolean) => {
-    const el = renderEntry(b, old);
+  /** One block of the conversation; old = copied history of a branched ticket (shown dimmed); l: its place in its turn. */
+  const renderBlock = (b: Block, old: boolean, l: TurnLayout, newest: boolean) => {
+    const el = renderEntry(b, old, l, newest);
     if (b.kind !== "entry" || !b.e.setup) return el;
     // The setup Claude asked for (`ckanban ticket setup`): just the row.
     if (b.e.kind === "board" && !b.e.text) return <SetupRow key={b.e.uuid} setup={b.e.setup} old={old} />;
     return <Fragment key={b.e.uuid}><SetupRow setup={b.e.setup} old={old} />{el}</Fragment>;
   };
-  const renderEntry = (b: Block, old: boolean) => {
-          if (b.kind === "agents") return <AgentRows key={b.items[0].uuid} slug={slug} ticketId={ticket.id} items={b.items} old={old} />;
+  const renderEntry = (b: Block, old: boolean, l: TurnLayout, newest: boolean) => {
+          const inherited = old ? "inherited" : undefined;
+          if (b.kind === "agents") {
+            return (
+              <Turn key={b.items[0].uuid} start={l.start} at={b.items[0].at} className={inherited}>
+                <AgentRows slug={slug} ticketId={ticket.id} items={b.items} old={old} />
+              </Turn>
+            );
+          }
           if (b.kind === "tools") {
             return (
-              <details key={b.items[0].uuid} className={`conv-tools${old ? " inherited" : ""}`}>
-                <summary>{b.items.length === 1 ? b.items[0].text : `${b.items.length} tool calls · ${b.items.at(-1)!.text}`}</summary>
-                <ToolRows slug={slug} ticketId={ticket.id} live={running && !old}
-                  items={b.items.map((t) => ({ key: t.uuid, label: t.text, toolUseId: t.toolUseId, error: t.error }))} />
-              </details>
+              <Turn key={b.items[0].uuid} start={l.start} at={b.items[0].at} className={inherited}>
+                <StepsLine items={b.items} running={running && !old && newest && !live}>
+                  <ToolRows slug={slug} ticketId={ticket.id} live={running && !old}
+                    items={b.items.map((t) => ({ key: t.uuid, label: t.text, toolUseId: t.toolUseId, error: t.error }))} />
+                </StepsLine>
+              </Turn>
             );
           }
           const e = b.e;
@@ -556,16 +583,35 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                 meta={e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>} />
             );
           }
-          return (
-            <div key={e.uuid} className={`conv-msg ${e.role}${e.commandOutput ? " command-output" : ""}${old ? " inherited" : ""}`}>
-              <div className="conv-head">
-                <b>{e.role === "user" ? "You" : e.commandOutput ? "Claude Code" : "Claude"}</b>
-                {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}
+          // A message another ticket's Claude sent: on the left with that ticket's name, never as the user's.
+          if (e.peer?.ticketId) {
+            return (
+              <Turn key={e.uuid} start={l.start} at={e.at} className={inherited}
+                avatar={<LetterAvatar seed={e.peer.ticketId} name={e.peer.title || e.peer.ticketId} />}
+                name={peerName(e.peer.ticketId, e.peer.title)} sub="from another ticket">
+                <div className="peer-bubble"><Markdown text={e.text} /></div>
+              </Turn>
+            );
+          }
+          if (e.role === "user" || e.commandOutput) {
+            return (
+              <div key={e.uuid} className={`conv-msg ${e.role}${e.commandOutput ? " command-output" : ""}${old ? " inherited" : ""}`}>
+                <div className="conv-head">
+                  <b>{e.role === "user" ? "You" : "Claude Code"}</b>
+                  {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}
+                </div>
+                {e.role === "user" ? <UserText text={e.text} commands={commands} command={e.command} /> : <Markdown text={e.text} />}
               </div>
-              {e.text && (e.role === "user"
-                ? <UserText text={e.text} commands={commands} command={e.command} />
-                : <Markdown text={simpler.textFor(e.uuid) ?? e.text.replace(/^.*CKANBAN_RESULT:.*$/m, "").trim()} />)}
-              {simplifiable(e) && simpler.link(e.uuid)}
+            );
+          }
+          const shown = () => simpler.textFor(e.uuid) ?? replyText(e.text);
+          return (
+            <Turn key={e.uuid} start={l.start} at={e.at} className={inherited}>
+              {e.text && <div className="reply-text"><Markdown text={shown()} /></div>}
+              {e.text && replyText(e.text) && (
+                <ReplyActions text={shown} simpler={simplifiable(e) ? simpler.link(e.uuid) : undefined}
+                  newest={newest} lastOfTurn={l.lastReply} active={simpler.active(e.uuid)} />
+              )}
               {e.questions && (
                 <QuestionsForm questions={e.questions} answered={answeredAfter(b.index)} disabled={running} onSubmit={send}
                   onPreview={onOpenOutput && ((m) => onOpenOutput(`mockups/${m}`))}
@@ -611,7 +657,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   ))}
                 </div>
               )}
-              {e.role === "assistant" && cards.get(e.uuid)?.slice(0, MAX_FILE_CARDS).map((f) => (
+              {cards.get(e.uuid)?.slice(0, MAX_FILE_CARDS).map((f) => (
                 <div key={f.name} className="chat-file">
                   <FileTextIcon size={14} />
                   <b title={f.name}>{dirName(f.name) && <span className="chat-file-dir">{dirName(f.name)}</span>}{baseName(f.name)}</b>
@@ -623,7 +669,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   </span>
                 </div>
               ))}
-              {e.role === "assistant" && (cards.get(e.uuid)?.length ?? 0) > MAX_FILE_CARDS && (
+              {(cards.get(e.uuid)?.length ?? 0) > MAX_FILE_CARDS && (
                 <button className="link-btn small" onClick={() => onOpenOutput?.(cards.get(e.uuid)![MAX_FILE_CARDS].name)}>
                   +{cards.get(e.uuid)!.length - MAX_FILE_CARDS} more files in the Outputs tab
                 </button>
@@ -642,9 +688,14 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   drag the card to In Progress when you want Claude to do it.
                 </div>
               )}
-            </div>
+            </Turn>
           );
   };
+
+  /** Another ticket's name on its messages: opens that ticket. */
+  const peerName = (id: string, title?: string) => (
+    <button type="button" className="link-btn turn-link" onClick={() => onOpenTicket(id)}>{tickets.find((x) => x.id === id)?.title ?? title ?? id}</button>
+  );
 
   // A branched ticket: a divider marks where the copied conversation ends.
   const bp = ticket.branchPoint ?? undefined;
@@ -662,6 +713,28 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
     if (i < 0) i = blocks.length;
     helpAt.set(i, [...(helpAt.get(i) ?? []), c]);
   }
+  // Turns: avatar and name line on the first row of each; time dividers after long pauses.
+  const layout = layoutTurns(blocks.map((b) => {
+    const first = b.kind === "entry" ? b.e : b.items[0];
+    const reply = b.kind === "entry" && b.e.role === "assistant" && b.e.kind === "text" && !b.e.commandOutput && !!replyText(b.e.text);
+    return { speaker: speaker(b), at: first.at, reply };
+  }));
+  const newestReply = layout.findLastIndex((_, i) => {
+    const b = blocks[i];
+    return b.kind === "entry" && b.e.role === "assistant" && b.e.kind === "text" && !b.e.commandOutput && !!replyText(b.e.text);
+  });
+  // Rows after the saved conversation (sent messages, the reply being written, the working row) continue Claude's turn
+  // only when Claude spoke last.
+  let tail = blocks.length ? speaker(blocks[blocks.length - 1]) : "";
+  const tailStart = () => {
+    const start = tail !== "claude";
+    tail = "claude";
+    return start;
+  };
+  const stalled = running && stallWait(ticket) ? ticket.stalled!.minutes : null;
+  // Steps Claude took since the user's last message: the working row counts on from them.
+  const lastAsk = entries.findLastIndex((e) => e.role === "user" && e.kind === "text" && !e.huddleId);
+  const steps = entries.slice(lastAsk + 1).filter((e) => e.kind === "tool" || e.kind === "agent").length;
   const divider = bp && (
     <div key={`branch-${bp.at}`} className="branch-divider" role="separator">
       <BranchIcon size={12} /> branched from {branchedFrom
@@ -719,7 +792,9 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
           return (
             <Fragment key={first.uuid}>
               {helpAt.get(i)?.map((c) => <HelpCardView key={c.id} card={c} help={help} onOpenTicket={onOpenTicket} />)}
-              {i === dividerAt && divider}{renderBlock(b, before(first, bp?.at))}
+              {i === dividerAt && divider}
+              {layout[i].divider && <TimeDivider label={layout[i].divider!} />}
+              {renderBlock(b, before(first, bp?.at), layout[i], b.kind === "tools" ? i === blocks.length - 1 : i === newestReply)}
             </Fragment>
           );
         })}
@@ -727,39 +802,48 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         {helpAt.get(blocks.length)?.map((c) => <HelpCardView key={c.id} card={c} help={help} onOpenTicket={onOpenTicket} />)}
         {help && <HelpPending help={help} />}
         {/* Replies sent while Claude wasn't working are part of the timeline: plain bubbles, before Claude's reply. */}
-        {pending.filter((p) => !p.steer).map((p, i) => (
-          <div key={i} className="conv-msg user">
-            <UserText text={p.text} commands={commands} />
-          </div>
-        ))}
+        {pending.filter((p) => !p.steer).map((p, i) => {
+          tail = "user";
+          return (
+            <div key={i} className="conv-msg user">
+              <UserText text={p.text} commands={commands} />
+            </div>
+          );
+        })}
         {ticket.interrupted?.partial && (
-          <div className="conv-msg assistant interrupted">
-            <div className="conv-head"><b>Claude</b><span className="muted small">interrupted by a board restart; {running ? "continuing below…" : "resumes when the board is back"}</span></div>
-            <Markdown text={ticket.interrupted.partial} />
-          </div>
+          <Turn start={tailStart()} className="interrupted">
+            <span className="turn-pill">Cut off by a board restart · {running ? "continuing below" : "resumes when the board is back"}</span>
+            <div className="reply-text"><Markdown text={ticket.interrupted.partial} /></div>
+          </Turn>
         )}
         {waitingHandoff.map((h) => (
-          <div key={h.at} className="conv-msg assistant live">
-            <div className="conv-head"><b>Claude</b></div>
-            {liveView(h.text).text && <Markdown text={liveView(h.text).text} />}
-            {liveView(h.text).preparing && <div className="chat-typing"><span className="spinner" /> <span>{liveView(h.text).preparing}</span></div>}
-          </div>
+          <Turn key={h.at} start={tailStart()} className="live">
+            {liveView(h.text).text && <div className="reply-text"><Markdown text={liveView(h.text).text} /></div>}
+            {liveView(h.text).preparing && <div className="working-row"><span className="spinner" /> <span>{liveView(h.text).preparing}</span></div>}
+          </Turn>
         ))}
         {live && (
-          <div className="conv-msg assistant live" aria-live="polite">
-            <div className="conv-head"><b>Claude</b><span className="muted small">writing…</span></div>
-            {liveView(live).text && <Markdown text={liveView(live).text} />}
-            {liveView(live).preparing && <div className="chat-typing"><span className="spinner" /> <span>{liveView(live).preparing}</span></div>}
-          </div>
+          <Turn start={tailStart()} className="live">
+            <div aria-live="polite">
+              {liveView(live).text && <div className="reply-text writing"><Markdown text={liveView(live).text} /></div>}
+              {liveView(live).preparing && <div className="working-row"><span className="spinner" /> <span>{liveView(live).preparing}</span></div>}
+            </div>
+          </Turn>
         )}
         {running && !live && !!ticket.waitingOn?.length && <WaitingCard tasks={ticket.waitingOn} />}
         {running && !live && !ticket.waitingOn?.length && (
-          <div className="chat-typing"><span className="spinner" /> <span>{ticket.lastActivity && ticket.lastActivity !== "Starting…" && !repeats(ticket.lastActivity, onScreen) ? ticket.lastActivity : "Claude is working…"}</span></div>
+          <WorkingRow start={tailStart()} startedAt={ticket.runStartedAt} stalled={stalled} step={steps + 1}
+            activity={stopping ? "Stopping…" : ticket.lastActivity && ticket.lastActivity !== "Starting…" && !repeats(ticket.lastActivity, onScreen) ? ticket.lastActivity : null}>
+            {stalled && <StallActions slug={slug} ticket={ticket} onError={onError} small />}
+          </WorkingRow>
+        )}
+        {!running && ticket.outcome === "stopped" && blocks.length > 0 && speaker(blocks[blocks.length - 1]) === "claude" && !pending.length && (
+          <div className="chat-note stopped">Stopped</div>
         )}
         {pending.filter((p) => p.steer && !queued.some((q) => q.text === p.text)).map((p, i) => (
-          <div key={i} className="conv-msg user pending">
-            <div className="conv-head"><b>You</b><span className="muted small">sending…</span></div>
-            <UserText text={p.text} commands={commands} />
+          <div key={i} className="me-wrap">
+            <div className="conv-msg user pending"><UserText text={p.text} commands={commands} /></div>
+            <div className="me-meta">sending…</div>
           </div>
         ))}
         {queued.filter((q) => q.peer && HUDDLE_TAG.test(q.text)).map((q) => (
@@ -775,31 +859,28 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             )}
           </HuddleDigest>
         ))}
-        {queued.filter((q) => q.peer && !HUDDLE_TAG.test(q.text)).map((q) => (
-          <div key={q.id} className="conv-msg peer in pending">
-            <div className="conv-head">
-              <b>From the board</b>
-              <span className="muted small">{q.state === "queued" ? "queued · Claude reads this at its next step" : "not sent · Claude was stopped before reading it"}</span>
-            </div>
-            <Markdown text={q.text.split("<ckanban-context")[0].trim()} />
-            {q.state === "unsent" && (
-              <div className="queued-actions">
-                <button className="btn primary small" disabled={stopping}
-                  onClick={() => api.sendQueued(slug, ticket.id, q.id).catch((e) => onError(e.message))}>Send</button>
-                <button className="btn ghost small"
-                  onClick={() => api.discardQueued(slug, ticket.id, q.id).catch((e) => onError(e.message))}>Discard</button>
-              </div>
-            )}
-          </div>
-        ))}
-        {queued.filter((q) => !q.peer && !heldByReply(q, pending) && !inSession(q, entries)).map((q) => (
-          <div key={q.id} className={`conv-msg user pending${editable(q) ? " unsent" : ""}${editing?.id === q.id && editable(q) ? " editing" : ""}`}>
-            <div className="conv-head">
-              <b>You</b>
-              <span className="muted small">{q.state === "unsent" ? "not sent · Claude was stopped before reading it"
-                : running ? (q.slash ? "queued · runs after Claude's current turn" : "sent · Claude reads it at its next step")
-                : ticket.slotWait ? "queued · starts when a run slot is free" : "queued · starts when the board is back"}</span>
-            </div>
+        {queued.filter((q) => (q.peer && !HUDDLE_TAG.test(q.text)) || (q.from && !inSession({ ...q, text: fromTicket(q.text)?.text ?? q.text }, entries))).map((q) => {
+          const body = q.from ? fromTicket(q.text)?.text ?? q.text : q.text.split("<ckanban-context")[0].trim();
+          const state = q.state === "queued" ? "queued · Claude reads this at its next step" : "not sent · Claude was stopped before reading it";
+          return (
+            <Turn key={q.id} start className="pending"
+              avatar={q.from ? <LetterAvatar seed={q.from.ticketId} name={q.from.title} /> : <LetterAvatar seed="board" name="Board" />}
+              name={q.from ? peerName(q.from.ticketId, q.from.title) : "From the board"} sub={state}>
+              <div className="peer-bubble"><Markdown text={body} /></div>
+              {q.state === "unsent" && (
+                <div className="queued-actions">
+                  <button className="btn primary small" disabled={stopping}
+                    onClick={() => api.sendQueued(slug, ticket.id, q.id).catch((e) => onError(e.message))}>Send</button>
+                  <button className="btn ghost small"
+                    onClick={() => api.discardQueued(slug, ticket.id, q.id).catch((e) => onError(e.message))}>Discard</button>
+                </div>
+              )}
+            </Turn>
+          );
+        })}
+        {queued.filter((q) => fromUser(q) && !heldByReply(q, pending) && !inSession(q, entries)).map((q) => (
+          <div key={q.id} className="me-wrap">
+          <div className={`conv-msg user pending${editable(q) ? " unsent" : ""}${editing?.id === q.id && editable(q) ? " editing" : ""}`}>
             {editing?.id === q.id && editable(q) ? (
               <>
                 <textarea className="queued-edit" rows={3} autoFocus value={editing.text}
@@ -835,10 +916,14 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
               </>
             )}
           </div>
+          <div className="me-meta">{q.state === "unsent" ? "not sent · Claude was stopped before reading it"
+            : running ? (q.slash ? "queued · runs after Claude's current turn" : "sent · Claude reads it at its next step")
+            : ticket.slotWait ? "queued · starts when a run slot is free" : "queued · starts when the board is back"}</div>
+          </div>
         ))}
         {!running && ticket.recovery && <RecoveryBanner slug={slug} ticket={ticket} onError={onError} />}
         {!running && !ticket.recovery && ticket.error && !ticket.error.startsWith("corrupt") && (
-          <div className="banner error inline"><pre>{ticket.error}</pre></div>
+          <ErrorTurn error={ticket.error} onRetry={() => send(RETRY)} retryDisabled={stopping} />
         )}
         {ticket.notice && (
           <div className="banner info inline notice" role="status">
@@ -880,7 +965,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
             if (slash.onKeyDown(e)) return;
             if (snippets.onKeyDown(e)) return;
             // ↑ in an empty composer fixes the last message Claude hasn't received yet.
-            const last = queued.filter((q) => !q.peer && editable(q)).at(-1);
+            const last = queued.filter((q) => fromUser(q) && editable(q)).at(-1);
             if (e.key === "ArrowUp" && !draft && last && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
               e.preventDefault();
               setEditing({ id: last.id, text: last.text });
@@ -898,12 +983,12 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         <div className="composer-foot">
           <span className="muted small composer-hint">
             {refine ? "Refine mode: Claude won't change files." : "Claude acts on your message."}
-            <span className="composer-keys"> Enter to send · Shift+Enter for a new line{queued.some((q) => !q.peer && editable(q)) && " · ↑ to edit your queued message"}</span>
+            <span className="composer-keys"> Enter to send · Shift+Enter for a new line{queued.some((q) => fromUser(q) && editable(q)) && " · ↑ to edit your queued message"}</span>
           </span>
           <span className="composer-actions">
             <ImagePickButton images={images} target={composer} disabled={stopping} />
-            {running && <button className="btn danger small" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
-            <button className="btn primary small" disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? "Uploading…" : "Send"}<KeyHint keys="↵" /></button>
+            <SendOrStop running={running} hasDraft={!!draft.trim()} stopping={stopping} onStop={stop}
+              send={<button className="btn primary small" disabled={!draft.trim() || stopping || images.uploading} onClick={() => send(draft)}>{images.uploading ? "Uploading…" : "Send"}<KeyHint keys="↵" /></button>} />
           </span>
         </div>
       </div>

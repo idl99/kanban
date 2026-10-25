@@ -35,7 +35,7 @@ import { PushService } from "./push";
 import { LISTENER_HEADER, LOGIN_HEADER, qrSvg, RemoteAccess, RemoteError, remoteUrl, type RemoteConfig } from "./remote";
 import { AGENT_IDS, AgentError, AgentRegistry, type AgentId } from "./agents";
 import { collectLinks } from "./links";
-import { SessionCache, type SessionSummary } from "./session";
+import { fromTicketText, SessionCache, type SessionSummary } from "./session";
 import { ptySupported, ShellManager, type Shell } from "./shell";
 import { AGENT_STEP_TAIL, settleAgent } from "./subagents";
 import { QuickChatError, QuickChats } from "./quickchat";
@@ -1014,6 +1014,22 @@ export function createServer(deps: ServerDeps) {
         });
         return json({ entries, start, total: all.length });
       }
+      // "Say it simpler" for the chat's replies, like a ticket's (see the ticket simplify routes).
+      if (parts.length === 5 && parts[4] === "simplified" && m === "GET") {
+        return json(simplifier.savedIn(quickChats.simplifiedPath(slug, cid), sessions.get(chat.sessionId)?.entries ?? []));
+      }
+      if (parts.length === 5 && parts[4] === "simplify" && m === "POST") {
+        await userAsks();
+        const b = await body(req);
+        const e = typeof b?.uuid === "string" ? sessions.get(chat.sessionId)?.entries.find((x) => x.uuid === b.uuid) : null;
+        if (!e) throw new HttpError(404, "no such message in this chat");
+        try {
+          return json(await simplifier.simplifyIn({ file: quickChats.simplifiedPath(slug, cid), spend: quickChats.sideSpendPath(slug, cid) }, quickChats.view(slug, chat).title, e));
+        } catch (err) {
+          if (err instanceof SimplifyError) throw new HttpError(err.status, err.message);
+          throw err;
+        }
+      }
       if (parts.length === 6 && parts[4] === "tool" && m === "GET") {
         const d = sessions.toolDetail(chat.sessionId, parts[5]);
         if (!d) throw new HttpError(404, "tool call not found");
@@ -1620,7 +1636,10 @@ export function createServer(deps: ServerDeps) {
       // against the chain limits either way; the user's message to a ticket that isn't working clears it.
       const startedBy = runner ? runStart(slug, runner) : !planner && !requester && !board.isRunning(slug, id) ? null : undefined;
       // A message from a run never hands the user's rights on to the run it starts.
-      const t = await board.chat(slug, id, runner ? `Message from ticket ${runner.id} ("${runner.title}"): ${text}` : text, { fromPlanner: !!(planner || requester || runner) });
+      // Labelled with the sending ticket, so neither Claude nor the chat takes it for the user's own message.
+      const sender = runner ?? planner ?? requester;
+      const t = await board.chat(slug, id, sender ? fromTicketText(sender.id, sender.title, text) : text,
+        { fromPlanner: !!sender, ...(sender ? { from: { ticketId: sender.id, title: sender.title } } : {}) });
       if (startedBy !== undefined) board.markStartedBy(slug, id, startedBy);
       // A message the user typed (not a slash command) reached Claude: a pending follow-up hears about it, and stops if it was set to.
       if (!req.headers.get(RUN_HEADER) && !text.startsWith("/")) board.userReplied(slug, id);

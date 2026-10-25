@@ -82,8 +82,11 @@ export interface SessionEntry {
   moved?: "planning";
   /** A board block whose JSON couldn't be read (left visible as text; the chat says so). */
   unreadable?: BlockKind;
-  /** A message from outside the user (a huddle digest): in = into this session. */
-  peer?: { dir: "in" | "out"; ticketId: string | null };
+  /**
+   * A message from outside the user: in = into this session. A huddle digest has ticketId null; a message another
+   * ticket's Claude sent (chat_ticket) has that ticket's id and title, and text is just the message.
+   */
+  peer?: { dir: "in" | "out"; ticketId: string | null; title?: string };
   /** Huddle messages delivered to this ticket's session (also a peer entry, ticketId null): the huddle's id. */
   huddleId?: string;
   /** A setup the board ran: before this prompt (older runs), or alone (text "") after `ckanban ticket setup`. Shown as a row. */
@@ -235,7 +238,7 @@ function assistantBlock(text: string): Pick<SessionEntry, "text" | "questions" |
 function dropBlockedMoves(entries: SessionEntry[]): void {
   entries.forEach((e, i) => {
     if (!e.moved) return;
-    for (let j = i; j < entries.length && !(entries[j].role === "user" && !entries[j].peer); j++) {
+    for (let j = i; j < entries.length && !(entries[j].role === "user" && !entries[j].huddleId); j++) {
       const r = entries[j].role === "assistant" && entries[j].kind === "text" ? parseResult(entries[j].text) : null;
       if (r?.status === "blocked") return void delete e.moved;
     }
@@ -329,6 +332,16 @@ function isPublisher(block: any): boolean {
 /** A Claude Code built-in typed in a terminal session (/exit, /resume): not part of the ticket chat. */
 function terminalOnly(cmd: string | null): boolean {
   return !!cmd && TERMINAL_COMMANDS.has(cmd.slice(1).split(" ")[0]);
+}
+
+/** How the board labels a message another ticket's Claude sent (http.ts chat): `Message from ticket <id> ("<title>"): text`. */
+export const fromTicketText = (ticketId: string, title: string, text: string) => `Message from ticket ${ticketId} ("${title}"): ${text}`;
+const FROM_TICKET = /^Message from ticket (t_[\w-]+) \("([\s\S]*?)"\): ([\s\S]*)$/;
+
+/** The sender and message of a text fromTicketText made, or null for anything else. */
+export function fromTicket(text: string): { ticketId: string; title: string; text: string } | null {
+  const m = FROM_TICKET.exec(text);
+  return m ? { ticketId: m[1], title: m[2], text: m[3].trim() } : null;
 }
 
 function userText(content: unknown): { kind: "text" | "board"; text: string; huddle?: string; setup?: SetupResult; command?: string } | null {
@@ -445,9 +458,11 @@ export function parseSession(raw: string): ParsedSession {
     else a.error = n.result ?? `Agent ${n.status}`;
   };
   const peerEntry = (u: NonNullable<ReturnType<typeof userText>>, uuid: string, at: string): SessionEntry => {
+    const from = u.kind === "text" && !u.huddle ? fromTicket(u.text) : null;
     return {
-      uuid, at, role: "user", kind: u.kind, text: u.text, ...(u.command ? { command: u.command } : {}),
+      uuid, at, role: "user", kind: u.kind, text: from ? from.text : u.text, ...(u.command ? { command: u.command } : {}),
       ...(u.huddle ? { peer: { dir: "in" as const, ticketId: null }, huddleId: u.huddle } : {}),
+      ...(from ? { peer: { dir: "in" as const, ticketId: from.ticketId, title: from.title } } : {}),
       ...(u.setup ? { setup: u.setup } : {}),
     };
   };
@@ -569,8 +584,8 @@ export function parseSession(raw: string): ParsedSession {
     lastMessage: last
       ? {
         role: last.role, text: lastText, at: last.at,
-        ...(last.role === "user" && last.peer ? { from: "huddle" as const } : {}),
-        ...(asked?.peer?.dir === "in" ? { peerReply: true } : {}),
+        ...(last.role === "user" && last.huddleId ? { from: "huddle" as const } : {}),
+        ...(asked?.huddleId ? { peerReply: true } : {}),
       }
       : null,
     ...pendingSince(entries),
@@ -606,8 +621,8 @@ function handBack(text: string): string {
 function pendingSince(entries: SessionEntry[]): Pick<ParsedSession, "openQuestions" | "pendingProposal" | "pendingNewTickets" | "pendingTeammates" | "pendingAutomations"> {
   let lastUser = -1;
   entries.forEach((e, i) => {
-    // Messages from other tickets don't answer what Claude asked the user.
-    if (e.role === "user" && e.kind === "text" && !e.peer) lastUser = i;
+    // Huddle messages don't answer what Claude asked the user (another ticket's message, e.g. the planner's answer, does).
+    if (e.role === "user" && e.kind === "text" && !e.huddleId) lastUser = i;
   });
   const after = entries.slice(lastUser + 1);
   return {

@@ -513,6 +513,8 @@ export interface QueuedMessage {
   peer?: boolean;
   /** Sent by a planner's run (chat_ticket), not typed by the user: the reply run gets no planner rights of its own. */
   fromPlanner?: boolean;
+  /** Sent by another ticket's Claude (chat_ticket): which one. The chat shows it with that ticket's name, not as the user's. */
+  from?: { ticketId: string; title: string };
   /**
    * The text is a slash command Claude Code runs itself (see commands.ts): sent alone, without the board's note.
    * local: a built-in that runs without a model turn (/compact), so Claude never echoes it back.

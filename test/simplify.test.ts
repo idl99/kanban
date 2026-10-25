@@ -40,7 +40,7 @@ beforeAll(() => {
   const bus = new Bus();
   const board = new Board(store, bus, { claudeBin: "/bin/false" });
   server = createServer({
-    store, bus, board, port: 0, webDir: tempDir("ck-web-"), sessions: new SessionCache({ configDir }),
+    store, bus, board, port: 0, webDir: tempDir("ck-web-"), sessions: new SessionCache({ configDir }), isUserBrowser: async () => true,
     sideCall: async (i) => {
       calls.push(i);
       if (gate) await gate;
@@ -96,6 +96,25 @@ test("simplify: the side call's cost is added to the ticket's spend and Usage to
   const usage = (await (await fetch(`${base}/api/profiles/p/tickets/${id}/usage`)).json()) as any;
   expect(usage.totals.costUsd).toBeCloseTo(0.0012, 6);
   expect(usage.sideCostUsd).toBeCloseTo(0.0012, 6);
+});
+
+test("simplify: a quick chat's replies too, saved next to the chat, cost in today's spend", async () => {
+  const dir = join(store.root, "profiles", "p", "chats");
+  mkdirSync(dir, { recursive: true });
+  const now = new Date().toISOString();
+  writeFileSync(join(dir, "qc1.json"), L({ id: "qc1", sessionId: SID, title: "Forgot password", firstMessage: "x", createdAt: now, updatedAt: now, started: true, ticketId: null, error: null }));
+  const spend = new SpendIndex(store);
+  const today = spend.today().costUsd;
+  calls.length = 0;
+  const post = (uuid: string) => fetch(`${base}/api/profiles/p/chats/qc1/simplify`, { method: "POST", headers: { "content-type": "application/json", origin: base }, body: JSON.stringify({ uuid }) });
+  const r = await post("a1");
+  expect(r.status).toBe(200);
+  expect(calls[0].prompt).toContain("Forgot password");
+  expect(await (await fetch(`${base}/api/profiles/p/chats/qc1/simplified`)).json()).toEqual({ a1: "The login page now has a Forgot password link." });
+  expect(existsSync(join(dir, "qc1.simplified.json"))).toBe(true);
+  expect(spend.today().costUsd - today).toBeCloseTo(0.0012, 6);
+  expect((await post("a2")).status).toBe(400);
+  expect((await post("nope")).status).toBe(404);
 });
 
 test("simplify: double clicks share one call", async () => {

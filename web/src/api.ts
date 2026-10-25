@@ -353,6 +353,8 @@ export interface QueuedMessage {
   state: "queued" | "unsent";
   /** From another session (a huddle's messages): text is the full prompt. */
   peer?: boolean;
+  /** Sent by another ticket's Claude: which one (shown with that ticket's name, not as yours). */
+  from?: { ticketId: string; title: string };
   /** A slash command: Claude Code runs it as its own turn, after the current one. */
   slash?: "prompt" | "local";
 }
@@ -442,7 +444,8 @@ export interface SessionEntry {
   /** A board block whose JSON couldn't be read (left visible as text). */
   unreadable?: "questions" | "proposal" | "tickets";
   /** A message from outside the user (a huddle digest): in = into this session. */
-  peer?: { dir: "in" | "out"; ticketId: string | null };
+  /** ticketId and title: a message another ticket's Claude sent (text is just the message); ticketId null: a huddle digest. */
+  peer?: { dir: "in" | "out"; ticketId: string | null; title?: string };
   /** Huddle messages delivered to this ticket's session (a peer entry too): the huddle's id. text is the digest. */
   huddleId?: string;
   /** Worktree setup that ran before this prompt (shown as a row before it). */
@@ -1232,6 +1235,8 @@ export const api = {
   chatConversation: (slug: string, id: string, before?: number) =>
     req<{ entries: SessionEntry[]; start: number; total: number }>("GET", `${chatsUrl(slug, id)}/conversation${before !== undefined ? `?before=${before}` : ""}`),
   chatTool: (slug: string, id: string, toolUseId: string) => req<ToolDetail>("GET", `${chatsUrl(slug, id)}/tool/${encodeURIComponent(toolUseId)}`),
+  chatSimplified: (slug: string, id: string) => req<Record<string, string>>("GET", `${chatsUrl(slug, id)}/simplified`),
+  chatSimplify: (slug: string, id: string, uuid: string) => req<{ text: string; cached: boolean }>("POST", `${chatsUrl(slug, id)}/simplify`, { uuid }),
   sessions: (slug: string) => req<ClaudeSession[]>("GET", `/api/profiles/${encodeURIComponent(slug)}/sessions`),
   addOnTicket: (slug: string, id: string, input: { title: string; body: string; start?: boolean; important?: boolean }) =>
     req<Ticket>("POST", `${t(slug, id)}/add-on`, input),

@@ -146,8 +146,9 @@ function chatFor(
 }
 
 /** Queued-message flags from Board.chat options. */
-function flags(o: ChatOptions): Pick<QueuedMessage, "peer" | "fromPlanner" | "slash" | "hostWake" | "followUp"> {
+function flags(o: ChatOptions): Pick<QueuedMessage, "peer" | "fromPlanner" | "from" | "slash" | "hostWake" | "followUp"> {
   return {
+    ...(o.from ? { from: o.from } : {}),
     ...(o.peer ? { peer: true } : {}), ...(o.fromPlanner ? { fromPlanner: true } : {}), ...(o.slash ? { slash: o.slash } : {}),
     ...(o.hostWake ? { hostWake: true } : {}), ...(o.followUp ? { followUp: true } : {}),
   };
@@ -157,6 +158,8 @@ function flags(o: ChatOptions): Pick<QueuedMessage, "peer" | "fromPlanner" | "sl
 export interface ChatOptions {
   peer?: boolean;
   fromPlanner?: boolean;
+  /** Sent by another ticket's Claude: which one (shown with the message instead of "You"). */
+  from?: { ticketId: string; title: string };
   slash?: "prompt" | "local";
   hostWake?: boolean;
   followUp?: boolean;
@@ -556,7 +559,7 @@ export class Board {
     if (!msg) throw new Error("message not found");
     if (msg.state !== "unsent") throw new ConflictError("message is already on its way to Claude");
     this.dropQueued(slug, id, [msgId]);
-    return this.chat(slug, id, msg.text, { peer: msg.peer, fromPlanner: msg.fromPlanner, slash: msg.slash, hostWake: msg.hostWake, followUp: msg.followUp });
+    return this.chat(slug, id, msg.text, { peer: msg.peer, fromPlanner: msg.fromPlanner, from: msg.from, slash: msg.slash, hostWake: msg.hostWake, followUp: msg.followUp });
   }
 
   discardQueued(slug: string, id: string, msgId: string): Ticket {

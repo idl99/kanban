@@ -159,6 +159,8 @@ test("sinceLastMessage: board prompts and huddle messages are not the user's", (
   const text = transcript(sinceLastMessage(entries).after);
   expect(text).toContain("Board (automatic message): text 3");
   expect(text).toContain("Review team (huddle) message: text 4");
+  // Another ticket's message (chat_ticket) keeps its sender.
+  expect(transcript([e("7", "user", "text", { peer: { dir: "in", ticketId: "t_1", title: "Post #006" } })])).toContain('Message from another ticket ("Post #006"): text 7');
   expect(text).toContain("Claude used 2 tools");
   const t = { title: "T", status: "review", outcome: "done", prUrl: null, error: null } as unknown as Ticket;
   expect(recapPrompt({ ticket: t, entries, findings: [

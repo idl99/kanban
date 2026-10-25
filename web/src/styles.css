@@ -723,11 +723,14 @@ body > .output-view.reader { position: fixed; }
 .waiting-card li span:first-child { overflow-wrap: anywhere; }
 .waiting-time { flex: none; color: var(--muted); font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; }
 .waiting-note { font-size: 12px; color: var(--muted); }
-.conv-msg.pending { opacity: 0.65; }
-.conv-msg.pending.unsent { opacity: 1; border: 1px dashed var(--border); }
+/* Not with Claude yet: a dashed outline (no fading, so it stays readable); its state is in the line under it. */
+.conv-msg.pending { border: 1px dashed var(--muted); }
 .queued-actions { display: flex; gap: 6px; margin-top: 6px; }
-.conv-msg.pending.editing { border: 1px solid var(--accent); }
-.queued-edit { width: 100%; min-width: min(380px, 70vw); font: inherit; font-size: 13.5px; resize: vertical; }
+.conv-msg.pending.editing { border-color: transparent; outline: 2px solid var(--accent); outline-offset: 2px; }
+.me-wrap { align-self: flex-end; display: flex; flex-direction: column; align-items: flex-end; max-width: 80%; }
+.me-wrap > .conv-msg.user { max-width: 100%; }
+.me-meta { font-size: 12px; color: var(--muted); margin-top: 3px; text-align: right; }
+.queued-edit { background: var(--surface); width: 100%; min-width: min(380px, 70vw); font: inherit; font-size: 13.5px; resize: vertical; }
 .composer { border: 1px solid var(--border); border-radius: 12px; background: var(--bg); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .composer textarea { border: 0; background: transparent; padding: 2px; resize: none; box-shadow: none !important; min-height: 44px; }
@@ -965,9 +968,9 @@ body > .output-view.reader { position: fixed; }
 .panel-main .composer { margin: 0 max(28px, calc((100% - var(--read-max)) / 2)) 16px; }
 .conv-msg.assistant { background: none; padding: 0; max-width: 100%; align-self: stretch; border-radius: 0; font-size: 14px; line-height: 1.6; }
 .conv-msg.assistant .conv-head b { color: var(--accent); }
-.conv-msg.user { background: var(--surface-2); border-radius: 16px 16px 4px 16px; padding: 8px 14px; max-width: 80%; align-self: flex-end; font-size: 14px; }
+/* The user's bubble: soft accent tint, normal text colour (readable in light and dark, links too). */
+.conv-msg.user { background: var(--accent-soft); color: var(--text); border-radius: 18px 18px 6px 18px; padding: 9px 15px; max-width: 80%; align-self: flex-end; font-size: 15px; line-height: 1.55; }
 .conv-msg.user .conv-head { display: none; }
-.conv-msg.user.pending .conv-head { display: flex; }
 /* Messages from other sessions (huddles): neither the user nor this ticket's own reply. */
 .conv-msg.peer { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 8px 14px; max-width: 86%; font-size: 13.5px; }
 .conv-msg.peer.in { align-self: flex-start; border-left: 3px solid var(--accent); }
@@ -988,6 +991,131 @@ body > .output-view.reader { position: fixed; }
 .hdg-list li.system .hdg-who { color: var(--muted); font-weight: 500; }
 .hdg-wrap { align-self: flex-start; max-width: 86%; display: flex; flex-direction: column; gap: 6px; }
 .hdg-wrap > .conv-msg { max-width: none; }
+
+/* ============ chat turns (ConvTurn.tsx): avatar + name line, then the replies under it ============ */
+.turn { align-self: stretch; display: grid; grid-template-columns: 28px minmax(0, 1fr); column-gap: 10px; }
+.turn.start { margin-top: 6px; }
+/* Rows that continue a turn sit closer to the row above. */
+.chat-log > .turn:not(.start) { margin-top: -4px; }
+.turn-av { grid-column: 1; grid-row: 1; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 12px; }
+.turn-av.claude { background: var(--accent); }
+.turn-av svg { width: 16px; height: 16px; }
+.turn-name { grid-column: 2; grid-row: 1; display: flex; align-items: center; flex-wrap: wrap; column-gap: 7px; min-height: 28px; font-size: 12.5px; color: var(--muted); min-width: 0; }
+.turn-name b { color: var(--text); font-weight: 650; font-size: 13.5px; }
+.turn-name .turn-link { font-size: 13.5px; font-weight: 650; color: var(--text); }
+.turn-name .turn-link:hover { color: var(--accent); }
+.turn-body { grid-column: 2; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.reply-text { font-size: 15px; line-height: 1.6; }
+/* Text reads in a comfortable line length; code, tables and cards use the whole column. */
+.reply-text .md > :where(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6, hr) { max-width: 72ch; }
+.reply-text .md p { margin: 0 0 0.6em; }
+.reply-text.writing .md > :last-child::after {
+  content: ""; display: inline-block; width: 7px; height: 14px; margin-left: 3px; vertical-align: -2px; background: var(--accent);
+  animation: caret-blink 1s steps(2) infinite;
+}
+@keyframes caret-blink { 50% { opacity: 0; } }
+/* Cards under a reply: the page colour, so they stand apart from the flat text. */
+.turn-body > :is(.proposal, .huddle-card, .chat-file, .teammate-card, .newtix, .branch-card) { margin-top: 0; border-radius: 12px; background: var(--bg); }
+.turn-body .qform .q { background: var(--bg); border-radius: 12px; }
+
+/* Markdown in the chat */
+.chat-log .md :is(h1, h2) { font-size: 16px; margin: 14px 0 6px; }
+.chat-log .md :is(h3, h4, h5, h6) { font-size: 15px; margin: 14px 0 6px; }
+.chat-log .md table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.chat-log .md :is(th, td) { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
+.chat-log .md .code-block { margin: 10px 0; border: 1px solid var(--border); background: var(--bg); border-radius: 10px; }
+.chat-log .md pre { background: var(--bg); font-size: 12.5px; line-height: 1.5; }
+.chat-log .md code { background: var(--bg); font-size: 12.5px; }
+.chat-log .md :not(pre) > code { border: 1px solid var(--border); padding: 0 4px; }
+.chat-log .md pre code { background: none; border: 0; }
+
+/* Copy · Say it simpler under a reply */
+.reply-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin: -2px 0 0 -8px; font-size: 12.5px; color: var(--muted); }
+.act-btn {
+  display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12.5px;
+  border-radius: 6px; padding: 4px 8px; cursor: pointer;
+}
+.act-btn:hover:not(:disabled), .act-btn:focus-visible { background: var(--surface-2); color: var(--text); }
+.act-btn:disabled { opacity: 0.5; cursor: default; }
+.act-note { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; }
+.act-note.error { color: var(--err); }
+.act-note.error .act-btn { color: var(--err); padding: 2px 4px; }
+@media (hover: hover) and (min-width: 721px) {
+  /* Shown on hover or focus (the space stays, so nothing jumps); always on the newest reply. */
+  .reply-actions { opacity: 0; transition: opacity 0.12s; }
+  .turn:hover .reply-actions, .reply-actions:focus-within, .reply-actions.newest, .reply-actions.active { opacity: 1; }
+}
+@media (max-width: 720px), (hover: none) {
+  /* Phone: under the last reply of each turn, big enough to tap. */
+  .reply-actions:not(.last-of-turn):not(.active) { display: none; }
+  .act-btn { font-size: 13px; min-height: 36px; }
+}
+
+/* A run of tool calls: one plain line, opens the step list */
+.steps-line { font-size: 13px; color: var(--muted); }
+.steps-line > summary {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; cursor: pointer; list-style: none; padding: 2px 0; border-radius: 6px;
+}
+.steps-line > summary::-webkit-details-marker { display: none; }
+.steps-line > summary::after { content: "▸"; font-size: 9px; transition: transform 0.15s; }
+.steps-line[open] > summary::after { transform: rotate(90deg); }
+.steps-line > summary:hover { color: var(--text); }
+.steps-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.steps-ok { color: var(--ok); flex: none; }
+.steps-failed { color: var(--err); flex: none; white-space: nowrap; }
+.steps-line .spinner { flex: none; }
+.steps-line ul { margin: 4px 0 4px 20px; padding: 0; }
+.steps-line li { overflow-wrap: anywhere; }
+
+/* Claude's place while it works */
+.working-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--muted); min-height: 24px; }
+.working-row .spinner { flex: none; }
+.working-text { min-width: 0; overflow-wrap: anywhere; color: var(--text); }
+.working-time { flex: none; font-variant-numeric: tabular-nums; }
+.working-row.stalled { color: var(--warn); font-weight: 560; }
+.turn.working .stall-actions, .turn.working .btn { align-self: flex-start; }
+.typing-dots { display: inline-flex; gap: 4px; padding: 6px 0; }
+.typing-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: typing-dot 1.2s infinite; }
+.typing-dots i:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typing-dot { 0%, 60%, 100% { opacity: 0.3; transform: none; } 30% { opacity: 1; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) { .typing-dots i, .reply-text.writing .md > :last-child::after { animation: none; } }
+
+/* A run that ended with an error */
+.error-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: var(--err); font-size: 14px; }
+.error-line > span:first-child { overflow-wrap: anywhere; min-width: 0; }
+.error-actions { display: inline-flex; gap: 2px; }
+.error-details { margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow-y: auto; }
+
+/* Another ticket's message (and, later, a teammate's): a light bubble on the left */
+.peer-bubble { align-self: flex-start; max-width: min(86%, 72ch); background: var(--surface); border: 1px solid var(--border); border-radius: 6px 18px 18px 18px; padding: 8px 14px; font-size: 14.5px; line-height: 1.55; }
+.turn.pending .peer-bubble { border-style: dashed; border-color: var(--muted); }
+.turn-pill { align-self: flex-start; font-size: 12px; color: var(--muted); background: var(--surface-2); border-radius: 99px; padding: 1px 10px; }
+
+/* "Today 14:05" after a long pause */
+.time-divider { align-self: stretch; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); margin: 6px 0 -2px; }
+.time-divider::before, .time-divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.stop-btn span { font-size: 10px; }
+.stop-btn.icon-only { padding-left: 9px; padding-right: 9px; }
+
+/* Claude panel (narrow): smaller avatar and text */
+.qc-thread .turn { grid-template-columns: 24px minmax(0, 1fr); column-gap: 8px; }
+.qc-thread .turn-av { width: 24px; height: 24px; font-size: 11px; }
+.qc-thread .turn-av svg { width: 14px; height: 14px; }
+.qc-thread .turn-name { min-height: 24px; }
+.qc-thread .reply-text { font-size: 14px; }
+.qc-phone .qc-thread .turn { grid-template-columns: 28px minmax(0, 1fr); column-gap: 10px; }
+.qc-phone .qc-thread .turn-av { width: 28px; height: 28px; font-size: 12px; }
+.qc-phone .qc-thread .turn-name { min-height: 28px; }
+.qc-phone .qc-thread .reply-text { font-size: 15px; line-height: 1.55; }
+
+@media (max-width: 720px) {
+  .reply-text { line-height: 1.55; }
+  .panel-main .chat-log { padding: 14px 12px 10px; }
+  .panel-main .composer { margin: 0 8px 8px; }
+  .turn-name, .me-meta, .steps-line, .time-divider { font-size: 12.5px; }
+}
 .conv-tools { font-size: 12px; opacity: 0.85; }
 .conv-tools summary::marker { color: var(--muted); }
 /* subagent rows (Agent tool calls): status, timer, live current step; expand for steps + result */
@@ -1187,9 +1315,6 @@ body > .output-view.reader { position: fixed; }
 }
 .search-clear:hover { color: var(--text); background: var(--border); }
 .show-all { align-self: center; }
-.conv-msg.assistant.live .conv-head .muted { font-style: italic; }
-.conv-msg.assistant.interrupted { opacity: 0.55; }
-.conv-msg.assistant.interrupted .conv-head .muted { font-style: italic; }
 .panel-error { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin: 10px 24px 0; cursor: default; }
 .panel-error span { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
 .select-label .need-chip { margin-left: 6px; vertical-align: 1px; }

@@ -6,6 +6,16 @@ import { api } from "./api";
  * Saved versions load with the chat, so a reload or another device shows them at once without a new call.
  */
 export function useSimpler(slug: string, ticketId: string) {
+  return useSimplerFor(`${slug}/${ticketId}`, () => api.simplified(slug, ticketId), (uuid) => api.simplify(slug, ticketId, uuid));
+}
+
+/** The same for a quick chat (Claude panel, phone Ask tab); no chat yet: nothing to load. */
+export function useChatSimpler(slug: string, chatId: string | null) {
+  return useSimplerFor(`${slug}/chat:${chatId}`, () => (chatId ? api.chatSimplified(slug, chatId) : Promise.resolve({})), (uuid) => api.chatSimplify(slug, chatId!, uuid));
+}
+
+/** key: whose replies (reloads when it changes); load: the saved versions; rewrite: one reply's plain-words version. */
+function useSimplerFor(key: string, load: () => Promise<Record<string, string>>, rewrite: (uuid: string) => Promise<{ text: string }>) {
   const [saved, setSaved] = useState<Record<string, string>>({});
   // Replies showing their plain-words version, rewrites in progress, and ones whose last try failed.
   const [shown, setShown] = useState<Set<string>>(() => new Set());
@@ -18,11 +28,11 @@ export function useSimpler(slug: string, ticketId: string) {
     setBusy(new Set());
     setFailed(new Set());
     let live = true;
-    api.simplified(slug, ticketId).then((s) => live && setSaved(s), () => {});
+    load().then((s) => live && setSaved(s), () => {});
     return () => {
       live = false;
     };
-  }, [slug, ticketId]);
+  }, [key]);
 
   const toggle = (set: Set<string>, uuid: string, on: boolean) => {
     const next = new Set(set);
@@ -36,7 +46,7 @@ export function useSimpler(slug: string, ticketId: string) {
     setBusy((s) => toggle(s, uuid, true));
     setFailed((s) => toggle(s, uuid, false));
     try {
-      const r = await api.simplify(slug, ticketId, uuid);
+      const r = await rewrite(uuid);
       setSaved((s) => ({ ...s, [uuid]: r.text }));
       setShown((s) => toggle(s, uuid, true));
     } catch {
@@ -44,11 +54,13 @@ export function useSimpler(slug: string, ticketId: string) {
     } finally {
       setBusy((s) => toggle(s, uuid, false));
     }
-  }, [slug, ticketId, saved]);
+  }, [key, saved]);
 
   return {
     /** The plain-words version when it is the one showing, else null. */
     textFor: (uuid: string) => (shown.has(uuid) ? saved[uuid] ?? null : null),
+    /** Rewriting, failed, or showing the plain-words version: its actions row stays visible. */
+    active: (uuid: string) => busy.has(uuid) || failed.has(uuid) || shown.has(uuid),
     link: (uuid: string) => (
       <SimplerLink busy={busy.has(uuid)} failed={failed.has(uuid)} simple={shown.has(uuid) && !!saved[uuid]}
         onSimplify={() => void simplify(uuid)} onOriginal={() => setShown((s) => toggle(s, uuid, false))} />
@@ -56,23 +68,22 @@ export function useSimpler(slug: string, ticketId: string) {
   };
 }
 
+/** Its part of the reply's actions row (see ReplyActions). */
 function SimplerLink({ busy, failed, simple, onSimplify, onOriginal }: {
   busy: boolean; failed: boolean; simple: boolean; onSimplify: () => void; onOriginal: () => void;
 }) {
-  if (busy) return <div className="simpler" role="status"><span className="spinner" /> Saying it simpler…</div>;
-  if (simple) return <div className="simpler"><button className="link-btn" onClick={onOriginal}>Show original</button></div>;
+  if (busy) return <span className="act-note" role="status"><span className="spinner" /> Saying it simpler…</span>;
+  if (simple) return <button type="button" className="act-btn" onClick={onOriginal}>Show original</button>;
   if (failed) {
     return (
-      <div className="simpler error" role="alert">
-        Couldn't simplify. <button className="link-btn" onClick={onSimplify}>Try again</button>
-      </div>
+      <span className="act-note error" role="alert">
+        Couldn't simplify. <button type="button" className="act-btn" onClick={onSimplify}>Try again</button>
+      </span>
     );
   }
   return (
-    <div className="simpler">
-      <button className="link-btn" onClick={onSimplify} title="Rewrite this reply in plain words. It doesn't change the chat or what Claude remembers.">
-        Say it simpler
-      </button>
-    </div>
+    <button type="button" className="act-btn" onClick={onSimplify} title="Rewrite this reply in plain words. It doesn't change the chat or what Claude remembers.">
+      <span aria-hidden>✦</span> Say it simpler
+    </button>
   );
 }

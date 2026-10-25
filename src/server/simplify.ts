@@ -76,7 +76,12 @@ export class Simplifier {
 
   /** The ticket's saved rewrites by message uuid (only ones still matching their reply). */
   saved(slug: string, id: string, entries: SessionEntry[]): Record<string, string> {
-    const saved = readSaved(this.store.simplifiedPath(slug, id));
+    return this.savedIn(this.store.simplifiedPath(slug, id), entries);
+  }
+
+  /** The saved rewrites in one file (a ticket's, or a quick chat's). */
+  savedIn(file: string, entries: SessionEntry[]): Record<string, string> {
+    const saved = readSaved(file);
     const out: Record<string, string> = {};
     for (const e of entries) {
       const s = saved[e.uuid];
@@ -87,8 +92,13 @@ export class Simplifier {
 
   /** The plain-words version of one reply: the saved one, or a new side call (its cost goes on the ticket). */
   async simplify(slug: string, id: string, title: string, entry: SessionEntry): Promise<{ text: string; cached: boolean }> {
+    return this.simplifyIn({ file: this.store.simplifiedPath(slug, id), spend: this.store.sideSpendPath(slug, id) }, title, entry);
+  }
+
+  /** Same, saved in `file` with its cost logged in `spend` (a quick chat keeps both next to the chat). */
+  async simplifyIn(at: { file: string; spend: string }, title: string, entry: SessionEntry): Promise<{ text: string; cached: boolean }> {
     if (!simplifiable(entry)) throw new SimplifyError(400, "this message is too short to simplify");
-    const file = this.store.simplifiedPath(slug, id);
+    const file = at.file;
     const original = replyText(entry.text);
     const source = hash(original);
     const hit = readSaved(file)[entry.uuid];
@@ -99,7 +109,7 @@ export class Simplifier {
       p = (async () => {
         const r = await this.call({ system: SIMPLIFY_SYSTEM, prompt: simplifyPrompt(title, original) });
         if (!r.ok) throw new SimplifyError(502, r.error);
-        addSideSpend(this.store.sideSpendPath(slug, id), "simplify", r.costUsd);
+        addSideSpend(at.spend, "simplify", r.costUsd);
         // Read again: other messages may have been saved meanwhile.
         const saved = readSaved(file);
         saved[entry.uuid] = { text: r.text, source, at: new Date().toISOString(), costUsd: r.costUsd, model: r.model };

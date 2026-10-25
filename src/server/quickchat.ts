@@ -136,6 +136,15 @@ export class QuickChats {
     return join(this.dir(slug), `${id}.activity.jsonl`);
   }
 
+  /** Saved "Say it simpler" rewrites of the chat's replies, and what those side calls cost. */
+  simplifiedPath(slug: string, id: string): string {
+    return join(this.dir(slug), `${id}.simplified.json`);
+  }
+
+  sideSpendPath(slug: string, id: string): string {
+    return join(this.dir(slug), `${id}.side-spend.jsonl`);
+  }
+
   private profile(slug: string): Profile {
     const p = this.store.getProfile(slug);
     if (!p) throw new QuickChatError(404, `board ${slug} not found`);
@@ -356,6 +365,8 @@ export class QuickChats {
     }
     rmSync(this.file(slug, id), { force: true });
     rmSync(this.activityPath(slug, id), { force: true });
+    rmSync(this.simplifiedPath(slug, id), { force: true });
+    rmSync(this.sideSpendPath(slug, id), { force: true });
     this.bus.emit({ type: "chat.updated", profile: slug, id, chat: null });
   }
 

@@ -138,6 +138,8 @@ export class SpendIndex {
       for (const f of existsSync(chats) ? readdirSync(chats) : []) {
         const file = join(chats, f);
         if (f.endsWith(".activity.jsonl") && mtimeOf(file) >= start) cost += this.logSpend(file).days.get(day) ?? 0;
+        // Their side calls ("Say it simpler").
+        if (f.endsWith(".side-spend.jsonl") && mtimeOf(file) >= start) cost += readSideSpend(file).days.get(day) ?? 0;
       }
       return { slug: p.slug, name: p.name, costUsd: cost };
     });

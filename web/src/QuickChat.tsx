@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, onReconnect, subscribe, type Profile, type QuickChat, type SessionEntry } from "./api";
 import { AttachmentChips } from "./AttachmentChips";
 import { autoGrow } from "./autoGrow";
@@ -16,6 +16,10 @@ import { MoreSheet } from "./PhoneNav";
 import { fullTime, timeAgo } from "./time";
 import { toast } from "./toast";
 import { ToolRows } from "./ToolRows";
+import { ErrorTurn, ReplyActions, SendOrStop, StepsLine, TimeDivider, Turn, WorkingRow } from "./ConvTurn";
+import { layoutTurns } from "./chatTurns";
+import { useChatSimpler } from "./Simpler";
+import { replyText, simplifiable } from "./simplifyText";
 import { Markdown } from "./Transcript";
 import { useNow } from "./useNow";
 import { usePersistentState } from "./usePersistentState";
@@ -37,6 +41,9 @@ const writeSelected = (slug: string, id: string | null) => {
 };
 
 const HANDOFF_RETRY_MS = 500;
+
+/** What Retry under a failed reply sends. */
+const RETRY = "That reply stopped with an error. Please try again.";
 
 /**
  * Quick chats with Claude in the board's folder, no ticket: the phone's Ask tab (full screen, Chats and ⋯ open bottom
@@ -302,6 +309,10 @@ function ChatThread({ slug, chat, phone, onCreated, onOpenTicket, onNew }: {
   const endedAt = useRef<number | null>(running ? null : Date.now());
   const tailSeq = useRef(0);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const simpler = useChatSimpler(slug, id);
+  // When the current reply started: a message added while Claude works doesn't restart the working row's clock.
+  const [replyStartedAt, setReplyStartedAt] = useState<string | null>(running ? chat?.updatedAt ?? null : null);
+  useEffect(() => setReplyStartedAt(running ? (s) => s ?? new Date().toISOString() : null), [running]);
   useNow();
 
   const loadTail = useCallback(async () => {
@@ -396,20 +407,21 @@ function ChatThread({ slug, chat, phone, onCreated, onOpenTicket, onNew }: {
     setJump(null);
   };
 
-  const send = async () => {
-    const text = draft.trim();
+  /** Sends the draft, or `given` (Retry) without touching the draft. */
+  const send = async (given?: string) => {
+    const text = (given ?? draft).trim();
     if (!text || sending || images.uploading) return;
     images.clearError();
     stickToBottom.current = true;
     setPending((ps) => [...ps, { text, steer: running }]);
-    setDraft("");
+    if (given === undefined) setDraft("");
     setSending(true);
     try {
       const c = id ? await api.chatSend(slug, id, text) : await api.newChat(slug, text);
       if (!id) onCreated(c);
     } catch (e: any) {
       setPending((ps) => ps.filter((p) => p.text !== text));
-      setDraft(text);
+      if (given === undefined) setDraft(text);
       toast(e.message, { tone: "error" });
     } finally {
       setSending(false);
@@ -466,56 +478,100 @@ function ChatThread({ slug, chat, phone, onCreated, onOpenTicket, onNew }: {
             <p className="muted small">Chats are kept: open Chats to go back to one. Make ticket turns a chat into a ticket.</p>
           </div>
         )}
-        {group(entries).map((b) => {
-          if (b.kind === "tools") {
-            return (
-              <details key={b.items[0].uuid} className="conv-tools">
-                <summary>{b.items.length === 1 ? b.items[0].text : `${b.items.length} tool calls · ${b.items.at(-1)!.text}`}</summary>
-                <ToolRows slug={slug} ticketId={`chat:${id}`} live={running} load={loadTool}
-                  items={b.items.map((t) => ({ key: t.uuid, label: t.text, toolUseId: t.toolUseId ?? t.agent?.toolUseId, error: t.error }))} />
-              </details>
-            );
-          }
-          const e = b.e;
-          if (e.kind === "board") return <div key={e.uuid} className="chat-note">{e.text}</div>;
+        {(() => {
+          const blocks = group(entries);
+          const isReply = (b: Block) => b.kind === "entry" && b.e.role === "assistant" && !b.e.commandOutput && !!replyText(b.e.text);
+          const layout = layoutTurns(blocks.map((b) => {
+            const first = b.kind === "entry" ? b.e : b.items[0];
+            const who = b.kind !== "entry" ? "claude" : b.e.kind === "board" ? "board" : b.e.role === "user" ? "user" : b.e.commandOutput ? "command" : "claude";
+            return { speaker: who, at: first.at, reply: isReply(b) };
+          }));
+          const newest = blocks.findLastIndex(isReply);
+          // The reply being written and the working row continue Claude's turn when Claude spoke last.
+          let tail = blocks.length && layout.length && (blocks.at(-1)!.kind !== "entry" || (blocks.at(-1) as { e: SessionEntry }).e.role === "assistant") ? "claude" : "";
+          if (pending.some((p) => !p.steer)) tail = "user";
+          const tailStart = () => {
+            const start = tail !== "claude";
+            tail = "claude";
+            return start;
+          };
           return (
-            <div key={e.uuid} className={`conv-msg ${e.role}${e.commandOutput ? " command-output" : ""}`}>
-              <div className="conv-head">
-                <b>{e.role === "user" ? "You" : "Claude"}</b>
-                {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}
-              </div>
-              <Markdown text={e.text} />
-            </div>
+            <>
+              {blocks.map((b, i) => {
+                const l = layout[i];
+                const divider = l.divider && <TimeDivider label={l.divider} />;
+                if (b.kind === "tools") {
+                  return (
+                    <Fragment key={b.items[0].uuid}>
+                      {divider}
+                      <Turn start={l.start} at={b.items[0].at}>
+                        <StepsLine items={b.items} running={running && !live && i === blocks.length - 1}>
+                          <ToolRows slug={slug} ticketId={`chat:${id}`} live={running} load={loadTool}
+                            items={b.items.map((t) => ({ key: t.uuid, label: t.text, toolUseId: t.toolUseId ?? t.agent?.toolUseId, error: t.error }))} />
+                        </StepsLine>
+                      </Turn>
+                    </Fragment>
+                  );
+                }
+                const e = b.e;
+                if (e.kind === "board") return <Fragment key={e.uuid}>{divider}<div className="chat-note">{e.text}</div></Fragment>;
+                if (e.role === "user" || e.commandOutput) {
+                  return (
+                    <Fragment key={e.uuid}>
+                      {divider}
+                      <div className={`conv-msg ${e.role}${e.commandOutput ? " command-output" : ""}`}>
+                        <div className="conv-head">
+                          <b>{e.role === "user" ? "You" : "Claude Code"}</b>
+                          {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}
+                        </div>
+                        <Markdown text={e.text} />
+                      </div>
+                    </Fragment>
+                  );
+                }
+                const shown = () => simpler.textFor(e.uuid) ?? replyText(e.text);
+                return (
+                  <Fragment key={e.uuid}>
+                    {divider}
+                    <Turn start={l.start} at={e.at}>
+                      <div className="reply-text"><Markdown text={shown()} /></div>
+                      {replyText(e.text) && (
+                        <ReplyActions text={shown} simpler={id && simplifiable(e) ? simpler.link(e.uuid) : undefined}
+                          newest={i === newest} lastOfTurn={l.lastReply} active={simpler.active(e.uuid)} />
+                      )}
+                    </Turn>
+                  </Fragment>
+                );
+              })}
+              {pending.filter((p) => !p.steer).map((p, i) => (
+                <div key={i} className="conv-msg user"><Markdown text={p.text} /></div>
+              ))}
+              {waitingHandoff.map((h) => (
+                <Turn key={h.at} start={tailStart()} className="live">
+                  {liveView(h.text).text && <div className="reply-text"><Markdown text={liveView(h.text).text} /></div>}
+                </Turn>
+              ))}
+              {live && (
+                <Turn start={tailStart()} className="live">
+                  <div aria-live="polite">{liveView(live).text && <div className="reply-text writing"><Markdown text={liveView(live).text} /></div>}</div>
+                </Turn>
+              )}
+              {running && !live && (
+                <WorkingRow start={tailStart()} startedAt={replyStartedAt} activity={stopping ? "Stopping…" : activity} />
+              )}
+            </>
           );
-        })}
-        {pending.filter((p) => !p.steer).map((p, i) => (
-          <div key={i} className="conv-msg user"><Markdown text={p.text} /></div>
-        ))}
-        {waitingHandoff.map((h) => (
-          <div key={h.at} className="conv-msg assistant live">
-            <div className="conv-head"><b>Claude</b></div>
-            {liveView(h.text).text && <Markdown text={liveView(h.text).text} />}
-          </div>
-        ))}
-        {live && (
-          <div className="conv-msg assistant live" aria-live="polite">
-            <div className="conv-head"><b>Claude</b><span className="muted small">writing…</span></div>
-            {liveView(live).text && <Markdown text={liveView(live).text} />}
-          </div>
-        )}
-        {running && !live && (
-          <div className="chat-typing"><span className="spinner" /> <span>{stopping ? "Stopping…" : activity ?? "Claude is working…"}</span></div>
-        )}
+        })()}
         {pending.filter((p) => p.steer).map((p, i) => (
-          <div key={i} className="conv-msg user pending">
-            <div className="conv-head"><b>You</b><span className="muted small">sent · Claude reads it at its next step</span></div>
-            <Markdown text={p.text} />
+          <div key={i} className="me-wrap">
+            <div className="conv-msg user pending"><Markdown text={p.text} /></div>
+            <div className="me-meta">sent · Claude reads it at its next step</div>
           </div>
         ))}
         {!!chat?.waiting && !running && (
           <div className="chat-note">{chat.waiting === 1 ? "Your message goes" : `${chat.waiting} messages go`} to Claude once the board has restarted.</div>
         )}
-        {chat?.error && !running && <div className="banner error inline"><pre>{chat.error}</pre></div>}
+        {chat?.error && !running && !closed && <ErrorTurn error={chat.error} onRetry={() => send(RETRY)} retryDisabled={sending} />}
         {closed && (
           <div className="banner info inline qc-closed" role="status">
             <span>This chat became a ticket. The conversation carries on in the ticket's chat.</span>
@@ -551,10 +607,12 @@ function ChatThread({ slug, chat, phone, onCreated, onOpenTicket, onNew }: {
             </span>
             <span className="composer-actions">
               <ImagePickButton images={images} target={composer} />
-              {running && <button className="btn danger small" disabled={stopping} onClick={stop}>{stopping ? "Stopping…" : "Stop"}</button>}
-              <button className="btn primary small" disabled={!draft.trim() || sending || images.uploading} onClick={send}>
-                {images.uploading ? "Uploading…" : "Send"}<KeyHint keys="↵" />
-              </button>
+              <SendOrStop running={running} hasDraft={!!draft.trim()} stopping={stopping} onStop={stop}
+                send={(
+                  <button className="btn primary small" disabled={!draft.trim() || sending || images.uploading} onClick={() => send()}>
+                    {images.uploading ? "Uploading…" : "Send"}<KeyHint keys="↵" />
+                  </button>
+                )} />
             </span>
           </div>
         </div>

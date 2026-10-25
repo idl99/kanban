@@ -813,6 +813,10 @@ test("a ticket's active run may change other tickets on its board: labelled note
     r = await send(`${tickets}/${next.id}/chat`, { text: "please pick this up" }, run);
     expect(r.status).toBe(202);
     expect(store.getTicket(p.slug, next.id)!.startedBy).toEqual({ ticketId: a.id, depth: 1 });
+    // Labelled with the sending ticket, so the chat shows it as that ticket's, not the user's.
+    expect(store.getTicket(p.slug, next.id)!.queued?.at(-1)).toMatchObject({
+      text: `Message from ticket ${a.id} ("Post #006 again"): please pick this up`, from: { ticketId: a.id, title: "Post #006 again" },
+    });
     expect(store.getTicket(p.slug, next.id)!.status).not.toBe("planning");
     expect(store.listComments(p.slug, next.id).some((c) => c.text === `Message sent ${by}.`)).toBe(true);
     r = await send(`${tickets}/${busy.id}/stop`, {}, run);
