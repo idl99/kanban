@@ -628,6 +628,17 @@ export function App() {
   // Every active ticket run (chat replies and Planning too); slots: the ones holding a maxParallel slot, as the server counts them.
   const running = runCounts(tickets, huddles);
   const liveHuddles = huddles.filter((h) => h.status === "live").length;
+  // Lessons the board saved on its own since the user last looked (Team, Learned).
+  const [learnedNew, setLearnedNew] = useState(0);
+  useEffect(() => {
+    setLearnedNew(0);
+    if (!slug) return;
+    const load = () => api.learned(slug).then((v) => setLearnedNew(v.newCount), () => {});
+    load();
+    return subscribe((e) => {
+      if (e.type === "learned.updated" && (e.profile === slug || e.profile === null)) load();
+    });
+  }, [slug]);
   const queued = tickets.filter((t) => t.status === "ready" || waitsForSlot(t)).length;
 
   const updateKey = `update:${version?.latest}`;
@@ -810,10 +821,11 @@ export function App() {
           </button>
         )}
         {profile && (
-          <button className={`btn ghost icon-label${shownItem === "team" ? " on" : ""}`} onClick={() => toggleDock("team")}
-            aria-pressed={shownItem === "team"} title={`Teammates, templates and huddles (T)${liveHuddles ? `. ${liveHuddles} ${liveHuddles === 1 ? "huddle" : "huddles"} live.` : ""}`} aria-label="Team">
+          <button className={`btn ghost icon-label${shownItem === "team" ? " on" : ""}`} onClick={() => (learnedNew && shownItem !== "team" ? openDockOn("team", { action: "learned" }) : toggleDock("team"))}
+            aria-pressed={shownItem === "team"} title={`Teammates, templates and huddles (T)${liveHuddles ? `. ${liveHuddles} ${liveHuddles === 1 ? "huddle" : "huddles"} live.` : ""}${learnedNew ? `. ${learnedNew} ${learnedNew === 1 ? "lesson" : "lessons"} saved.` : ""}`} aria-label="Team">
             <TeamIcon /><span className="label">Team</span>
             {liveHuddles > 0 && <span className="tab-count ok">{liveHuddles} live</span>}
+            {learnedNew > 0 && <span className="tab-count">{learnedNew} new</span>}
             <KeyHint keys="T" />
           </button>
         )}

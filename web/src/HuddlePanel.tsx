@@ -282,7 +282,8 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
   const log = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const side = useSideWidth(body);
-  const learnings = (h.learnings ?? []).filter((l) => l.status !== "discarded");
+  // Only proposed teammates wait here: lessons go to the board's pile and show in Team, Learned once they come back.
+  const learnings = (h.learnings ?? []).filter((l) => l.status !== "discarded" && !!l.teammate);
   const pending = learnings.filter((l) => l.status === "pending");
   // The learnings drawer: closed by default, open/closed remembered per huddle.
   const [learningsOpen, setLearningsOpen] = usePersistentState(formKey(slug, ticket.id, `huddle-learnings-${h.id}`), () => false, (v) => !v, (v) => typeof v === "boolean");
@@ -541,26 +542,9 @@ function HuddleRoom({ slug, ticket, tickets, huddle: h, state, onError, onNew, o
   );
 }
 
-/** A preset name from a role label, as the daemon makes it ("UX critic" -> "ux-critic"). */
-const presetName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24);
-const ALL_ROLES = "_all";
-
-/** Where a learning can go: its own role first (or every role for an ad-hoc agent), a new role from an ad-hoc one, other roles. */
-function targetOptions(l: HuddleLearning, presets: HuddlePreset[]): { value: string; label: string }[] {
-  const roles = presets.filter((p) => p.name !== "main");
-  const own = l.preset ? roles.find((p) => p.name === l.preset) : undefined;
-  const fresh = !l.preset && presetName(l.role) && !roles.some((p) => p.name === presetName(l.role));
-  return [
-    ...(own ? [{ value: own.name, label: `${own.role} (this role)` }] : []),
-    { value: ALL_ROLES, label: "All roles" },
-    ...(fresh ? [{ value: "new", label: `+ New role "${l.role}"` }] : []),
-    ...roles.filter((p) => p !== own).map((p) => ({ value: p.name, label: p.role })),
-  ];
-}
-
 /**
- * Learnings to review, in a drawer over the feed: lessons agents proposed when they turned done. Nothing is saved until
- * the user picks a scope and where it goes and presses Save; saved ones go into every future agent of that role's instructions.
+ * Learnings to review, in a drawer over the feed: teammates agents proposed. Nothing is saved until the user picks
+ * where and presses Save. (Lessons agents note when they turn done go to the board's pile, see Team, Learned.)
  */
 function Learnings({ slug, huddle: h, onClose, onError, onOpenTeam }: {
   slug: string; huddle: Huddle; onClose: () => void; onError: (m: string) => void; onOpenTeam?: (r: TeamRequest) => void;
@@ -568,12 +552,9 @@ function Learnings({ slug, huddle: h, onClose, onError, onOpenTeam }: {
   // Reloaded when a proposed teammate is saved, so the other cards see it.
   const saved = (h.learnings ?? []).filter((l) => l.teammate && l.status === "saved").length;
   const presets = usePresets(slug, saved);
-  // Esc closes the drawer, but not while editing a lesson (its textarea's Esc cancels the edit).
   useLayer(onClose, { skipInInputs: true });
-  const shown = (h.learnings ?? []).filter((l) => l.status !== "discarded");
+  const shown = (h.learnings ?? []).filter((l) => l.status !== "discarded" && !!l.teammate);
   const pending = shown.filter((l) => l.status === "pending");
-  const adhoc = pending.some((l) => !l.preset && !l.teammate);
-  const lessons = pending.some((l) => !l.teammate);
   return (
     <section className="hd-learnings" aria-label="Learnings to review">
       <div className="hd-learnings-head">
@@ -583,15 +564,13 @@ function Learnings({ slug, huddle: h, onClose, onError, onOpenTeam }: {
         <button className="icon-btn" onClick={onClose} aria-label="Close learnings" title="Close (Esc)"><CloseIcon size={12} /><KeyHint keys="Esc" /></button>
       </div>
       <div className="hd-learnings-sub muted small">
-        {!pending.length ? "Every lesson and teammate proposed in this huddle is saved or discarded."
-          : lessons ? "Proposed by agents when they turned done · nothing is saved until you choose." : "Proposed by agents · nothing is saved until you choose."}
+        {!pending.length ? "Every teammate proposed in this huddle is saved or discarded." : "Proposed by agents · nothing is saved until you choose."}
       </div>
       <div className="hd-learnings-list">
-        {shown.map((l) => l.teammate
-          ? <TeammateLearning key={l.id} slug={slug} huddle={h} l={l} teammate={l.teammate} presets={presets} onError={onError} onOpenTeam={onOpenTeam} />
-          : <Learning key={l.id} slug={slug} huddle={h} l={l} presets={presets ?? []} onError={onError} />)}
+        {shown.map((l) => l.teammate && (
+          <TeammateLearning key={l.id} slug={slug} huddle={h} l={l} teammate={l.teammate} presets={presets} onError={onError} onOpenTeam={onOpenTeam} />
+        ))}
       </div>
-      {adhoc && <div className="hd-learnings-foot muted small">Ad-hoc roles disappear with the huddle unless you save a lesson as a new role. Close huddle asks about learnings still pending.</div>}
     </section>
   );
 }
@@ -630,91 +609,6 @@ function TeammateLearning({ slug, huddle: h, l, teammate, presets, onError, onOp
             onScope={(s) => act(api.editLearning(slug, h.id, l.id, { scope: scope(s) }))}
             onSave={(s) => act(api.saveLearning(slug, h.id, l.id, { scope: scope(s) }))}
             onDismiss={() => act(api.discardLearning(slug, h.id, l.id))} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Learning({ slug, huddle: h, l, presets, onError }: { slug: string; huddle: Huddle; l: HuddleLearning; presets: HuddlePreset[]; onError: (m: string) => void }) {
-  const [edit, setEdit] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const act = async (p: Promise<unknown>) => {
-    setBusy(true);
-    try {
-      await p;
-      return true;
-    } catch (e) {
-      onError((e as Error).message);
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  };
-  const roleLabel = (name: string) => (name === ALL_ROLES ? "All roles" : presets.find((p) => p.name === name)?.role ?? name);
-  const where = l.scope === "general" ? "all repos" : `${slug} notes`;
-  const options = targetOptions(l, presets);
-  const target = options.some((o) => o.value === l.target) ? l.target : options[0]?.value ?? ALL_ROLES;
-  const save = async () => {
-    const text = edit?.trim();
-    if (await act(api.saveLearning(slug, h.id, l.id, { ...(text && text !== l.text ? { text } : {}), target }))) setEdit(null);
-  };
-  return (
-    <div className={`hd-learning ${l.status}`}>
-      <div className="hd-learning-who">
-        <b>@{l.from}</b> · {l.role}{!l.preset && <span className="hd-adhoc">ad-hoc</span>}
-      </div>
-      <div className="hd-learning-main">
-        {edit !== null ? (
-          <textarea rows={2} value={edit} maxLength={400} disabled={busy} autoFocus aria-label="Lesson"
-            onChange={(e) => setEdit(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") { e.stopPropagation(); setEdit(null); }
-              if (enterSends(e)) {
-                e.preventDefault();
-                const text = edit.trim();
-                if (text && text !== l.text) act(api.editLearning(slug, h.id, l.id, { text })).then((ok) => ok && setEdit(null));
-                else setEdit(null);
-              }
-            }} />
-        ) : (
-          <div className="hd-learning-rule">{l.text}</div>
-        )}
-        {l.evidence && <div className="hd-learning-ev">Evidence: {l.evidence}</div>}
-        <div className="hd-learning-row">
-          Scope
-          <span className="hd-scope" role="radiogroup" aria-label="Scope">
-            {(["general", "repo"] as const).map((s) => (
-              <button key={s} type="button" role="radio" aria-checked={l.scope === s} className={l.scope === s ? "on" : undefined}
-                disabled={busy || l.status !== "pending"} title={s === "general" ? "Every repo" : `Only the ${slug} board`}
-                onClick={() => l.scope !== s && act(api.editLearning(slug, h.id, l.id, { scope: s }))}>
-                {s === "general" ? "General" : "This repo"}
-              </button>
-            ))}
-          </span>
-          {l.status === "pending" && (
-            <>
-              Save to
-              <Select ariaLabel="Save to" className="roster-select hd-save-to" value={target} options={options} menuMaxHeight={240}
-                onChange={(v) => v !== l.target && act(api.editLearning(slug, h.id, l.id, { target: v }))} />
-            </>
-          )}
-        </div>
-      </div>
-      <div className="hd-learning-acts">
-        {l.status === "saved" ? (
-          <span className="hd-learning-saved">✓ {l.newRole ? `Saved as new role "${l.role}"` : `Saved to ${roleLabel(l.target)}`} · {where}</span>
-        ) : edit !== null ? (
-          <>
-            <button className="btn small" onClick={() => setEdit(null)} disabled={busy}>Cancel</button>
-            <button className="btn small ok" onClick={save} disabled={busy || !edit.trim()}>Save</button>
-          </>
-        ) : (
-          <>
-            <button className="btn small" onClick={() => setEdit(l.text)} disabled={busy}>Edit</button>
-            <button className="btn small" onClick={() => act(api.discardLearning(slug, h.id, l.id))} disabled={busy}>Discard</button>
-            <button className="btn small ok" onClick={save} disabled={busy}>Save</button>
-          </>
         )}
       </div>
     </div>

@@ -500,8 +500,23 @@ export class Store {
 
   /** Roles with a notes file (general or this board's repo notes). */
   huddleNoteRoles(slug: string): string[] {
-    const names = (dir: string) => (existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)) : []);
-    return [...new Set([...names(join(this.root, "huddle-notes")), ...names(join(this.profileDir(slug), "huddle-notes"))])].sort();
+    return [...new Set([...this.noteFileRoles(slug, "general"), ...this.noteFileRoles(slug, "repo")])].sort();
+  }
+
+  /** Roles with a notes file in one scope (general: every board's; repo: this board's). */
+  noteFileRoles(slug: string, scope: NoteScope): string[] {
+    const dir = join(scope === "general" ? this.root : this.profileDir(slug), "huddle-notes");
+    return existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).sort() : [];
+  }
+
+  /** What the board learned on its own (learn.ts): the pile and the change log, shared by every board. */
+  learnedDir(): string {
+    return join(this.root, "learned");
+  }
+
+  /** The rules the board learned from the user's corrections; every run on the board gets them (learn.ts). */
+  boardRulesPath(slug: string): string {
+    return join(this.profileDir(slug), "learned-rules.md");
   }
 
   private huddlesDir(slug: string) {

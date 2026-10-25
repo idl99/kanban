@@ -157,7 +157,7 @@ export default function Dock({ profile, pty, onClose, command, onCommandSent, ta
         </div>
         <div className="dock-pane" hidden={tab !== "team"}>
           {teamSeen && (
-            <TeamTab key={profile.slug} slug={profile.slug} boardName={profile.name} active={tab === "team"} openTicket={openTicket} onOpenHuddle={onOpenHuddle}
+            <TeamTab key={profile.slug} slug={profile.slug} boardName={profile.name} active={tab === "team"} openTicket={openTicket} onOpenHuddle={onOpenHuddle} onOpenTicket={onOpenTicket}
               request={tabRequest?.tab === "team" && tabRequest.team ? { ...tabRequest.team, n: tabRequest.n } : null}
               onStartHuddle={(seed) => onStartHuddle?.(seed)} huddles={huddles} />
           )}

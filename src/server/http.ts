@@ -44,9 +44,9 @@ import { attachmentHeader, canCopyFile, copyFileToClipboard, markdownPage, markd
 import { UpdateChecker } from "./update";
 import { SpendIndex } from "./spend";
 import { makeSideCaller, readSideSpend, type SideCaller } from "./side-call";
+import { LearnError, Learner } from "./learner";
 import { Simplifier, SimplifyError } from "./simplify";
 import { changesPrompt, HELP_KINDS, Helper, HelpError, newId, recapAvailable, recapPrompt, type HelpKind } from "./explain";
-import { addProjectRule, corrections, hasCorrections, LESSON_ACTIONS, lessonsAvailable, lessonsPrompt, LESSONS_SYSTEM, parseLessons, projectRules, type LessonAction } from "./lessons";
 import { ClaudeLogIndex, readWindows, recordWindow, ticketRuns, ticketUsage, UsageCache, windowsNeeded } from "./ticket-usage";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
@@ -81,6 +81,8 @@ export interface ServerDeps {
   jobs?: JobRunner;
   agents?: AgentRegistry;
   huddles?: Huddles;
+  /** What the board learns on its own (learner.ts); the daemon passes its started one. */
+  learner?: Learner;
   quickChats?: QuickChats;
   /** Restart the daemon once no run is active (POST /api/restart); missing when not running as the daemon. */
   restart?: () => { running: number; alreadyPending: boolean };
@@ -239,13 +241,18 @@ export function createServer(deps: ServerDeps) {
   const callbackUrl = () => `http://localhost:${server.port ?? deps.port}/api/passes/oauth/callback`;
   const passes = deps.passes ?? new Passes(store.root, bus, { fetch: globalThis.fetch, now: () => new Date() }, callbackUrl);
   const agents = deps.agents ?? new AgentRegistry();
-  const huddles = deps.huddles ?? new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
+  const sideCall = deps.sideCall ?? makeSideCaller({ cwd: join(store.root, "side-calls") });
+  const learner = deps.learner ?? new Learner(store, bus, {
+    sideCall, entries: (t) => (t.sessionId ? sessions.get(t.sessionId)?.entries : null) ?? [], isRunning: (slug, id) => board.isRunning(slug, id),
+  });
+  const huddles = deps.huddles ?? new Huddles(store, board, bus, {
+    claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude", learn: (slug, h, p, role, lessons) => void learner.addHuddleLessons(slug, h, p, role, lessons),
+  });
   const quickChats = deps.quickChats ?? new QuickChats(store, bus, board, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   const snippets = new Snippets(store, bus);
   const windowsFile = join(store.root, "usage-windows.json");
   const usage = new UsageCache(deps.usage ?? fetchUsage, (r) => recordWindow(windowsFile, r));
   const spend = new SpendIndex(store);
-  const sideCall = deps.sideCall ?? makeSideCaller({ cwd: join(store.root, "side-calls") });
   const loops = deps.loops ?? new LoopManager(store, bus, board, passes, {
     now: () => new Date(), sideCall, shimDir: () => ckanbanShim(store.root), port: () => server.port ?? deps.port,
   });
@@ -1164,6 +1171,28 @@ export function createServer(deps: ServerDeps) {
       throw new HttpError(404, "not found");
     }
 
+    // /profiles/:p/learned — what the board learned on its own (learner.ts). Anyone reads; only the user undoes,
+    // saves or drops, so no run or agent can change what future runs are told.
+    if (parts[2] === "learned") {
+      if (parts.length === 3 && m === "GET") return json(learner.view(slug));
+      if (m !== "POST") throw new HttpError(404, "not found");
+      if (req.headers.get(RUN_HEADER) || req.headers.get(HUDDLE_HEADER)) throw new HttpError(403, "only the user changes what the board learned (Team, Learned)");
+      try {
+        if (parts.length === 4 && parts[3] === "seen") {
+          await learner.markSeen(slug);
+          return json(learner.view(slug));
+        }
+        const [, , , what, id, act] = parts;
+        if (parts.length === 6 && what === "changes" && (act === "undo" || act === "redo")) return json(await learner.undo(id, act === "redo"));
+        if (parts.length === 6 && what === "lessons" && act === "save") return json(await learner.saveNow(id));
+        if (parts.length === 6 && what === "lessons" && (act === "drop" || act === "keep")) return json(await learner.drop(id, act === "keep"));
+      } catch (err) {
+        if (err instanceof LearnError) throw new HttpError(err.status, err.message);
+        throw err;
+      }
+      throw new HttpError(404, "not found");
+    }
+
     // /profiles/:p/huddle-notes[/:role/:scope] — role notes from past huddles (huddle-notes.ts). Anyone reads; only the
     // user writes them, so no agent can change what future agents are told.
     if (parts[2] === "huddle-notes") {
@@ -1531,7 +1560,6 @@ export function createServer(deps: ServerDeps) {
       const entries = (t.sessionId ? sessions.get(t.sessionId)?.entries : null) ?? [];
       return json({
         cards: helper.cards(slug, id), busy: helper.busy(slug, id), recap: recapAvailable(entries),
-        lessons: lessonsAvailable(t, entries, store.listTickets(slug)),
       });
     }
     if (action === "help" && m === "POST") {
@@ -1542,21 +1570,7 @@ export function createServer(deps: ServerDeps) {
       const t = store.getTicket(slug, id)!;
       const entries = (t.sessionId ? sessions.get(t.sessionId)?.entries : null) ?? [];
       let prompt: string;
-      let opts = {};
-      if (kind === "lessons") {
-        if (t.status !== "review" && t.status !== "done") throw new HttpError(400, "lessons come once the ticket is in Review or Done");
-        const c = corrections(t, entries, store.listTickets(slug));
-        if (!hasCorrections(c)) throw new HttpError(400, "you haven't corrected anything on this ticket");
-        prompt = lessonsPrompt({ ticket: t, entries, corrections: c, existing: projectRules(profile.path) });
-        opts = {
-          system: LESSONS_SYSTEM,
-          finish: (text: string) => {
-            const r = parseLessons(text, newId);
-            if (!r) throw new HelpError(502, "Claude's answer wasn't a list of lessons; try again");
-            return { text: r.lessons.length ? "" : r.note ? `Nothing worth a rule. ${r.note}` : "Nothing worth a rule.", lessons: r.lessons };
-          },
-        };
-      } else if (kind === "recap") {
+      if (kind === "recap") {
         if (!recapAvailable(entries)) throw new HttpError(400, "nothing happened since your last message");
         const findings = huddles.list(slug, id).flatMap((h) => h.findings);
         prompt = recapPrompt({ ticket: t, entries, findings, running: board.isRunning(slug, id) });
@@ -1567,37 +1581,10 @@ export function createServer(deps: ServerDeps) {
       }
       const cwd = t.worktree ?? t.workdir ?? (t.baseSha ? profile.path : null);
       try {
-        return json(await helper.ask(slug, id, kind, prompt, cwd, opts));
+        return json(await helper.ask(slug, id, kind, prompt, cwd));
       } catch (err) {
         if (err instanceof HelpError) throw new HttpError(err.status, err.message);
         throw err;
-      }
-    }
-    if (action === "lesson" && m === "POST") {
-      // A suggested lesson: add it to the project's rules (its CLAUDE.md, in the board's folder), make it a Backlog
-      // ticket linked to this one, or dismiss it. The text comes from the saved card, never from the request.
-      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "lessons are the user's click, not a board run's");
-      const b = (await body(req)) ?? {};
-      const what = b.action as LessonAction;
-      if (!LESSON_ACTIONS.includes(what)) throw new HttpError(400, `action must be one of: ${LESSON_ACTIONS.join(", ")}`);
-      try {
-        const card = await helper.lesson(slug, id, String(b.card ?? ""), String(b.lesson ?? ""), async (l) => {
-          const at = new Date().toISOString();
-          if (what === "rule") {
-            addProjectRule(profile.path, l.rule);
-            return { action: what, at };
-          }
-          if (what === "ticket") {
-            const body = `${l.rule}\n\n**Why:** ${l.mistake}${l.evidence ? `\n\n**What the user said:** "${l.evidence}"` : ""}`;
-            const nt = await board.addOnTicket(slug, id, { title: l.title, body });
-            return { action: what, at, ticketId: nt.id };
-          }
-          return { action: what, at };
-        });
-        return json(card);
-      } catch (err) {
-        if (err instanceof HelpError) throw new HttpError(err.status, err.message);
-        throw new HttpError(400, (err as Error).message);
       }
     }
     if (action === "agent" && parts.length === 6 && m === "GET") {

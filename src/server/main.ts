@@ -17,6 +17,7 @@ import { Passes } from "./integrations/passes";
 import { ckanbanShim } from "./integrations/script";
 import { LoopManager } from "./loops";
 import { makeSideCaller } from "./side-call";
+import { Learner } from "./learner";
 import { Scheduler } from "./scheduler";
 import { JobRunner } from "./jobs";
 import { FollowUpWatcher } from "./followup";
@@ -67,10 +68,16 @@ export async function startDaemon(): Promise<void> {
   const jobs = new JobRunner(board, store, bus);
   const passes = new Passes(store.root, bus, { fetch: globalThis.fetch, now: () => new Date() }, () => `http://localhost:${port}/api/passes/oauth/callback`);
   const shimDir = ckanbanShim(store.root);
+  const sideCall = makeSideCaller({ cwd: join(store.root, "side-calls") });
   const loops = new LoopManager(store, bus, board, passes, {
-    now: () => new Date(), sideCall: makeSideCaller({ cwd: join(store.root, "side-calls") }), shimDir: () => shimDir, port: () => port,
+    now: () => new Date(), sideCall, shimDir: () => shimDir, port: () => port,
   });
-  const huddles = new Huddles(store, board, bus, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
+  const learner = new Learner(store, bus, {
+    sideCall, entries: (t) => (t.sessionId ? sessions.get(t.sessionId)?.entries : null) ?? [], isRunning: (slug, id) => board.isRunning(slug, id),
+  });
+  const huddles = new Huddles(store, board, bus, {
+    claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude", learn: (slug, h, p, role, lessons) => void learner.addHuddleLessons(slug, h, p, role, lessons),
+  });
   const quickChats = new QuickChats(store, bus, board, { claudeBin: process.env.CKANBAN_CLAUDE_BIN ?? "claude" });
   // launchd (KeepAlive) starts the daemon again once it exits.
   const restart = () => board.requestRestart(() => void shutdown());
@@ -79,7 +86,7 @@ export async function startDaemon(): Promise<void> {
     onChange: (held) => bus.emit({ type: "awake.updated", held }),
   });
   const remotePort = remoteListenPort(port, config.remotePort);
-  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, jobs, huddles, quickChats, loops, passes, assets: WEB_ASSETS, restart, awake: () => awake.held(), notifier, push });
+  const server = createServer({ store, bus, board, port, remotePort, webDir, sessions, terminals, shells, mcp, scheduler, jobs, huddles, learner, quickChats, loops, sideCall, passes, assets: WEB_ASSETS, restart, awake: () => awake.held(), notifier, push });
   console.log(`ckanban v${VERSION} listening on http://localhost:${server.port} (data: ${store.root})`);
   board.recover();
   huddles.recover();
@@ -92,6 +99,7 @@ export async function startDaemon(): Promise<void> {
   const stopScheduler = scheduler.start();
   const stopJobs = jobs.start();
   const stopLoops = loops.start();
+  const stopLearner = learner.start();
   const stopLimits = new LimitWatcher(board, store).start();
   const stopFollowUps = new FollowUpWatcher(board, store).start();
   const stopWatcher = startSessionWatcher(store, bus, sessions);
@@ -108,6 +116,7 @@ export async function startDaemon(): Promise<void> {
     stopScheduler();
     stopJobs();
     stopLoops();
+    stopLearner();
     stopLimits();
     stopFollowUps();
     stopWatcher();

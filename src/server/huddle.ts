@@ -103,8 +103,6 @@ export const AGENT_ONLY_MAX = 30;
 /** Messages in a row going back and forth between the same two participants. */
 export const PING_PONG = 6;
 const BUDGET_WARN = 0.8;
-/** Lessons one participant can have waiting for the user's review. */
-const MAX_PENDING = 3;
 /** Teammates one agent may have waiting for the user's review at once. */
 const MAX_PENDING_TEAMMATES = 2;
 /** A live huddle with nobody working and nothing owed for this long wakes @main (see idleSweep). */
@@ -165,8 +163,8 @@ export type HuddleView = Omit<Huddle, "participants"> & {
   summary: string | null;
 };
 
-/** Lessons waiting for the user to save or discard them. */
-export const pendingLearnings = (h: Huddle) => (h.learnings ?? []).filter((l) => l.status === "pending");
+/** Teammates agents proposed, waiting for the user (lessons no longer wait: they go to the board's pile, learner.ts). */
+export const pendingLearnings = (h: Huddle) => (h.learnings ?? []).filter((l) => l.status === "pending" && !!l.teammate);
 
 /** The seq the user has seen up to: their last post or action (Stop, Resume, restart…). */
 export function userSeenSeq(h: Huddle, msgs: HuddleMessage[]): number {
@@ -239,6 +237,11 @@ export interface HuddleOptions {
   /** How long a monitor-mode session stays open between turns (default 30 min). */
   idleMs?: number;
   sessionExists?: (sessionId: string) => boolean;
+  /**
+   * Lessons an agent proposed when it turned done, with the role they would go to: they go to the board's pile of
+   * lessons (learner.ts), not to the user, and are saved once they come back. Without it they are dropped.
+   */
+  learn?: (slug: string, h: Huddle, p: HuddleParticipant, role: string, lessons: LessonInput[]) => void;
 }
 
 interface AgentRun {
@@ -785,17 +788,11 @@ export class Huddles {
     return lessonsSection(read(ALL_ROLES), role ? read(role) : null, role);
   }
 
+  /** Lessons go to the board's pile (opts.learn), aimed at the agent's own role when it has one, else every role. */
   private addLearnings(slug: string, hid: string, p: HuddleParticipant, lessons: LessonInput[]) {
     const presets = this.presetMap(slug);
-    // Default target: the agent's own role when it has one, else every role.
     const target = p.preset && p.preset !== MAIN_PRESET && presets.has(p.preset) ? p.preset : ALL_ROLES;
-    const at = nowIso();
-    this.update(slug, hid, (x) => {
-      x.learnings ??= [];
-      for (const l of lessons) {
-        x.learnings.push({ id: `l${x.learnings.length + 1}`, from: p.handle, role: p.role, preset: p.preset ?? null, ...l, status: "pending", target, at });
-      }
-    });
+    this.opts.learn?.(slug, this.get(slug, hid), p, target, lessons);
   }
 
   private learning(h: Huddle, id: string): HuddleLearning {
@@ -1528,10 +1525,6 @@ export class Huddles {
     if (!out.length) return out;
     if (status !== "done") throw new HuddleError(400, "lessons go with status done, when your job is finished");
     if (by.kind !== "agent") throw new HuddleError(400, "only huddle agents propose lessons");
-    const waiting = pendingLearnings(h).filter((l) => l.from === by.handle && !l.teammate).length;
-    if (waiting + out.length > MAX_PENDING) {
-      throw new HuddleError(400, `you already have ${waiting} lesson${waiting === 1 ? "" : "s"} waiting for the user; at most ${MAX_PENDING} can wait at once. Nothing was changed.`);
-    }
     return out;
   }
 
@@ -1558,7 +1551,7 @@ export class Huddles {
       this.updateP(slug, hid, p.handle, { status, statusReason: why });
       if (proposed.length) this.addLearnings(slug, hid, p, proposed);
       const n = proposed.length;
-      const learned = n ? `${why ? "." : ""} It proposed ${n} lesson${n === 1 ? "" : "s"} for future huddles; the user reviews ${n === 1 ? "it" : "them"} under Learnings.` : "";
+      const learned = n ? `${why ? "." : ""} It noted ${n} lesson${n === 1 ? "" : "s"} for future huddles; the board saves ${n === 1 ? "it" : "them"} once ${n === 1 ? "it comes" : "they come"} up again (Team, Learned).` : "";
       if (status === "done") this.system(slug, hid, `@${p.handle} is done${why ? `: ${why}` : "."}${learned}`);
       else if (!wasHost) this.system(slug, hid, `@${p.handle} is blocked: ${why}`, [isCoordinator(h, p) ? USER_HANDLE : activeHost(h)]);
     }

@@ -84,7 +84,7 @@ test("recap: offered after Claude's reply, a Sonnet side call from the user's la
   const id = await ticket(AWAY_SID);
   calls.length = 0;
   const before = readFileSync(awayFile, "utf8");
-  expect(await help(id)).toEqual({ cards: [], busy: [], recap: true, lessons: false });
+  expect(await help(id)).toEqual({ cards: [], busy: [], recap: true });
   const r = await ask(id, "recap");
   expect(r.status).toBe(200);
   const card = await r.json();

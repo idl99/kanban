@@ -1030,13 +1030,14 @@ export function huddlePageText(p: HuddlePage, since?: number): string {
   return lines.join("\n");
 }
 
-/** Lessons an agent may propose when it turns done (huddle-notes.ts); the user alone saves them as role notes. */
+/** Lessons an agent may propose when it turns done: they go to the board's pile (learner.ts), saved once they come back. */
 const LESSONS = {
   type: "array",
   maxItems: 3,
   description:
-    "Optional, with status done: up to 3 lessons worth reusing in future huddles of your role. Each is a short rule (max 200 characters), " +
-    "with evidence (a message #n or a file) and scope general (any repo) or repo (this repo only). The user reviews them; only the user saves them. None is fine.",
+    "Optional, with status done: up to 3 lessons that would help your role on a different task. Each text is a general rule (max 200 characters), " +
+    "with no ids, names, message numbers or task-only paths (those go in evidence: a message #n or a file), and scope general (any repo) or repo (this repo only). " +
+    "The board saves one for future agents only once it comes up again in another huddle. None is fine.",
   items: {
     type: "object",
     properties: {
@@ -1101,7 +1102,7 @@ const HUDDLE_TOOLS: Tool[] = [
       const lessons = Array.isArray(args?.lessons) ? args.lessons : undefined;
       const p = await ctx.client.huddleStatus(slug, huddleId(args, ctx), status, str(args, "reason", false), huddleCaller(ctx.env), lessons);
       const n = lessons?.length ?? 0;
-      return `@${p.handle} is now ${p.status}${p.statusReason ? ` (${p.statusReason})` : ""}.${n ? ` ${n} lesson${n === 1 ? "" : "s"} sent to the user for review.` : ""}`;
+      return `@${p.handle} is now ${p.status}${p.statusReason ? ` (${p.statusReason})` : ""}.${n ? ` ${n} lesson${n === 1 ? "" : "s"} noted; the board saves ${n === 1 ? "it" : "them"} once ${n === 1 ? "it comes" : "they come"} up again.` : ""}`;
     },
   },
   {

@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { DiffFile, TicketDiff } from "./diff";
-import type { Lesson } from "./lessons";
 import { parseResult } from "./result";
 import type { SessionEntry } from "./session";
 import { addSideSpend, READ_TOOLS, type SideCaller } from "./side-call";
@@ -12,11 +11,10 @@ import type { HuddleFinding, Ticket } from "./types";
 // ticket's help.json; its cost goes on the ticket's side ledger.
 //   recap:   "What happened while I was away?", after pstack's /ketchup.
 //   changes: "Explain the changes", after pstack's /teach.
-//   lessons: "Learn from this ticket", after pstack's /reflect and /correct (lessons.ts).
 
-export type HelpKind = "recap" | "changes" | "lessons";
+export type HelpKind = "recap" | "changes";
 
-export const HELP_KINDS: HelpKind[] = ["recap", "changes", "lessons"];
+export const HELP_KINDS: HelpKind[] = ["recap", "changes"];
 
 export interface HelpCard {
   id: string;
@@ -25,8 +23,6 @@ export interface HelpCard {
   text: string;
   costUsd: number;
   model: string;
-  /** lessons: the suggested lessons (text then is a note, e.g. why there are none). */
-  lessons?: Lesson[];
 }
 
 export const HELP_MODEL = "sonnet";
@@ -185,13 +181,7 @@ export function changesPrompt({ ticket: t, entries, diff }: ChangesInput): strin
   ].filter(Boolean).join("\n\n");
 }
 
-export const HELP_SYSTEM: Partial<Record<HelpKind, string>> = { recap: RECAP_SYSTEM, changes: CHANGES_SYSTEM };
-
-/** How a call's answer becomes a card (the default keeps the text as it is); throw a HelpError when it can't. */
-export interface AskOptions {
-  system?: string;
-  finish?: (text: string) => Pick<HelpCard, "text" | "lessons">;
-}
+export const HELP_SYSTEM: Record<HelpKind, string> = { recap: RECAP_SYSTEM, changes: CHANGES_SYSTEM };
 
 export class HelpError extends Error {
   constructor(public status: number, message: string) {
@@ -213,8 +203,6 @@ export const newId = () => `h_${Date.now().toString(36)}${Math.random().toString
 export class Helper {
   /** Answers in progress, by ticket file + kind: a double click or a second device waits for the same call. */
   private running = new Map<string, Promise<HelpCard>>();
-  /** Lessons being acted on (a double click doesn't add the rule or make the ticket twice). */
-  private acting = new Set<string>();
 
   constructor(private store: Store, private call: SideCaller) {}
 
@@ -230,7 +218,7 @@ export class Helper {
   }
 
   /** A new answer, saved as a card; cwd: the ticket's folder (read-only), when it still exists. */
-  async ask(slug: string, id: string, kind: HelpKind, prompt: string, cwd: string | null, o: AskOptions = {}): Promise<HelpCard> {
+  async ask(slug: string, id: string, kind: HelpKind, prompt: string, cwd: string | null): Promise<HelpCard> {
     const file = this.store.helpPath(slug, id);
     const key = `${file}|${kind}`;
     let p = this.running.get(key);
@@ -238,12 +226,11 @@ export class Helper {
       p = (async () => {
         const folder = cwd && existsSync(cwd) ? cwd : undefined;
         const r = await this.call({
-          system: o.system ?? HELP_SYSTEM[kind] ?? "", prompt, model: HELP_MODEL, timeoutMs: 240_000, ...(folder ? { cwd: folder, tools: READ_TOOLS } : {}),
+          system: HELP_SYSTEM[kind], prompt, model: HELP_MODEL, timeoutMs: 240_000, ...(folder ? { cwd: folder, tools: READ_TOOLS } : {}),
         });
         if (!r.ok) throw new HelpError(502, r.error);
         addSideSpend(this.store.sideSpendPath(slug, id), `help-${kind}`, r.costUsd);
-        const body = o.finish ? o.finish(r.text) : { text: r.text };
-        const card: HelpCard = { id: newId(), kind, at: new Date().toISOString(), ...body, costUsd: r.costUsd, model: r.model };
+        const card: HelpCard = { id: newId(), kind, at: new Date().toISOString(), text: r.text, costUsd: r.costUsd, model: r.model };
         // Read again: another answer may have been saved meanwhile.
         atomicWrite(file, JSON.stringify([...readCards(file), card].slice(-CARDS_MAX), null, 2) + "\n");
         return card;
@@ -251,33 +238,5 @@ export class Helper {
       this.running.set(key, p);
     }
     return p;
-  }
-
-  /** Records what the user did with a suggested lesson (act: the action itself, run before it is saved); the updated card. */
-  async lesson(slug: string, id: string, cardId: string, lessonId: string, act: (l: Lesson) => Promise<NonNullable<Lesson["done"]>>): Promise<HelpCard> {
-    const file = this.store.helpPath(slug, id);
-    const find = () => {
-      const cards = readCards(file);
-      const card = cards.find((c) => c.id === cardId);
-      const lesson = card?.lessons?.find((l) => l.id === lessonId);
-      return { cards, card, lesson };
-    };
-    const { lesson } = find();
-    if (!lesson) throw new HelpError(404, "that lesson is gone");
-    const key = `${file}|${lessonId}`;
-    if (lesson.done || this.acting.has(key)) throw new HelpError(409, "that lesson was already handled");
-    this.acting.add(key);
-    let done: NonNullable<Lesson["done"]>;
-    try {
-      done = await act(lesson);
-    } finally {
-      this.acting.delete(key);
-    }
-    // Read again: another card may have been saved meanwhile.
-    const again = find();
-    if (!again.card || !again.lesson) throw new HelpError(404, "that lesson is gone");
-    again.lesson.done = done;
-    atomicWrite(file, JSON.stringify(again.cards, null, 2) + "\n");
-    return again.card;
   }
 }

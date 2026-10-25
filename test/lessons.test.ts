@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { Board } from "../src/server/board";
 import { Bus } from "../src/server/events";
 import { createServer } from "../src/server/http";
-import { addProjectRule, lessonBullets, lessonsBlock, parseLessons, withLesson } from "../src/server/lessons";
+import { Learner } from "../src/server/learner";
+import { lessonBullets, lessonsBlock } from "../src/server/lessons";
 import { SessionCache } from "../src/server/session";
 import type { SideCallInput, SideCallResult } from "../src/server/side-call";
-import { SpendIndex } from "../src/server/spend";
 import { Store } from "../src/server/store";
 import { tempDir } from "./helpers";
 
@@ -32,19 +32,12 @@ const CORRECTED_SID = "11111111-2222-3333-4444-aaaaaaaaaaaa";
 const CLEAN_SID = "11111111-2222-3333-4444-bbbbbbbbbbbb";
 
 let server: ReturnType<typeof createServer>;
+let learner: Learner;
 let store: Store;
 let base: string;
 let folder: string;
 const calls: SideCallInput[] = [];
-const LESSONS = {
-  lessons: [
-    { mistake: "Claude put a new link above the button.", evidence: "links on forms always go under the main button", level: "rule", rule: "Put new links on forms under the main button.", title: "Links under buttons" },
-    { mistake: "Each form places links its own way.", evidence: "always go under the main button", level: "structure", rule: "Make one shared form footer that holds links under the button.", title: "Shared form footer" },
-    { mistake: "x", level: "poem", rule: "y" },
-  ],
-  note: "",
-};
-let next: SideCallResult = { ok: true, text: "```json\n" + L(LESSONS) + "\n```", costUsd: 0.02, model: "claude-sonnet-5-5" };
+let next: SideCallResult = { ok: true, text: L({ lessons: [{ mistake: "m", evidence: "links on forms always go under the main button", rule: "Put new links on forms under the main button.", match: "", standing: "links on forms always go under the main button" }] }), costUsd: 0.02, model: "claude-haiku-5-5" };
 
 beforeAll(() => {
   const configDir = tempDir();
@@ -55,13 +48,13 @@ beforeAll(() => {
   store = new Store(tempDir("ck-home-"));
   const bus = new Bus();
   const board = new Board(store, bus, { claudeBin: "/bin/false" });
-  server = createServer({
-    store, bus, board, port: 0, webDir: tempDir("ck-web-"), sessions: new SessionCache({ configDir }),
-    sideCall: async (i) => {
-      calls.push(i);
-      return next;
-    },
-  });
+  const sessions = new SessionCache({ configDir });
+  const sideCall = async (i: SideCallInput) => {
+    calls.push(i);
+    return next;
+  };
+  learner = new Learner(store, bus, { sideCall, entries: (t) => (t.sessionId ? sessions.get(t.sessionId)?.entries : null) ?? [], isRunning: () => false });
+  server = createServer({ store, bus, board, port: 0, webDir: tempDir("ck-web-"), sessions, sideCall, learner });
   base = `http://127.0.0.1:${server.port}`;
   // A plain folder: no version history.
   folder = tempDir("ck-plain-");
@@ -81,40 +74,49 @@ const help = async (id: string) => (await (await fetch(url(id, "help"))).json())
 const post = (id: string, what: string, b: unknown, headers: Record<string, string> = {}) =>
   fetch(url(id, what), { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(b) });
 
-test("a corrected Done ticket: lessons quote the correction, a rule goes into CLAUDE.md, a code lesson becomes a linked ticket", async () => {
+test("the help menu no longer offers lessons: the board learns on its own", async () => {
   const id = ticket(CORRECTED_SID);
-  expect((await help(id)).lessons).toBe(true);
+  expect((await help(id)).lessons).toBeUndefined();
   calls.length = 0;
-  const r = await post(id, "help", { kind: "lessons" });
-  expect(r.status).toBe(200);
-  const card = (await r.json()) as any;
-  expect(calls).toHaveLength(1);
-  expect(calls[0].model).toBe("sonnet");
-  expect(calls[0].system).toContain("structure");
-  expect(calls[0].prompt).toContain("links on forms always go under the main button");
-  // Bad lessons are dropped; the good ones keep their level.
-  expect(card.lessons.map((l: any) => l.level)).toEqual(["rule", "structure"]);
-  expect(card.lessons[0].evidence).toContain("under the main button");
-  expect(new SpendIndex(store).ticket("p", id).costUsd).toBeCloseTo(0.02, 6);
-
-  // Add to project rules: a plain folder without CLAUDE.md gets one.
-  const [rule, code] = card.lessons;
-  const added = (await (await post(id, "lesson", { card: card.id, lesson: rule.id, action: "rule" })).json()) as any;
-  expect(added.lessons[0].done.action).toBe("rule");
-  expect(readFileSync(join(folder, "CLAUDE.md"), "utf8")).toBe("## Lessons\n\n- Put new links on forms under the main button.\n");
-  // Once handled, it can't be done twice.
-  expect((await post(id, "lesson", { card: card.id, lesson: rule.id, action: "rule" })).status).toBe(409);
-
-  // Make it a ticket: a Backlog ticket that follows this one up, with the lesson as its description.
-  const made = (await (await post(id, "lesson", { card: card.id, lesson: code.id, action: "ticket" })).json()) as any;
-  const nt = store.getTicket("p", made.lessons[1].done.ticketId)!;
-  expect(nt).toMatchObject({ status: "backlog", addOnOf: id, title: "Shared form footer" });
-  expect(nt.body).toContain("shared form footer");
-  expect(nt.body).toContain("always go under the main button");
-  expect((await help(id)).cards[0].lessons[1].done.ticketId).toBe(nt.id);
+  expect((await post(id, "help", { kind: "lessons" })).status).toBe(400);
+  expect((await post(id, "lesson", { card: "x", lesson: "y", action: "rule" })).status).toBe(404);
+  expect(calls).toHaveLength(0);
 });
 
-test("next run prompt: a worktree without the rule is told about it", () => {
+test("a corrected ticket is read by the learner: the user's 'always' saves a board rule, never in the project folder", async () => {
+  const id = ticket(CORRECTED_SID);
+  const [c] = await learner.scanTicket("p", id);
+  expect(calls.at(-1)!.prompt).toContain("links on forms always go under the main button");
+  expect(c.state).toBe("saved");
+  expect(readFileSync(store.boardRulesPath("p"), "utf8")).toContain("- Put new links on forms under the main button.");
+  // The project's own folder is left alone.
+  expect(existsSync(join(folder, "CLAUDE.md"))).toBe(false);
+  // A ticket without corrections isn't read.
+  calls.length = 0;
+  expect(await learner.scanTicket("p", ticket(CLEAN_SID))).toEqual([]);
+  expect(calls).toHaveLength(0);
+});
+
+test("Learned routes: anyone reads; only the user undoes, saves or drops; seen clears the count", async () => {
+  const learned = (what = "", init?: RequestInit) => fetch(`${base}/api/profiles/p/learned${what}`, init);
+  const view = (await (await learned()).json()) as any;
+  expect(view.saved.length).toBeGreaterThan(0);
+  expect(view.newCount).toBeGreaterThan(0);
+  const change = view.saved[0];
+  const postL = (what: string, headers: Record<string, string> = {}) => learned(what, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: "{}" });
+  expect((await postL(`/changes/${change.id}/undo`, { "x-ckanban-run": "p/x" })).status).toBe(403);
+  expect((await postL(`/changes/${change.id}/undo`)).status).toBe(200);
+  // The rules file didn't exist before: undo takes it away again.
+  expect(existsSync(store.boardRulesPath("p"))).toBe(false);
+  expect((await postL(`/changes/${change.id}/undo`)).status).toBe(409);
+  expect((await postL(`/changes/${change.id}/redo`)).status).toBe(200);
+  expect((await postL("/changes/nope/undo")).status).toBe(404);
+  expect((await postL("/lessons/nope/save")).status).toBe(404);
+  expect(((await (await postL("/seen")).json()) as any).newCount).toBe(0);
+});
+
+test("next run prompt: a worktree without the project's CLAUDE.md lessons is told about them", () => {
+  writeFileSync(join(folder, "CLAUDE.md"), "# Rules\n\n## Lessons\n\n- Put new links on forms under the main button.\n");
   const wt = tempDir("ck-wt-");
   expect(lessonsBlock(folder, wt)).toContain("Put new links on forms under the main button.");
   expect(lessonsBlock(folder, folder)).toBe("");
@@ -122,65 +124,7 @@ test("next run prompt: a worktree without the rule is told about it", () => {
   expect(lessonsBlock(folder, wt)).toBe("");
 });
 
-test("no corrections, no item; the call is refused too", async () => {
-  const id = ticket(CLEAN_SID);
-  expect((await help(id)).lessons).toBe(false);
-  calls.length = 0;
-  expect((await post(id, "help", { kind: "lessons" })).status).toBe(400);
-  expect(calls).toHaveLength(0);
-  // A corrected ticket that is still being worked on doesn't offer it either.
-  expect((await help(ticket(CORRECTED_SID, "in_progress"))).lessons).toBe(false);
-  // An add-on ticket counts as a correction.
-  const f = store.createTicket("p", { title: "More", body: "", status: "backlog" });
-  store.updateTicket("p", f.id, { addOnOf: id });
-  expect((await help(id)).lessons).toBe(true);
-});
-
-test("nothing worth a rule, unreadable answers, bad actions and board runs", async () => {
-  const id = ticket(CORRECTED_SID, "review");
-  const prev = next;
-  try {
-    next = { ok: true, text: L({ lessons: [], note: "The change was a new wish, not a mistake." }), costUsd: 0.01, model: "m" };
-    const card = (await (await post(id, "help", { kind: "lessons" })).json()) as any;
-    expect(card.lessons).toEqual([]);
-    expect(card.text).toBe("Nothing worth a rule. The change was a new wish, not a mistake.");
-    next = { ok: true, text: "Sorry, I can't.", costUsd: 0.01, model: "m" };
-    expect((await post(id, "help", { kind: "lessons" })).status).toBe(502);
-  } finally {
-    next = prev;
-  }
-  expect((await post(id, "lesson", { card: "x", lesson: "y", action: "rule" })).status).toBe(404);
-  expect((await post(id, "lesson", { card: "x", lesson: "y", action: "delete" })).status).toBe(400);
-  expect((await post(id, "lesson", { card: "x", lesson: "y", action: "rule" }, { "x-ckanban-run": "1" })).status).toBe(403);
-  expect((await post(id, "help", { kind: "lessons" }, { "x-ckanban-run": "1" })).status).toBe(403);
-});
-
-test("withLesson: adds one bullet at the end of the Lessons section and keeps the rest", () => {
-  const doc = "# Project\n\nIntro.\n\n## Lessons\n\n- One.\n\n## Other\n\nText.\n";
-  expect(withLesson(doc, "Two.")).toBe("# Project\n\nIntro.\n\n## Lessons\n\n- One.\n- Two.\n\n## Other\n\nText.\n");
-  expect(withLesson("# Project\n\nIntro.", "Two.")).toBe("# Project\n\nIntro.\n\n## Lessons\n\n- Two.\n");
-  expect(withLesson("## Lessons\n", "Two.")).toBe("## Lessons\n\n- Two.\n");
-  expect(withLesson("", "Two.")).toBe("## Lessons\n\n- Two.\n");
-  expect(lessonBullets(withLesson(doc, "Two."))).toEqual(["One.", "Two."]);
-  // ### headings stay inside the section.
-  expect(withLesson("## Lessons\n\n### Old\n- A.\n", "B.")).toBe("## Lessons\n\n### Old\n- A.\n- B.\n");
-});
-
-test("addProjectRule: an existing rule is not added again", () => {
-  const dir = tempDir("ck-rules-");
-  writeFileSync(join(dir, "CLAUDE.md"), "# Rules\n\n## Lessons\n\n- Keep it short.\n");
-  expect(addProjectRule(dir, "keep it short.").added).toBe(false);
-  expect(addProjectRule(dir, "Say why.").added).toBe(true);
-  expect(readFileSync(join(dir, "CLAUDE.md"), "utf8")).toBe("# Rules\n\n## Lessons\n\n- Keep it short.\n- Say why.\n");
-  expect(existsSync(join(dir, "CLAUDE.md"))).toBe(true);
-});
-
-test("parseLessons: at most three, needs a level, a mistake and a rule", () => {
-  const ids = (() => { let n = 0; return () => `l${n++}`; })();
-  const many = Array.from({ length: 5 }, (_, i) => ({ mistake: `m${i}`, evidence: "e", level: "check", rule: `r${i}`, title: "" }));
-  const r = parseLessons(L({ lessons: many }), ids)!;
-  expect(r.lessons).toHaveLength(3);
-  expect(r.lessons[0].title).toBe("m0");
-  expect(parseLessons("no json here", ids)).toBeNull();
-  expect(parseLessons(L({ nope: 1 }), ids)).toBeNull();
+test("lessonBullets: the bullets under ## Lessons, ### headings stay inside", () => {
+  expect(lessonBullets("# P\n\n## Lessons\n\n- One.\n### Old\n- Two.\n\n## Other\n- Three.\n")).toEqual(["One.", "Two."]);
+  expect(lessonBullets("# P\n")).toEqual([]);
 });

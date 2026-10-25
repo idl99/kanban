@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
-import { api, type Huddle, type HuddleNote, type HuddleNotes, type HuddlePreset, type HuddleTemplate, type Level, type TeamUsage } from "./api";
+import { api, subscribe, type Huddle, type HuddleNote, type HuddleNotes, type HuddlePreset, type HuddleTemplate, type LearnedView, type Level, type TeamUsage } from "./api";
+import { LearnedPane } from "./Learned";
 import { avatarColor, avatarLetter } from "./avatar";
 import { Select } from "./Select";
 import { TeamTemplates } from "./HuddleTemplates";
@@ -14,7 +15,7 @@ const ALL_ROLES = "_all";
 const MAIN = "main";
 const VIEW_KEY = "ckanban.team.view";
 
-type View = "teammates" | "templates" | "huddles" | "notes";
+type View = "teammates" | "templates" | "huddles" | "notes" | "learned";
 type Draft = Pick<HuddlePreset, "name" | "role" | "prompt" | "model" | "mode" | "lead" | "canEdit" | "workspace">;
 const EMPTY: Draft = { name: "", role: "", prompt: "", model: null, mode: "tagged", lead: false, canEdit: false, workspace: "shared" };
 
@@ -24,7 +25,7 @@ export type HuddleSeed = { preset: string } | { template: string };
 export type UsageMap = Record<string, TeamUsage>;
 
 /** What the Team tab is asked to show: the new-teammate editor, the editor prefilled (a proposal's Edit first), a teammate, or the huddles. */
-export type TeamRequest = { action: "new" } | ({ action: "edit" } & TeammateEditRequest) | { action: "open"; name: string } | { action: "huddles" };
+export type TeamRequest = { action: "new" } | ({ action: "edit" } & TeammateEditRequest) | { action: "open"; name: string } | { action: "huddles" } | { action: "learned" };
 
 /** Enter in these inputs must not submit anything around them. */
 const noSubmit = (e: KeyboardEvent) => {
@@ -50,10 +51,11 @@ export function TeammateAvatar({ name, big }: { name: string; big?: boolean }) {
 }
 
 /**
- * The dock's Team tab: teammates (huddle role presets), templates and the notes every teammate gets, in one place.
+ * The dock's Team tab: teammates (huddle role presets), templates, the notes every teammate gets, and what the board
+ * learned on its own, in one place.
  * Teammates are saved for all boards by default, or for this board only; a board's own version overrides the other.
  */
-export function TeamTab({ slug, boardName, active, openTicket, request, onStartHuddle, onOpenHuddle, huddles = [] }: {
+export function TeamTab({ slug, boardName, active, openTicket, request, onStartHuddle, onOpenHuddle, onOpenTicket, huddles = [] }: {
   slug: string;
   boardName: string;
   /** The tab is visible: usage and lists refresh each time it is shown again. */
@@ -65,13 +67,15 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
   onStartHuddle: (seed: HuddleSeed) => void;
   /** Open a ticket's Huddle tab (a huddle on this board). */
   onOpenHuddle?: (ticketId: string, huddleId?: string) => void;
+  /** Open a ticket (where a learned lesson came from). */
+  onOpenTicket?: (id: string) => void;
   /** The board's huddles (kept live by the App), for the Huddles view. */
   huddles?: Huddle[];
 }) {
   const [view, setView] = useState<View>(() => {
     try {
       const v = localStorage.getItem(VIEW_KEY);
-      return v === "templates" || v === "huddles" || v === "notes" ? v : "teammates";
+      return v === "templates" || v === "huddles" || v === "notes" || v === "learned" ? v : "teammates";
     } catch {
       return "teammates";
     }
@@ -81,6 +85,7 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
   const [templates, setTemplates] = useState<HuddleTemplate[] | null>(null);
   const [notes, setNotes] = useState<{ notes: HuddleNotes; cap: number } | null>(null);
   const [usage, setUsage] = useState<{ teammates: UsageMap; templates: UsageMap } | null>(null);
+  const [learned, setLearned] = useState<LearnedView | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ draft: Draft; isNew: boolean; scope: Level; card?: TeammateEditRequest["card"] } | null>(null);
   /** Templates view: open the new-template editor; n changes per request. */
@@ -104,6 +109,19 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
     api.teamUsage().then(setUsage).catch(() => setUsage((u) => u ?? { teammates: {}, templates: {} }));
   }, [slug, active]);
 
+  const loadLearned = () => api.learned(slug).then(setLearned).catch(fail);
+  useEffect(() => {
+    if (!active) return;
+    loadLearned();
+    return subscribe((e) => {
+      if (e.type === "learned.updated" && (e.profile === slug || e.profile === null)) loadLearned();
+    });
+  }, [slug, active]);
+  // Opening the view counts what was saved so far as seen (the Team button's "new" goes away).
+  useEffect(() => {
+    if (active && view === "learned" && learned?.newCount) api.learnedSeen(slug).then(setLearned).catch(() => {});
+  }, [slug, active, view, learned?.newCount]);
+
   const newTeammate = () => {
     setErr(null);
     setView("teammates");
@@ -114,6 +132,7 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
     setErr(null);
     if (request.action === "new") return newTeammate();
     if (request.action === "huddles") return setView("huddles");
+    if (request.action === "learned") return setView("learned");
     setView("teammates");
     setFilter("");
     if (request.action === "edit") return setEditing({ draft: { ...request.draft }, isNew: request.isNew, scope: request.scope, card: request.card });
@@ -147,10 +166,11 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
     <div className="team">
       <div className="team-bar">
         <div className="segmented" role="tablist" aria-label="Team">
-          {([["teammates", "Teammates", presets?.length], ["templates", "Templates", templates?.length], ["huddles", "Huddles", undefined], ["notes", "Notes for all", noteCount(ALL_ROLES)]] as const).map(([id, label, n]) => (
+          {([["teammates", "Teammates", presets?.length], ["templates", "Templates", templates?.length], ["huddles", "Huddles", undefined], ["notes", "Notes for all", noteCount(ALL_ROLES)], ["learned", "Learned", undefined]] as const).map(([id, label, n]) => (
             <button key={id} role="tab" aria-selected={view === id} className={view === id ? "on" : undefined} onClick={() => { setView(id); setErr(null); }}>
               {label}{n !== undefined ? ` · ${n}` : ""}
               {id === "huddles" && liveCount > 0 && <span className="tab-count ok">{liveCount} live</span>}
+              {id === "learned" && !!learned?.newCount && <span className="tab-count">{learned.newCount} new</span>}
             </button>
           ))}
         </div>
@@ -243,10 +263,16 @@ export function TeamTab({ slug, boardName, active, openTicket, request, onStartH
         </div>
       )}
 
+      {view === "learned" && (
+        <div className="team-body single">
+          <LearnedPane slug={slug} view={learned} onChanged={loadLearned} onError={setErr} onOpenTicket={onOpenTicket} onOpenHuddle={onOpenHuddle} />
+        </div>
+      )}
+
       {view === "notes" && (
         <div className="team-body single">
           <div className="team-notes">
-            <p className="muted small">Added to every new teammate's instructions in a huddle, on top of its own notes. Lessons agents propose land here when you save them to “All roles”.</p>
+            <p className="muted small">Added to every new teammate's instructions in a huddle, on top of its own notes. Lessons that come up in two huddles land here on their own (see Learned).</p>
             {!notes ? <span className="muted small">Loading…</span> : (
               <div className="hn-cols">
                 {(["general", "repo"] as const).map((scope) => (

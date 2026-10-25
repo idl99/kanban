@@ -2013,6 +2013,22 @@ button.pill:hover { color: var(--text); }
 .hp-checks label.check-row input { width: auto; flex: none; margin: 0; }
 .cmdbar-hint { color: var(--muted); }
 /* Role notes columns (Team tab NotesColumn) */
+/* Team, Learned: what the board learned on its own (Learned.tsx) */
+.ln-head { margin: 10px 0 0; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.ln-row { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.ln-main { flex: 1; min-width: 0; }
+.ln-text { font-size: 13.5px; overflow-wrap: anywhere; }
+.ln-src { margin-top: 3px; font-size: 12px; color: var(--muted); }
+.ln-src .link-btn { font-size: 12px; font-weight: 500; }
+.ln-row.undone .ln-text { text-decoration: line-through; opacity: 0.5; }
+.ln-row.undone .ln-src { opacity: 0.5; }
+.ln-pill { font-size: 11px; padding: 1px 7px; border-radius: 99px; white-space: nowrap; background: var(--surface-2); color: var(--muted); align-self: center; }
+.ln-old { margin-top: 4px; font-size: 12px; color: var(--muted); }
+.ln-old summary { cursor: pointer; }
+.ln-old ul { margin: 4px 0 0; padding-left: 18px; }
+.ln-watching > summary { cursor: pointer; color: var(--muted); font-size: 13px; margin: 10px 0 6px; }
+.ln-watching .ln-row + .ln-row { margin-top: 8px; }
+.ln-empty { padding: 4px 2px; }
 .hn-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 640px) { .hn-cols { grid-template-columns: 1fr; } }
 .hn-col { min-width: 0; }
@@ -2138,28 +2154,10 @@ div.huddle { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .hd-learnings-sub { padding: 6px 16px; border-bottom: 1px solid var(--border); }
 .hd-learnings-list { flex: 1; overflow-y: auto; min-height: 0; }
 .hd-learning { display: block; padding: 12px 16px; border-bottom: 1px solid var(--border); }
-.hd-learning.saved .hd-learning-rule { color: var(--muted); }
 .hd-learning-who { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .hd-learning-who b { color: var(--text); }
-.hd-adhoc { margin-left: 4px; font-size: 10px; background: var(--surface-2); border-radius: 99px; padding: 0 6px; white-space: nowrap; }
-.hd-learning-rule { font-size: 13.5px; font-weight: 550; overflow-wrap: anywhere; margin-top: 2px; }
-.hd-learning-main textarea { width: 100%; font-size: 13px; resize: vertical; margin-top: 2px; }
-.hd-learning-ev { font-size: 12px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
-.hd-learning-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
-.hd-scope { display: inline-flex; }
-.hd-scope button { font: inherit; font-size: 11px; padding: 1px 8px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; }
-.hd-scope button + button { border-left: none; }
-.hd-scope button:first-child { border-radius: 99px 0 0 99px; }
-.hd-scope button:last-child { border-radius: 0 99px 99px 0; }
-.hd-scope button.on { background: var(--info-soft); color: var(--info); border-color: var(--info); }
-.hd-scope button.on + button { border-left: 1px solid var(--border); }
-.hd-scope button:disabled { cursor: default; }
-.hd-save-to { font-size: 11px; }
-.hd-learning-acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; margin-top: 8px; }
-.hd-learning-saved { color: var(--ok); font-size: 12px; }
 .btn.small.ok { background: var(--ok); color: #fff; border-color: var(--ok); }
 .btn.small.ok:hover:not(:disabled) { filter: brightness(1.08); }
-.hd-learnings-foot { padding: 8px 16px; border-top: 1px solid var(--border); }
 .hd-close-learnings { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--info-soft); font-size: 13px; }
 .hd-close-learnings p { margin: 0 0 6px; }
 .hd-close-learnings ul { margin: 0 0 8px; padding-left: 18px; max-height: 140px; overflow-y: auto; }
@@ -2829,12 +2827,6 @@ button.tag-chip:hover { border-color: currentColor; }
 .help-card.error h5 { color: var(--err); }
 .help-meta { margin-top: 6px; font-size: 11.5px; }
 .help-actions { display: flex; gap: 6px; margin-top: 8px; }
-.lesson-card p { margin: 0 0 6px; }
-.lesson-mistake { font-weight: 600; }
-.lesson-quote { margin: 0 0 6px; padding: 2px 0 2px 10px; border-left: 2px solid var(--border); color: var(--muted); font-style: italic; }
-.lesson-level { margin-bottom: 2px; font-size: 11.5px; }
-.lesson-done { margin-top: 6px; color: var(--ok); font-size: 13px; }
-.lesson-err { margin-top: 6px; color: var(--err); font-size: 12.5px; }
 @media (max-width: 720px) {
   .help-btn-label { display: none; }
   .help-btn { width: 36px; height: 34px; padding: 0; justify-content: center; }

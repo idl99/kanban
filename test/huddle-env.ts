@@ -9,6 +9,7 @@ import { Board } from "../src/server/board";
 import { Bus, type BusEvent } from "../src/server/events";
 import { createServer } from "../src/server/http";
 import { Huddles } from "../src/server/huddle";
+import type { LessonInput } from "../src/server/huddle-notes";
 import { Store } from "../src/server/store";
 import type { Huddle, Profile, Ticket } from "../src/server/types";
 import { makeRepo, readJsonl, tempDir } from "./helpers";
@@ -33,6 +34,8 @@ export let client: BoardClient;
 export let heardFile: string;
 export let argsFile: string;
 export let events: BusEvent[];
+/** Lessons agents noted when done, as the Huddles handed them to the board's pile (learner.ts). */
+export let learned: { slug: string; huddle: string; handle: string; role: string; lessons: LessonInput[] }[];
 
 export async function setup(idleMs = 300, maxParallel = 3) {
   store = new Store(tempDir("ck-home-"));
@@ -40,7 +43,10 @@ export async function setup(idleMs = 300, maxParallel = 3) {
   events = [];
   bus.on((e) => events.push(e));
   board = new Board(store, bus, { claudeBin: FAKE, isSessionLive: async () => false });
-  huddles = new Huddles(store, board, bus, { claudeBin: FAKE, idleMs });
+  learned = [];
+  huddles = new Huddles(store, board, bus, {
+    claudeBin: FAKE, idleMs, learn: (slug, h, p, role, lessons) => learned.push({ slug, huddle: h.id, handle: p.handle, role, lessons }),
+  });
   server = createServer({ store, bus, board, huddles, port: 0, webDir: tempDir("ck-web-") });
   client = new BoardClient(server.port);
   const p: Profile = { name: "P", slug: "p", path: await makeRepo(), baseBranch: "main", maxParallel, model: null, createdAt: new Date().toISOString() };

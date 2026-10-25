@@ -63,32 +63,69 @@ export interface DiffFile {
 export type Workspace = "worktree" | "folder";
 
 /** "Help me understand" questions (src/server/explain.ts). */
-export type HelpKind = "recap" | "changes" | "lessons";
-
-/** What the user did with a suggested lesson: added it to the project's rules, made it a ticket, or dismissed it. */
-export type LessonAction = "rule" | "ticket" | "dismiss";
-
-/** A "Learn from this ticket" lesson (src/server/lessons.ts), at the highest level that would stop the mistake. */
-export interface Lesson {
-  id: string;
-  mistake: string;
-  evidence: string;
-  level: "structure" | "check" | "rule";
-  rule: string;
-  title: string;
-  done?: { action: LessonAction; at: string; ticketId?: string };
-}
+export type HelpKind = "recap" | "changes";
 
 /** One "Help me understand" answer, shown as a card in the ticket's chat. */
 export interface HelpCard {
   id: string;
-  kind: HelpKind;
+  /** "lessons": an old "Learn from this ticket" card (not shown any more). */
+  kind: HelpKind | "lessons";
   at: string;
   text: string;
   costUsd: number;
   model: string;
-  /** lessons: the suggested lessons (text then is a note, e.g. why there are none). */
-  lessons?: Lesson[];
+}
+
+/** Where a lesson the board learned came from (src/server/learn.ts). */
+export interface LearnSource {
+  kind: "ticket" | "huddle";
+  slug: string;
+  id: string;
+  title: string;
+  /** "you" or the agent's handle. */
+  by: string;
+  at: string;
+  quote: string;
+  key: string;
+  /** A huddle's host ticket. */
+  ticket?: string;
+}
+
+/** A lesson in the board's pile, seen once so far. */
+export interface LearnCandidate {
+  id: string;
+  kind: "ticket" | "huddle";
+  text: string;
+  general: boolean;
+  dest: { kind: "rules"; slug: string } | { kind: "notes"; role: string; scope: "general" | "repo"; slug: string };
+  sources: LearnSource[];
+  firstAt: string;
+  lastAt: string;
+  state: "watching" | "saved" | "undone" | "dropped";
+}
+
+/** A lesson the board saved, or one step of its weekly tidy, with its undo state. */
+export interface LearnChange {
+  id: string;
+  at: string;
+  kind: "saved" | "merged" | "rewrote" | "removed";
+  slug: string | null;
+  text: string;
+  old: string[];
+  why?: string;
+  where: string;
+  candidateId?: string;
+  sources?: LearnSource[];
+  undoneAt?: string | null;
+}
+
+/** The Team tab's Learned view (src/server/learner.ts). */
+export interface LearnedView {
+  saved: LearnChange[];
+  cleaned: LearnChange[];
+  watching: LearnCandidate[];
+  newCount: number;
+  tidyAt: string | null;
 }
 
 export interface TicketDiff {
@@ -962,6 +999,7 @@ export type BusEvent =
   | { type: "job.updated"; profile: string; id: string; job: Job | null }
   | { type: "restart.updated"; pending: boolean; waiting: number }
   | { type: "awake.updated"; held: boolean }
+  | { type: "learned.updated"; profile: string | null }
   | { type: "huddle.updated"; profile: string; huddle: Huddle }
   | { type: "huddle.message"; profile: string; huddleId: string; message: HuddleMessage }
   | { type: "huddle.activity"; profile: string; huddleId: string; handle: string; lastActivity: string | null; liveCostUsd?: number; contextTokens?: number }
@@ -1213,6 +1251,16 @@ export const api = {
     req<HuddleLearning>("POST", `${hud(slug, id)}/learnings/${encodeURIComponent(lid)}/save`, patch),
   discardLearning: (slug: string, id: string, lid: string) => req<HuddleLearning>("POST", `${hud(slug, id)}/learnings/${encodeURIComponent(lid)}/discard`, {}),
   /** Every role's notes (general and this board's repo notes); cap: lines per file that go into instructions. */
+  /** What the board learned on its own: saved this week, cleaned up, seen once. */
+  learned: (slug: string) => req<LearnedView>("GET", `/api/profiles/${encodeURIComponent(slug)}/learned`),
+  /** The user opened the Learned view: the new count goes back to 0. */
+  learnedSeen: (slug: string) => req<LearnedView>("POST", `/api/profiles/${encodeURIComponent(slug)}/learned/seen`),
+  /** Undo (or redo) a saved lesson or a tidy step. */
+  undoLearned: (slug: string, id: string, redo = false) =>
+    req<LearnChange>("POST", `/api/profiles/${encodeURIComponent(slug)}/learned/changes/${encodeURIComponent(id)}/${redo ? "redo" : "undo"}`),
+  /** A lesson seen once: save it now, drop it, or keep it after a drop. */
+  learnedLesson: (slug: string, id: string, act: "save" | "drop" | "keep") =>
+    req<LearnCandidate>("POST", `/api/profiles/${encodeURIComponent(slug)}/learned/lessons/${encodeURIComponent(id)}/${act}`),
   huddleNotes: (slug: string) => req<{ notes: HuddleNotes; cap: number }>("GET", `/api/profiles/${encodeURIComponent(slug)}/huddle-notes`),
   setHuddleNotes: (slug: string, role: string, scope: "general" | "repo", notes: HuddleNote[]) =>
     req<HuddleNote[]>("PUT", `/api/profiles/${encodeURIComponent(slug)}/huddle-notes/${encodeURIComponent(role)}/${scope}`, { notes }),
@@ -1298,12 +1346,9 @@ export const api = {
   /** "Say it simpler": one reply rewritten in plain words (a side call; saved, so the second time is free). */
   simplify: (slug: string, id: string, uuid: string) => req<{ text: string; cached: boolean }>("POST", `${t(slug, id)}/simplify`, { uuid }),
   /** "Help me understand": saved answer cards, the kinds being answered, and whether a recap has anything to tell. */
-  help: (slug: string, id: string) => req<{ cards: HelpCard[]; busy: HelpKind[]; recap: boolean; lessons: boolean }>("GET", `${t(slug, id)}/help`),
+  help: (slug: string, id: string) => req<{ cards: HelpCard[]; busy: HelpKind[]; recap: boolean }>("GET", `${t(slug, id)}/help`),
   /** A new "Help me understand" answer (a side call reading the ticket; its cost goes on the ticket). */
   askHelp: (slug: string, id: string, kind: HelpKind) => req<HelpCard>("POST", `${t(slug, id)}/help`, { kind }),
-  /** A suggested lesson: add it to the project's rules, make it a linked Backlog ticket, or dismiss it; the updated card. */
-  lesson: (slug: string, id: string, card: string, lesson: string, action: LessonAction) =>
-    req<HelpCard>("POST", `${t(slug, id)}/lesson`, { card, lesson, action }),
   /** One subagent of the ticket's conversation, with all of its steps. */
   agent: (slug: string, id: string, toolUseId: string) => req<AgentInfo>("GET", `${t(slug, id)}/agent/${encodeURIComponent(toolUseId)}`),
   /** A tool call's full input and output (main conversation or a subagent's). */
