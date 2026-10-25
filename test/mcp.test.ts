@@ -1,8 +1,8 @@
 import { beforeEach, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Bus, type BusEvent } from "../src/server/events";
-import { addArgs, maskSecrets, McpManager, parseMcpGet, parseMcpList, parseSessionInit, readMcpConfig, scopeOf, shellQuote } from "../src/server/mcp";
+import { addArgs, findUrl, maskSecrets, McpManager, parseMcpGet, parseMcpList, parseSessionInit, readMcpConfig, scopeOf, shellQuote } from "../src/server/mcp";
 import { tempDir } from "./helpers";
 
 const FAKE = join(import.meta.dir, "fixtures", "fake-claude-mcp.ts");
@@ -135,13 +135,75 @@ test("login runs in background, captures the URL and flips to connected", async 
   expect(events.some((e) => e.type === "mcp.updated" && e.state.servers[0]?.login?.url === "https://auth.example.com/authorize?x=1")).toBe(true);
 });
 
-test("failed login keeps the error", async () => {
-  setup({ docs: { target: "https://d.dev/mcp (HTTP)", status: "! Needs authentication" } }, ["docs"]);
+test("login asks the CLI not to open a browser and reads the link through its terminal escapes", async () => {
+  setup({ docs: { target: "https://d.dev/mcp (HTTP)", status: "✔ Connected" } }, ["docs"]);
+  await mgr.refresh();
+  mgr.login("docs");
+  await until(() => mgr.state().servers[0].login === null);
+  expect(calls().some((c) => c.join(" ") === "mcp login docs --no-browser")).toBe(true);
+  const urls = events.flatMap((e) => (e.type === "mcp.updated" && e.state.servers[0]?.login?.url ? [e.state.servers[0].login.url] : []));
+  expect(new Set(urls)).toEqual(new Set(["https://auth.example.com/authorize?x=1"]));
+});
+
+test("failed login keeps the error and shows the server as signed out, not connected", async () => {
+  setup({ docs: { target: "https://d.dev/mcp (HTTP)", status: "✔ Connected" } }, ["docs"]);
   await mgr.refresh();
   process.env.FAKE_LOGIN = "fail";
   mgr.login("docs");
-  await until(() => mgr.state().servers[0].login?.state === "failed");
+  await until(() => mgr.state().servers[0].login?.state === "failed" && mgr.state().servers[0].status === "needs_auth");
   expect(mgr.state().servers[0].login?.error).toContain("OAuth discovery failed");
+  expect(mgr.state().servers[0].login?.canPaste).toBe(false);
+});
+
+test("OAuth login waits in a terminal and takes a pasted redirect address", async () => {
+  setup({ docs: { target: "https://d.dev/mcp (HTTP)", status: "! Needs authentication" } }, ["docs"]);
+  await mgr.refresh();
+  process.env.FAKE_LOGIN = "wait";
+  const ttyFile = join(dir, "tty");
+  process.env.FAKE_TTY_FILE = ttyFile;
+  mgr.login("docs");
+  await until(() => !!mgr.state().servers[0].login?.url && !!mgr.state().servers[0].login?.canPaste);
+  await until(() => existsSync(ttyFile));
+  expect(readFileSync(ttyFile, "utf8")).toBe("true");
+  expect(() => mgr.paste("docs", "not a link")).toThrow(/address/);
+  expect(() => mgr.paste("docs", "http://localhost:1/callback?code=1\nmore")).toThrow(/address/);
+  expect(() => mgr.paste("docs", "http://x\x03\x1b[2K\x7f\x04")).toThrow(/address/);
+  mgr.paste("docs", "http://localhost:1/callback?code=abc&state=x");
+  await until(() => mgr.state().servers[0].login === null);
+  expect(mgr.state().servers[0].status).toBe("connected");
+  delete process.env.FAKE_TTY_FILE;
+});
+
+test("cancelling a waiting OAuth login stops the CLI and re-checks the server", async () => {
+  setup({ docs: { target: "https://d.dev/mcp (HTTP)", status: "! Needs authentication" } }, ["docs"]);
+  await mgr.refresh();
+  process.env.FAKE_LOGIN = "wait";
+  mgr.login("docs");
+  await until(() => !!mgr.state().servers[0].login?.canPaste);
+  mgr.cancelLogin("docs");
+  expect(mgr.state().servers[0].login).toBeNull();
+  expect(() => mgr.paste("docs", "http://localhost:1/callback?code=abc")).toThrow(/not signing in/);
+  await until(() => calls().filter((c) => c.join(" ") === "mcp get docs").length > 0);
+  expect(mgr.state().servers[0].status).toBe("needs_auth");
+  // A new attempt can start right away.
+  delete process.env.FAKE_LOGIN;
+  mgr.login("docs");
+  await until(() => mgr.state().servers[0].login === null);
+  expect(mgr.state().servers[0].status).toBe("connected");
+});
+
+test("a claude.ai connector that stays connected keeps its sign-in link until the user is done", async () => {
+  setup({ "claude.ai Gmail": { target: "https://gmailmcp.googleapis.com/mcp/v1", status: "✔ Connected" } });
+  await mgr.refresh();
+  mgr.login("claude.ai Gmail");
+  await until(() => !!mgr.state().servers[0].login?.url);
+  const l = mgr.state().servers[0].login!;
+  expect(l).toMatchObject({ state: "waiting", url: "https://claude.ai/start-auth/x", claudeAi: true, canPaste: false });
+  await Bun.sleep(200);
+  expect(mgr.state().servers[0].login?.url).toBe("https://claude.ai/start-auth/x");
+  expect(calls().some((c) => c.join(" ") === "mcp login claude.ai Gmail --no-browser")).toBe(true);
+  mgr.cancelLogin("claude.ai Gmail");
+  expect(mgr.state().servers[0].login).toBeNull();
 });
 
 test("stdio servers can't log in; non-user servers can't be removed", async () => {
@@ -313,4 +375,10 @@ test("update and config refuse servers that aren't editable here", async () => {
   await mgr.refresh();
   await expect(mgr.update("claude.ai X", { name: "claude.ai X", transport: "http", url: "https://x" })).rejects.toThrow(/user-scope/);
   expect(() => mgr.config("claude.ai X")).toThrow(/config files/);
+});
+
+test("findUrl skips terminal escapes around the link", () => {
+  const u = "https://mcp.linear.app/authorize?a=1&redirect_uri=http%3A%2F%2Flocalhost%3A1%2Fcallback";
+  expect(findUrl(`Visit:\r\n  \x1b]8;;${u}\x07\x1b[94m${u}\x1b[39m\x1b]8;;\x07\r\n`)).toBe(u);
+  expect(findUrl("no link")).toBeNull();
 });

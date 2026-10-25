@@ -23,10 +23,14 @@ export interface McpServer {
 
 export interface McpLogin {
   state: "waiting" | "failed";
-  /** Authorization URL printed by the CLI, in case the browser didn't open. */
+  /** Sign-in page printed by the CLI. The board opens it in the user's browser (the CLI runs with --no-browser). */
   url: string | null;
   error: string | null;
   startedAt: string;
+  /** A claude.ai connector: sign-in happens on claude.ai, and the CLI exits once it printed the link. */
+  claudeAi: boolean;
+  /** The CLI waits in a terminal that takes the address the sign-in page ended on (sign-in on another device). */
+  canPaste: boolean;
 }
 
 export interface McpState {
@@ -296,6 +300,8 @@ export class McpManager {
   private touched = new Set<string>();
   private again = false;
   private logins = new Map<string, McpLogin>();
+  /** Running `claude mcp login` per server, to cancel it or type a pasted address into it. */
+  private loginProcs = new Map<string, { kill: () => void; write: (s: string) => void }>();
   private seen: Set<string>;
   private bin: string;
   private cwd: string;
@@ -517,47 +523,124 @@ export class McpManager {
   }
 
   /**
-   * Starts `claude mcp login <name>` (opens the browser) and returns right away.
-   * When it exits, polls the server until it's connected or we give up.
+   * Starts signing in to a server and returns right away. The CLI runs with --no-browser: the board opens the
+   * link it prints in the user's own browser, which also works when the daemon can't open one (launchd, phone).
+   * - claude.ai connectors: the CLI prints a claude.ai link and exits. The link stays until the connector turns
+   *   connected (if it wasn't), the user is done, or the login times out: a connector that already shows as
+   *   connected must not drop it at once.
+   * - OAuth servers: the CLI deletes the old login, then waits for the browser's callback. It refuses to wait without
+   *   a terminal, so it runs on a pseudo-terminal, which also takes a pasted redirect address (`paste`).
+   *   After it exits, polls the server until it's connected or we give up.
    */
   login(name: string): void {
     const s = this.find(name);
     if (!canLogin(s)) throw new McpError(400, `${name} doesn't use OAuth, so there's nothing to log in to`);
     if (this.logins.get(name)?.state === "waiting") throw new McpError(409, `already logging in to ${name}`);
-    const login: McpLogin = { state: "waiting", url: null, error: null, startedAt: new Date().toISOString() };
+    const claudeAi = s.scope === "claude.ai";
+    const login: McpLogin = { state: "waiting", url: null, error: null, startedAt: new Date().toISOString(), claudeAi, canPaste: false };
     this.logins.set(name, login);
     this.emit();
-    (async () => {
-      const r = await this.run(["mcp", "login", name], this.opts.loginTimeoutMs, (out) => {
-        const url = out.match(/https:\/\/\S+/)?.[0] ?? null;
-        if (url && url !== login.url) {
-          login.url = url;
-          this.emit();
-        }
-      });
-      if (r.code !== 0) {
-        this.logins.set(name, { ...login, state: "failed", error: errorText(r, "claude mcp login") });
+    const current = () => this.logins.get(name) === login;
+    const fail = async (error: string) => {
+      if (!current()) return;
+      this.logins.set(name, { ...login, state: "failed", error, canPaste: false });
+      this.emit();
+      // An OAuth login deletes the old one before it starts: show what's left, not the stale "Connected".
+      if (!claudeAi) await this.recheck(name).catch(() => null);
+    };
+    const onOutput = (out: string) => {
+      const url = findUrl(out);
+      if (url && url !== login.url) {
+        login.url = url;
         this.emit();
-        return;
       }
-      const until = Date.now() + this.opts.loginPollForMs;
-      while (this.logins.get(name) === login) {
-        const now = await this.recheck(name);
-        if (!now || now.status === "connected" || Date.now() > until) break;
-        await Bun.sleep(this.opts.loginPollMs);
+    };
+    (async () => {
+      if (claudeAi) {
+        const wasConnected = s.status === "connected";
+        const r = await this.run(["mcp", "login", name, "--no-browser"], 60_000, onOutput);
+        if (!current()) return;
+        if (r.code !== 0) return fail(errorText(r, "claude mcp login"));
+        if (!login.url) return fail("claude mcp login didn't print a sign-in link");
+        const until = Date.now() + this.opts.loginTimeoutMs;
+        while (current() && Date.now() < until) {
+          if (!wasConnected) {
+            const now = await this.recheck(name);
+            if (!now || now.status === "connected") break;
+          }
+          await Bun.sleep(this.opts.loginPollMs);
+        }
+      } else {
+        const r = await this.runLogin(name, login, onOutput);
+        if (!current()) return;
+        if (r.code !== 0) return fail(r.timedOut ? "Sign-in timed out" : errorText(r, "claude mcp login"));
+        login.canPaste = false;
+        this.emit();
+        const until = Date.now() + this.opts.loginPollForMs;
+        while (current()) {
+          const now = await this.recheck(name);
+          if (!now || now.status === "connected" || Date.now() > until) break;
+          await Bun.sleep(this.opts.loginPollMs);
+        }
       }
-      if (this.logins.get(name) === login) this.logins.delete(name);
+      if (current()) this.logins.delete(name);
       this.emit();
-    })().catch((e) => {
-      this.logins.set(name, { ...login, state: "failed", error: (e as Error).message });
-      this.emit();
-    });
+    })().catch((e) => fail((e as Error).message));
   }
 
-  /** Stops waiting for a login (the browser tab was closed, etc.). */
-  cancelLogin(name: string): void {
-    this.logins.delete(name);
+  /** `claude mcp login <name> --no-browser` on a pseudo-terminal (falls back to pipes where there is none). */
+  private async runLogin(name: string, login: McpLogin, onOutput: (soFar: string) => void): Promise<RunOut & { timedOut?: boolean }> {
+    const args = [this.bin, "mcp", "login", name, "--no-browser"];
+    let out = "";
+    const dec = new TextDecoder();
+    let p: ReturnType<typeof Bun.spawn>;
+    try {
+      p = Bun.spawn(args, {
+        cwd: this.cwd, env: { ...process.env, TERM: "xterm-256color" },
+        terminal: { cols: 2000, rows: 50, name: "xterm-256color", data: (_t, d) => { out = (out + dec.decode(d, { stream: true })).slice(-64 * 1024); onOutput(out); } },
+      });
+    } catch {
+      return this.run(args.slice(1), this.opts.loginTimeoutMs, onOutput);
+    }
+    let exited = false;
+    // The terminal echoes what's typed: pasted addresses (they carry the sign-in code) are cut from error text.
+    const pasted: string[] = [];
+    const handle = { kill: () => p.kill(), write: (s: string) => { if (exited) return; pasted.push(s.trim()); p.terminal?.write(s); } };
+    this.loginProcs.set(name, handle);
+    login.canPaste = true;
     this.emit();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; p.kill(); }, this.opts.loginTimeoutMs);
+    const code = await p.exited;
+    exited = true;
+    clearTimeout(timer);
+    // The last output can arrive just after the exit.
+    await Bun.sleep(50);
+    if (this.loginProcs.get(name) === handle) this.loginProcs.delete(name);
+    p.terminal?.close();
+    let text = stripAnsi(out).replace(/\r/g, "");
+    for (const s of pasted) text = text.split(s).join("[pasted address]");
+    return { code, stdout: text, stderr: "", timedOut };
+  }
+
+  /** Types the address the sign-in page ended on into a waiting OAuth login (signed in on another device). */
+  paste(name: string, text: string): void {
+    const t = String(text ?? "").trim();
+    // Printable ASCII only: no control bytes (Ctrl-C, Ctrl-D, escapes) reach the CLI's terminal.
+    if (t.length > 4096 || !/^https?:\/\/[\x21-\x7e]+$/.test(t)) throw new McpError(400, "paste the full address from the browser, starting with http");
+    const proc = this.loginProcs.get(name);
+    if (!proc || this.logins.get(name)?.state !== "waiting") throw new McpError(409, `not signing in to ${name} right now`);
+    proc.write(t + "\r");
+  }
+
+  /** Stops a login (the browser tab was closed, etc.), then re-checks: the old login may be gone already. */
+  cancelLogin(name: string): void {
+    const was = this.logins.get(name);
+    this.logins.delete(name);
+    this.loginProcs.get(name)?.kill();
+    this.loginProcs.delete(name);
+    this.emit();
+    if (was && !was.claudeAi) this.recheck(name).catch(() => null);
   }
 
   async logout(name: string): Promise<void> {
@@ -627,6 +710,16 @@ export class McpManager {
     await reads;
     return { code, ...out };
   }
+}
+
+/** Drops terminal escapes (colours, OSC 8 links) from CLI output. */
+export function stripAnsi(s: string): string {
+  return s.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+}
+
+/** First web address in CLI output (the sign-in page). */
+export function findUrl(out: string): string | null {
+  return stripAnsi(out).match(/https?:\/\/[^\s\x07\x1b]+/)?.[0] ?? null;
 }
 
 function errorText(r: RunOut, what: string): string {

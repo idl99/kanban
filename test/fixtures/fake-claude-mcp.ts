@@ -33,11 +33,33 @@ if (args[0] === "-p") {
   }
   console.log(`${name}:\n  Scope: User config\n  Status: ${state[name].status}\n  Type: http`);
 } else if (cmd === "login") {
+  if (name.startsWith("claude.ai ")) {
+    // Prints a claude.ai link and exits; the connector's status doesn't change here.
+    console.log(`Visit this URL to authorize:\n  https://claude.ai/start-auth/x\n\nOnce authorized on claude.ai, the connector will be available the next time you start Claude Code.`);
+    process.exit(0);
+  }
   if (process.env.FAKE_LOGIN === "fail") {
+    // Like the real CLI: the old login is gone before the flow fails.
+    state[name].status = "! Needs authentication";
+    save();
     console.error("OAuth discovery failed");
     process.exit(1);
   }
-  console.log(`Visit this URL to authorize:\n  https://auth.example.com/authorize?x=1\n`);
+  const url = "https://auth.example.com/authorize?x=1";
+  // The real CLI wraps the link in OSC 8 escapes and colours it.
+  console.log(`Visit this URL to authorize:\n  \x1b]8;;${url}\x07\x1b[94m${url}\x1b[39m\x1b]8;;\x07\n`);
+  if (process.env.FAKE_LOGIN === "wait") {
+    // Waits for the redirect address typed into its terminal (FAKE_TTY_FILE records whether stdin is a terminal).
+    if (process.env.FAKE_TTY_FILE) writeFileSync(process.env.FAKE_TTY_FILE, String(!!process.stdin.isTTY));
+    process.stdout.write("Or paste the redirect URL here: ");
+    for await (const line of console) {
+      if (!line.includes("code=")) continue;
+      state[name].status = "✔ Connected";
+      save();
+      process.exit(0);
+    }
+    process.exit(1);
+  }
   state[name].status = "✔ Connected";
   save();
 } else if (cmd === "logout") {

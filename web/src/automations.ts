@@ -1,4 +1,4 @@
-// Pure helpers for the Automations dialog and the Board column of Connections (tested in test/automations.test.ts).
+// Pure helpers for the Automations dialog and the For automations tab of Connections (tested in test/automations.test.ts).
 import type { AutomationProposal, Loop, LoopColumn, Pass } from "./automationTypes";
 
 /** What boardCell needs of a Connections server (api.ts McpServer; not imported, so tests can load this file). */
@@ -31,17 +31,17 @@ export function loopSubtitle(l: Pick<Loop, "everyMinutes" | "enabled" | "lastErr
   return `every ${everyLabel(l.everyMinutes)}${l.lastCheckedAt ? ` · checked ${ago(l.lastCheckedAt)}` : " · not checked yet"}`;
 }
 
-/** What a Connections row shows in the Board column. */
+/** What a server's card shows on the For automations tab of Connections. */
 export type BoardCell =
   | { kind: "ok"; pass: Pass }
   | { kind: "connect"; pass: Pass | null; how: "local" | "mcp" }
   | { kind: "none"; why: string };
 
-/** The Board column for a Claude server: its linked pass, a Connect button, or a dash with the reason. */
+/** The For automations card for a Claude server: its linked pass, a Connect button, or a dash with the reason. */
 export function boardCell(s: ClaudeServer, passes: Pass[]): BoardCell {
   const pass = passes.find((p) => p.claudeName === s.name) ?? null;
   if (pass?.status === "connected") return { kind: "ok", pass };
-  if (s.scope === "claude.ai") return { kind: "none", why: "The board can't use Claude's claude.ai sign-in. Add the service for automations with its own sign-in or a key (+ Add for automations)." };
+  if (s.scope === "claude.ai") return { kind: "none", why: "The board can't use Claude's claude.ai sign-in. Add the service for automations with its own sign-in or a key (+ Add a key or address)." };
   if (s.scope !== "user" && s.scope !== "local") return { kind: "none", why: "Only servers from your own Claude settings can be used by automations." };
   if (pass) return { kind: "connect", pass, how: pass.kind === "local" ? "local" : "mcp" };
   return { kind: "connect", pass: null, how: s.transport === "stdio" ? "local" : "mcp" };

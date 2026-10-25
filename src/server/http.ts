@@ -663,6 +663,10 @@ export function createServer(deps: ServerDeps) {
         mcp.login(name);
         return json(mcp.state(), 202);
       }
+      if (parts.length === 3 && m === "POST" && parts[2] === "login-paste") {
+        mcp.paste(name, String((await body(req))?.text ?? ""));
+        return json(mcp.state());
+      }
       if (parts.length === 3 && m === "POST" && parts[2] === "cancel-login") {
         mcp.cancelLogin(name);
         return json(mcp.state());

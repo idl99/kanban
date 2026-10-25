@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, copy, safeHref, type AgentStatus, type McpAddInput, type McpConfig, type McpServer, type McpState, type McpTransport, type Pass } from "./api";
 import { boardCell } from "./automations";
 import { connectFromClaude, KeyForm, openSignIn } from "./passConnect";
@@ -8,13 +8,6 @@ import { Modal } from "./Modal";
 import { timeAgo } from "./time";
 import { useNow } from "./useNow";
 
-const STATUS_LABEL: Record<McpServer["status"], [string, string]> = {
-  connected: ["Connected", "ok"],
-  needs_auth: ["Needs auth", "blocked"],
-  failed: ["Failed", "failed"],
-  pending: ["Pending approval", "stopped"],
-  unknown: ["Unknown", "stopped"],
-};
 const SCOPE_LABEL: Record<McpServer["scope"], string> = {
   user: "user", local: "local", project: "project", "claude.ai": "claude.ai", other: "other",
 };
@@ -49,13 +42,36 @@ const SCOPE_HELP: Record<McpServer["scope"], string> = {
   other: "From a plugin or another config. Manage it where it's defined.",
 };
 
+const CLAUDE_AI_CONNECTORS = "https://claude.ai/settings/connectors";
+
 const looksLikeTty = (err: string | null | undefined) => !!err && /terminal|tty|stdin|interactive/i.test(err);
 
-const BOARD_TIP = "The board checks it by itself on a timer, for automations: free, without Claude. It has its own sign-in or key, separate from Claude's.";
+const BOARD_TIP = "The board checks these by itself on a timer, for automations: free, without Claude. Each has its own sign-in or key, separate from Claude's.";
+
+/** Name without the "claude.ai " prefix: the card shows a claude.ai badge instead. */
+const shortName = (s: McpServer) => (s.scope === "claude.ai" ? s.name.replace(/^claude\.ai\s+/, "") : s.name);
+
+/** One status badge in plain words: [label, tone]. */
+export function statusBadge(s: McpServer): [string, string] {
+  if (s.login?.state === "waiting") return ["Signing in…", "blocked"];
+  if (s.login?.state === "failed" && s.status !== "connected") return ["Not signed in", "failed"];
+  switch (s.status) {
+    case "connected": return ["Connected", "ok"];
+    case "needs_auth": return ["Not signed in", "blocked"];
+    case "failed": return [canLogin(s) ? "Can't connect" : "Won't start", "failed"];
+    case "pending": return ["Waiting for your approval", "stopped"];
+    default: return ["Unknown", "stopped"];
+  }
+}
+
+/** Belongs in "Needs attention": broken, or one of your own servers that isn't connected yet. */
+export function needsAttention(s: McpServer): boolean {
+  return s.attention || s.login?.state === "failed" || (s.scope !== "claude.ai" && s.status !== "connected" && s.status !== "pending");
+}
 
 /**
- * Claude Code MCP servers, like `/mcp`: status, OAuth log in / out, add, edit and remove (user scope). A Board column
- * shows the board's own pass per service, for automations (see automations.ts boardCell).
+ * Claude Code MCP servers, like `/mcp`: status, sign in / out, add, edit and remove (user scope), on a "For Claude" tab.
+ * A "For automations" tab shows the board's own pass per service (see automations.ts boardCell).
  */
 export function ConnectionsDialog({ state, refreshKey = 0, onClose, onRunInTerminal }: {
   state: McpState | null;
@@ -65,6 +81,7 @@ export function ConnectionsDialog({ state, refreshKey = 0, onClose, onRunInTermi
   /** Opens the board's terminal and runs the command there. Missing when there's no terminal (no profile). */
   onRunInTerminal?: (command: string) => void;
 }) {
+  const [tab, setTab] = useState<"claude" | "automations">("claude");
   const [adding, setAdding] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -76,50 +93,39 @@ export function ConnectionsDialog({ state, refreshKey = 0, onClose, onRunInTermi
   const [copied, setCopied] = useState(false);
   // Server whose command / URL was just copied (the phone Copy button says "Copied").
   const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
-  // The board's own passes (Board column).
+  // The board's own passes (For automations tab).
   const [board, setBoard] = useState<{ passes: Pass[]; automations: number } | null>(null);
   const [keyFor, setKeyFor] = useState<{ name: string; claudeName: string | null; url: string | null } | null>(null);
   const [addingPass, setAddingPass] = useState(false);
   const [removePass, setRemovePass] = useState<Pass | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // Tabs opened on a Sign in click, waiting for the sign-in link (opened in the click so it isn't blocked as a popup).
+  // `seen`: the server reported the sign-in as started, so its end without a link means the tab isn't needed.
+  const signInTabs = useRef(new Map<string, { win: Window | null; seen: boolean }>());
   useNow();
   const loadBoard = () => api.passes().then(setBoard).catch(() => {});
   useEffect(() => { loadBoard(); }, [refreshKey]);
   const passes = board?.passes ?? [];
-  // The Board column is always there (once loaded): it answers "which of these can automations use?".
-  const showBoard = board !== null;
+  const servers = state?.servers ?? [];
 
-  const connect = (s: McpServer, existing: Pass | null) => act(`board:${s.name}`, async () => {
-    setNote(null);
-    const r = await connectFromClaude(s, existing);
-    if (r === "needs_key") {
-      const cfg = await api.mcpConfig(s.name).catch(() => null);
-      setKeyFor({ name: s.name, claudeName: s.name, url: cfg?.url ?? existing?.url ?? null });
-    } else if (r === "signing_in") setNote(`Approve the board in the tab that just opened. This list updates when you are done.`);
-    await loadBoard();
-  });
-
-  const boardCellView = (s: McpServer) => {
-    const c = boardCell(s, passes);
-    if (c.kind === "ok") {
-      return (
-        <span className="mcp-board">
-          <span className="mcp-board-label">Automations:</span>
-          <span className="yes" title={`${BOARD_TIP}${c.pass.usedBy ? ` Used by ${c.pass.usedBy} automation${c.pass.usedBy === 1 ? "" : "s"}.` : ""}`}>✓</span>
-          <button className="icon-btn tiny" aria-label={`Remove ${s.name} from automations`} title="Remove the board's pass" onClick={() => setRemovePass(c.pass)}><CloseIcon size={10} /></button>
-        </span>
-      );
+  // Point each waiting tab at its sign-in link once the server has it; close it if the sign-in ended without one.
+  useEffect(() => {
+    for (const [name, t] of signInTabs.current) {
+      const login = servers.find((x) => x.name === name)?.login;
+      if (login?.state === "waiting" && login.url) {
+        signInTabs.current.delete(name);
+        try {
+          openSignIn(t.win, login.url);
+        } catch (e: any) {
+          setErr(e.message);
+        }
+      } else if (login?.state === "waiting") t.seen = true;
+      else if (t.seen) {
+        signInTabs.current.delete(name);
+        t.win?.close();
+      }
     }
-    if (c.kind === "none") return <span className="mcp-board"><span className="mcp-board-label">Automations:</span><span className="none" title={c.why}>—</span></span>;
-    return (
-      <span className="mcp-board">
-        <span className="mcp-board-label">Automations:</span>
-        <button className="btn small" disabled={busy === `board:${s.name}`} title={c.pass?.error ?? BOARD_TIP} onClick={() => connect(s, c.pass)}>
-          {busy === `board:${s.name}` ? "Connecting…" : "Connect"}
-        </button>
-      </span>
-    );
-  };
+  }, [state]);
 
   const act = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key);
@@ -132,6 +138,34 @@ export function ConnectionsDialog({ state, refreshKey = 0, onClose, onRunInTermi
       setBusy(null);
     }
   };
+
+  const signIn = (s: McpServer) => {
+    signInTabs.current.get(s.name)?.win?.close();
+    const t = { win: window.open("about:blank", "_blank"), seen: false };
+    // The sign-in page must not be able to steer the board's tab.
+    if (t.win) t.win.opener = null;
+    signInTabs.current.set(s.name, t);
+    act(`login:${s.name}`, async () => {
+      try {
+        await api.mcpLogin(s.name);
+      } catch (e) {
+        if (signInTabs.current.get(s.name) === t) signInTabs.current.delete(s.name);
+        t.win?.close();
+        throw e;
+      }
+    });
+  };
+  const cancelSignIn = (s: McpServer) => act(`cancel:${s.name}`, () => api.mcpCancelLogin(s.name));
+
+  const connect = (s: McpServer, existing: Pass | null) => act(`board:${s.name}`, async () => {
+    setNote(null);
+    const r = await connectFromClaude(s, existing);
+    if (r === "needs_key") {
+      const cfg = await api.mcpConfig(s.name).catch(() => null);
+      setKeyFor({ name: s.name, claudeName: s.name, url: cfg?.url ?? existing?.url ?? null });
+    } else if (r === "signing_in") setNote(`Approve the board in the tab that just opened. This list updates when you are done.`);
+    await loadBoard();
+  });
 
   const run = (server: string, command: string) => {
     if (onRunInTerminal) onRunInTerminal(command);
@@ -152,12 +186,10 @@ export function ConnectionsDialog({ state, refreshKey = 0, onClose, onRunInTermi
     setEditing(await api.mcpConfig(s.name));
   });
 
-  const servers = state?.servers ?? [];
-  const attention = servers.filter((s) => s.attention);
-  const mine = servers.filter((s) => !s.attention && s.scope !== "claude.ai");
-  const connectors = servers.filter((s) => !s.attention && s.scope === "claude.ai" && s.status === "connected");
-  // claude.ai connectors never set up here; kept out of the way (and out of the badge).
-  const idle = servers.filter((s) => !s.attention && s.scope === "claude.ai" && s.status !== "connected");
+  const attention = servers.filter(needsAttention);
+  const connected = servers.filter((s) => !needsAttention(s) && (s.status === "connected" || s.scope !== "claude.ai"));
+  // claude.ai connectors never set up here; kept out of the way (and out of the count).
+  const idle = servers.filter((s) => !needsAttention(s) && s.status !== "connected" && s.scope === "claude.ai");
 
   const terminalButton = (label: string, onClick: () => void, key?: string) => (
     <button className="btn small" disabled={!!key && busy === key} onClick={onClick}>
@@ -172,121 +204,126 @@ export function ConnectionsDialog({ state, refreshKey = 0, onClose, onRunInTermi
     </details>
   );
 
-  const row = (s: McpServer) => {
-    const [label, tone] = STATUS_LABEL[s.status];
-    const waiting = s.login?.state === "waiting";
-    const loginFailed = s.login?.state === "failed";
+  const card = (s: McpServer) => {
+    const [label, tone] = statusBadge(s);
+    const login = s.login;
+    const waiting = login?.state === "waiting";
+    const loginFailed = login?.state === "failed";
     const failed = s.status === "failed";
     const stdio = !canLogin(s);
+    const signingIn = busy === `login:${s.name}`;
+    const info = `${SCOPE_HELP[s.scope]}${s.transport && s.scope !== "claude.ai" ? ` Connects over ${s.transport}.` : ""}`;
+    const signInButton = (text: string, primary: boolean) => (
+      <button className={`btn small${primary ? " primary" : ""}`} disabled={signingIn} onClick={() => signIn(s)}>
+        {signingIn ? "Starting…" : text}
+      </button>
+    );
     return (
-      <div key={s.name} className="mcp-item">
-        <div className="mcp-row">
-          <div className="mcp-main">
-            <div className="mcp-name">
-              <span>{s.name}</span>
-              <span className={`badge ${tone}`}>{label}</span>
-              <span className="badge stopped" title={SCOPE_HELP[s.scope]}>{SCOPE_LABEL[s.scope]}</span>
-              {s.transport && s.scope !== "claude.ai" && <span className="badge stopped">{s.transport}</span>}
-            </div>
-            {s.target && (
-              <div className="mcp-target-row">
-                <span className="mcp-target" title={s.target}>{s.target}</span>
-                {!s.target.includes("***") && (
-                  <button className="icon-btn tiny mcp-copy" aria-label={`Copy ${s.name} ${stdio ? "command" : "URL"}`} title="Copy"
-                    onClick={async () => { await copy(s.target); setCopiedTarget(s.name); }}>
-                    <CopyIcon size={12} /><span className="mcp-copy-label">{copiedTarget === s.name ? "Copied" : "Copy"}</span>
-                  </button>
-                )}
-              </div>
-            )}
-            {waiting && (
-              <div className="mcp-msg info">
-                <span className="spinner" /> Waiting for you to finish in the browser…{" "}
-                {safeHref(s.login?.url) && <a href={safeHref(s.login?.url)} target="_blank" rel="noreferrer">Open the login page</a>}
-              </div>
-            )}
-            {loginFailed && (
-              <div className="mcp-help">
-                <div className="mcp-help-text">
-                  {looksLikeTty(s.login?.error)
-                    ? <><b>Login needs an interactive terminal.</b> Run it there and follow the prompts; this list updates by itself afterwards.</>
-                    : <><b>Login didn't finish.</b> Try it in the terminal to see what the CLI asks for.</>}
-                </div>
-                <div className="mcp-help-actions">
-                  {terminalButton("Open in terminal", () => run(s.name, loginCommand(s)))}
-                  <button className="btn small ghost" disabled={busy === `recheck:${s.name}`}
-                    onClick={() => act(`recheck:${s.name}`, () => api.mcpRecheck(s.name))}>
-                    {busy === `recheck:${s.name}` ? "Checking…" : "Check again"}
-                  </button>
-                </div>
-                {s.login?.error && details(s.login.error)}
-              </div>
-            )}
-            {failed && !loginFailed && (
-              <div className="mcp-help">
-                <div className="mcp-help-text">
-                  {stdio
-                    ? <><b>The server command exits on start.</b> Run it in the terminal to see why (a missing tool, token or package).</>
-                    : <><b>Couldn't reach the server.</b> Retry, or log in again from the terminal if it worked before.</>}
-                </div>
-                <div className="mcp-help-actions">
-                  {stdio
-                    ? terminalButton("Run in terminal", () => runServer(s), `run:${s.name}`)
-                    : terminalButton("Log in in terminal", () => run(s.name, loginCommand(s)))}
-                  <button className="btn small ghost" disabled={busy === `recheck:${s.name}`}
-                    onClick={() => act(`recheck:${s.name}`, () => api.mcpRecheck(s.name))}>
-                    {busy === `recheck:${s.name}` ? "Checking…" : "Retry"}
-                  </button>
-                </div>
-                {s.message && details(s.message)}
-              </div>
-            )}
-            {!failed && !loginFailed && s.message && s.status !== "needs_auth" && <div className="mcp-msg">{s.message}</div>}
-            {manual?.server === s.name && (
-              <div className="mcp-manual">
-                <span className="muted small">Run this in a terminal:</span>
-                <code>{manual.command}</code>
-                <button className="btn small" onClick={async () => { await copy(manual.command); setCopied(true); }}>
-                  {copied ? "Copied!" : "Copy"}
-                </button>
-              </div>
-            )}
+      <div key={s.name} className="conn-card">
+        <div className="conn-top">
+          <div className="conn-title">
+            <span className="conn-name" title={info}>{shortName(s)}</span>
+            <span className={`badge ${tone}`}>{label}</span>
+            {s.scope === "claude.ai" && <span className="badge stopped" title={SCOPE_HELP["claude.ai"]}>claude.ai</span>}
           </div>
-          <div className="mcp-actions">
-            {canLogin(s) && waiting && (
-              <button className="btn small ghost" onClick={() => act(`cancel:${s.name}`, () => api.mcpCancelLogin(s.name))}>Cancel</button>
-            )}
-            {canLogin(s) && !waiting && s.status === "needs_auth" && (
-              <button className="btn small primary" disabled={busy === `login:${s.name}`}
-                onClick={() => act(`login:${s.name}`, () => api.mcpLogin(s.name))}>
-                {busy === `login:${s.name}` ? "Starting…" : "Connect"}
-              </button>
-            )}
-            {canLogin(s) && !waiting && s.status === "connected" && (
-              <>
-                <button className="btn small ghost" disabled={busy === `login:${s.name}`}
-                  onClick={() => act(`login:${s.name}`, () => api.mcpLogin(s.name))}>
-                  {busy === `login:${s.name}` ? "Starting…" : "Re-authenticate"}
-                </button>
-                <button className="btn small ghost" onClick={() => setConfirm({ kind: "logout", server: s })}>Log out</button>
-              </>
+          <div className="conn-actions">
+            {canLogin(s) && !waiting && (s.status === "connected" ? signInButton("Sign in again", false) : signInButton("Sign in", true))}
+            {canLogin(s) && s.scope !== "claude.ai" && !waiting && s.status === "connected" && (
+              <button className="btn small" onClick={() => setConfirm({ kind: "logout", server: s })}>Log out</button>
             )}
             {s.scope === "user" && (
               <>
-                <button className="btn small ghost" disabled={busy === `edit:${s.name}`} onClick={() => (editing?.name === s.name ? setEditing(null) : startEdit(s))}>Edit</button>
-                <button className="btn small ghost danger" onClick={() => setConfirm({ kind: "remove", server: s })}>Remove</button>
+                <button className="btn small" disabled={busy === `edit:${s.name}`} onClick={() => (editing?.name === s.name ? setEditing(null) : startEdit(s))}>
+                  {editing?.name === s.name ? "Close" : "Edit"}
+                </button>
+                <button className="btn small danger" onClick={() => setConfirm({ kind: "remove", server: s })}>Remove</button>
               </>
+            )}
+            {s.scope === "claude.ai" && (
+              <a className="btn small" href={CLAUDE_AI_CONNECTORS} target="_blank" rel="noreferrer">Manage on claude.ai</a>
             )}
             {s.scope !== "user" && s.scope !== "claude.ai" && (
               <span className="muted small mcp-managed" title={SCOPE_HELP[s.scope]}>Managed in {s.scope === "project" ? ".mcp.json" : "its config"}</span>
             )}
-            {showBoard && boardCellView(s)}
           </div>
         </div>
-        {keyFor?.claudeName === s.name && (
-          <KeyForm name={keyFor.name} claudeName={keyFor.claudeName} url={keyFor.url} onCancel={() => setKeyFor(null)}
-            help={`${s.name} can't sign the board in by itself. Paste a key or token for it instead.`}
-            onSaved={() => { setKeyFor(null); loadBoard(); }} />
+        {s.target && (
+          <div className="mcp-target-row">
+            <span className="mcp-target" title={s.target}>{s.target}</span>
+            {!s.target.includes("***") && (
+              <button className="icon-btn tiny mcp-copy" aria-label={`Copy ${s.name} ${stdio ? "command" : "address"}`} title="Copy"
+                onClick={async () => { await copy(s.target); setCopiedTarget(s.name); }}>
+                <CopyIcon size={12} /><span className="mcp-copy-label">{copiedTarget === s.name ? "Copied" : "Copy"}</span>
+              </button>
+            )}
+          </div>
+        )}
+        {waiting && login && (login.claudeAi
+          ? (
+            <div className="mcp-help info">
+              <div className="mcp-help-text">
+                {shortName(s)} is a claude.ai connector, so you sign in on claude.ai.{" "}
+                {login.url ? "A claude.ai tab opened. New Claude sessions can use it once you're done." : <><span className="spinner" /> Getting the claude.ai link…</>}
+              </div>
+              <div className="mcp-help-actions">
+                {safeHref(login.url) && <a className="btn small" href={safeHref(login.url)} target="_blank" rel="noreferrer">Open claude.ai again</a>}
+                <button className="btn small ghost" onClick={() => cancelSignIn(s)}>Done</button>
+              </div>
+            </div>
+          ) : (
+            <div className="mcp-help info">
+              <div className="mcp-help-text">
+                <span className="spinner" />{" "}
+                {login.url ? "A sign-in page opened in a new tab. Finish there and this card updates by itself." : "Starting the sign-in…"}
+              </div>
+              <div className="mcp-help-actions">
+                {safeHref(login.url) && <a className="btn small" href={safeHref(login.url)} target="_blank" rel="noreferrer">Open the sign-in page again</a>}
+                <button className="btn small ghost" onClick={() => cancelSignIn(s)}>Cancel</button>
+              </div>
+              {login.canPaste && login.url && <PasteRedirect name={s.name} />}
+            </div>
+          ))}
+        {loginFailed && (
+          <div className="mcp-help">
+            <div className="mcp-help-text">
+              {looksLikeTty(login?.error)
+                ? <><b>Sign-in needs a terminal here.</b> Sign in from the terminal and follow the prompts; this card updates by itself afterwards.</>
+                : <><b>Sign-in didn't finish.</b> {s.status === "connected" ? "Try again." : "Claude can't use it until you sign in. Try again, or sign in from the terminal to see what goes wrong."}</>}
+            </div>
+            <div className="mcp-help-actions">
+              {signInButton("Try again", true)}
+              {terminalButton("Sign in in terminal", () => run(s.name, loginCommand(s)))}
+              <button className="btn small ghost" onClick={() => cancelSignIn(s)}>Dismiss</button>
+            </div>
+            {login?.error && details(login.error)}
+          </div>
+        )}
+        {failed && !loginFailed && !waiting && (
+          <div className="mcp-help">
+            <div className="mcp-help-text">
+              {stdio
+                ? <><b>The server stops right after it starts.</b> Run it in the terminal to see why (a missing tool, token or package).</>
+                : <><b>Couldn't reach the server.</b> Try again, or sign in again if it worked before.</>}
+            </div>
+            <div className="mcp-help-actions">
+              {stdio ? terminalButton("Run in terminal", () => runServer(s), `run:${s.name}`) : signInButton("Sign in again", false)}
+              <button className="btn small ghost" disabled={busy === `recheck:${s.name}`}
+                onClick={() => act(`recheck:${s.name}`, () => api.mcpRecheck(s.name))}>
+                {busy === `recheck:${s.name}` ? "Checking…" : "Try again"}
+              </button>
+            </div>
+            {s.message && details(s.message)}
+          </div>
+        )}
+        {!failed && !loginFailed && !waiting && s.message && s.status !== "needs_auth" && s.status !== "pending" && <div className="mcp-msg">{s.message}</div>}
+        {manual?.server === s.name && (
+          <div className="mcp-manual">
+            <span className="muted small">Run this in a terminal:</span>
+            <code>{manual.command}</code>
+            <button className="btn small" onClick={async () => { await copy(manual.command); setCopied(true); }}>
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
         )}
         {editing?.name === s.name && (
           <AddServerForm key={s.name} initial={editing} onAdded={() => setEditing(null)} onCancel={() => setEditing(null)} />
@@ -295,100 +332,167 @@ export function ConnectionsDialog({ state, refreshKey = 0, onClose, onRunInTermi
     );
   };
 
-  const cols = showBoard && (
-    <div className="mcp-cols"><span title={BOARD_TIP}>Board (automations)</span></div>
-  );
   const section = (title: string, list: McpServer[]) => list.length > 0 && (
-    <div className="mcp-section">
+    <div className="conn-section">
       <div className="inbox-board">{title}</div>
-      {cols}
-      {list.map(row)}
+      {list.map(card)}
     </div>
   );
-  // Board passes not made from a Claude server (a key, or an address added for automations): rows of their own.
+
+  // For automations: Claude's servers with the board's pass state, plus passes not made from a Claude server.
   const known = new Set(servers.map((s) => s.name));
   const own = passes.filter((p) => !p.claudeName || !known.has(p.claudeName));
+  const fromClaude = servers.filter((s) => s.status === "connected" || s.scope !== "claude.ai").map((s) => ({ s, c: boardCell(s, passes) }));
+  const ready = fromClaude.filter((x) => x.c.kind === "ok");
+  const addable = fromClaude.filter((x) => x.c.kind === "connect");
+  const unavailable = fromClaude.filter((x) => x.c.kind === "none");
+  const usedBy = (p: Pass) => p.usedBy > 0 && <span className="muted small">Used by {p.usedBy} automation{p.usedBy === 1 ? "" : "s"}</span>;
+  const removePassButton = (p: Pass) => <button className="btn small danger" onClick={() => setRemovePass(p)}>Remove</button>;
+
+  const automationCard = ({ s, c }: (typeof fromClaude)[number]) => (
+    <div key={s.name} className="conn-card">
+      <div className="conn-top">
+        <div className="conn-title">
+          <span className="conn-name">{shortName(s)}</span>
+          {c.kind === "ok" && <span className="badge ok">Ready</span>}
+          {c.kind === "connect" && <span className="badge stopped" title={c.pass?.error ?? undefined}>{c.pass ? "Needs connecting" : "Not added"}</span>}
+          {c.kind === "none" && <span className="badge stopped" title={c.why}>Can't be used</span>}
+        </div>
+        <div className="conn-actions">
+          {c.kind === "ok" && <>{usedBy(c.pass)}{removePassButton(c.pass)}</>}
+          {c.kind === "connect" && (
+            <button className="btn small primary" disabled={busy === `board:${s.name}`} title={c.pass?.error ?? BOARD_TIP} onClick={() => connect(s, c.pass)}>
+              {busy === `board:${s.name}` ? "Connecting…" : "Add for automations"}
+            </button>
+          )}
+        </div>
+      </div>
+      {c.kind === "none" && <span className="muted small">{c.why}</span>}
+      {c.kind === "connect" && c.pass?.error && <div className="mcp-msg">{c.pass.error}</div>}
+      {keyFor?.claudeName === s.name && (
+        <KeyForm name={keyFor.name} claudeName={keyFor.claudeName} url={keyFor.url} onCancel={() => setKeyFor(null)}
+          help={`${s.name} can't sign the board in by itself. Paste a key or token for it instead.`}
+          onSaved={() => { setKeyFor(null); loadBoard(); }} />
+      )}
+    </div>
+  );
+
+  const ownCard = (p: Pass) => (
+    <div key={p.id} className="conn-card">
+      <div className="conn-top">
+        <div className="conn-title">
+          <span className="conn-name">{p.name}</span>
+          {p.status === "connected"
+            ? <span className="badge ok">Ready</span>
+            : <span className="badge blocked">{p.status === "pending" ? "Not signed in" : "Needs connecting"}</span>}
+        </div>
+        <div className="conn-actions">
+          {usedBy(p)}
+          {p.kind === "mcp" && p.status !== "connected" && (
+            <button className="btn small primary" disabled={busy === `pass:${p.id}`}
+              onClick={() => act(`pass:${p.id}`, async () => { const tab = window.open("about:blank", "_blank"); try { openSignIn(tab, (await api.authorizePass(p.id)).url); } catch (e) { tab?.close(); throw e; } })}>
+              Sign in
+            </button>
+          )}
+          {p.kind === "key" && (
+            <button className="btn small" onClick={() => setKeyFor({ name: p.name, claudeName: p.id, url: p.url })}>Replace key</button>
+          )}
+          {removePassButton(p)}
+        </div>
+      </div>
+      <span className="mcp-target">{p.kind === "key" ? (p.url ? `Key for ${p.url}` : `Key, scripts read it as ${p.envName}`) : p.url ?? p.claudeName ?? ""}</span>
+      {p.error && <div className="mcp-msg">{p.error}</div>}
+      {keyFor?.claudeName === p.id && (
+        <ReplaceKey pass={p} onDone={() => { setKeyFor(null); loadBoard(); }} onCancel={() => setKeyFor(null)} />
+      )}
+    </div>
+  );
+
+  const onAdd = () => {
+    if (tab === "claude") {
+      setEditing(null);
+      setAdding((v) => !v);
+    } else setAddingPass((v) => !v);
+  };
+  const addOpen = tab === "claude" ? adding : addingPass;
 
   return (
     <Modal title="Connections" onClose={onClose} wide>
       <div className="form mcp">
         <div className="mcp-toolbar">
           <span className="muted small mcp-toolbar-text">
-            Claude Code MCP servers, as <code>claude mcp list</code> sees them from your home folder.{" "}
             {state?.checking ? <><span className="spinner" /> Checking…</> : state?.checkedAt ? `Checked ${timeAgo(state.checkedAt)}.` : ""}
           </span>
           <div className="spacer" />
-          <button className="btn small" disabled={!!state?.checking} onClick={() => act("refresh", api.mcpRefresh)}>Refresh</button>
-          <button className="btn small" title={BOARD_TIP} onClick={() => setAddingPass((v) => !v)}>{addingPass ? "Close form" : "+ Add for automations"}</button>
-          <button className="btn small primary" onClick={() => { setEditing(null); setAdding((v) => !v); }}>{adding ? "Close form" : "Add server"}</button>
+          <button className="btn small" disabled={!!state?.checking} onClick={() => act("refresh", async () => { await api.mcpRefresh(); await loadBoard(); })}>Refresh</button>
+          <button className="btn small primary" onClick={onAdd}>{addOpen ? "Close form" : "Add"}</button>
         </div>
-        {adding && <AddServerForm onAdded={() => setAdding(false)} onCancel={() => setAdding(false)} />}
-        {addingPass && <AddPassForm onDone={(msg) => { setAddingPass(false); setNote(msg); loadBoard(); }} onCancel={() => setAddingPass(false)} />}
-        {note && <div className="mcp-msg info">{note}</div>}
-        {state?.error && <div className="banner error mcp-banner">{state.error}</div>}
+        <div className="tabs conn-tabs" role="tablist">
+          <button role="tab" aria-selected={tab === "claude"} className={tab === "claude" ? "active" : ""} onClick={() => setTab("claude")}>
+            For Claude{attention.length > 0 && <span className="conn-count" aria-label={`${attention.length} need attention`}>{attention.length}</span>}
+          </button>
+          <button role="tab" aria-selected={tab === "automations"} className={tab === "automations" ? "active" : ""} onClick={() => setTab("automations")}>For automations</button>
+        </div>
         {err && <div className="form-error" role="alert">{err}</div>}
-        {!state && <div className="muted"><span className="spinner" /> Loading…</div>}
-        {state && !servers.length && !state.checking && !state.error && (
-          <div className="muted">No MCP servers configured. Add one above, or with <code>claude mcp add</code>.</div>
-        )}
-        {state && !servers.length && state.checking && !state.checkedAt && (
-          <div className="muted">Checking every server takes a little while (they're all health-checked)…</div>
-        )}
-        <AgentsSection />
-        {own.length > 0 && (
-          <div className="mcp-section">
-            <div className="inbox-board">For automations only</div>
-            {cols}
-            {own.map((p) => (
-              <div key={p.id} className="mcp-item">
-                <div className="mcp-row">
-                  <div className="mcp-main">
-                    <div className="mcp-name">
-                      <span>{p.name}</span>
-                      {p.status !== "connected" && <span className="badge blocked">{p.status === "pending" ? "Not signed in" : "Needs connecting"}</span>}
-                    </div>
-                    <span className="mcp-target">{p.kind === "key" ? (p.url ? `Key for ${p.url}` : `Key, scripts read it as ${p.envName}`) : p.url ?? p.claudeName ?? ""}</span>
-                    {p.error && <div className="mcp-msg">{p.error}</div>}
-                    {p.usedBy > 0 && <span className="muted small">Used by {p.usedBy} automation{p.usedBy === 1 ? "" : "s"}</span>}
-                  </div>
-                  <div className="mcp-actions">
-                    {p.kind === "mcp" && p.status !== "connected" && (
-                      <button className="btn small primary" disabled={busy === `pass:${p.id}`}
-                        onClick={() => act(`pass:${p.id}`, async () => { const tab = window.open("about:blank", "_blank"); try { openSignIn(tab, (await api.authorizePass(p.id)).url); } catch (e) { tab?.close(); throw e; } })}>
-                        Connect
-                      </button>
-                    )}
-                    {p.kind === "key" && (
-                      <button className="btn small ghost" onClick={() => setKeyFor({ name: p.name, claudeName: p.id, url: p.url })}>Replace key</button>
-                    )}
-                    <span className="mcp-board"><span className="mcp-board-label">Automations:</span>{p.status === "connected" ? <span className="yes">✓</span> : <span className="none">…</span>}
-                      <button className="icon-btn tiny" aria-label={`Remove ${p.name}`} title="Remove" onClick={() => setRemovePass(p)}><CloseIcon size={10} /></button>
-                    </span>
-                  </div>
-                </div>
-                {keyFor?.claudeName === p.id && (
-                  <ReplaceKey pass={p} onDone={() => { setKeyFor(null); loadBoard(); }} onCancel={() => setKeyFor(null)} />
-                )}
+        {tab === "claude" && (
+          <>
+            <span className="muted small">Tools Claude can use, as <code>claude mcp list</code> sees them from your home folder.</span>
+            {adding && <AddServerForm onAdded={() => setAdding(false)} onCancel={() => setAdding(false)} />}
+            {state?.error && <div className="banner error mcp-banner">{state.error}</div>}
+            {!state && <div className="muted"><span className="spinner" /> Loading…</div>}
+            {state && !servers.length && !state.checking && !state.error && (
+              <div className="muted">No MCP servers yet. Add one above, or with <code>claude mcp add</code>.</div>
+            )}
+            {state && !servers.length && state.checking && !state.checkedAt && (
+              <div className="muted">Checking every server takes a little while (they're all health-checked)…</div>
+            )}
+            {section("Needs attention", attention)}
+            {section("Connected", connected)}
+            {idle.length > 0 && (
+              <div className="conn-section">
+                <button className="link-btn small" onClick={() => setShowIdle((v) => !v)} aria-expanded={showIdle}>
+                  {showIdle ? "Hide" : "Show"} {idle.length} claude.ai connector{idle.length === 1 ? "" : "s"} not connected
+                </button>
+                {showIdle && idle.map(card)}
               </div>
-            ))}
-          </div>
+            )}
+            {state && state.unparsed.length > 0 && (
+              <div className="conn-section">
+                <div className="inbox-board">Couldn't read these lines</div>
+                <pre className="mcp-raw">{state.unparsed.join("\n")}</pre>
+              </div>
+            )}
+            <AgentsSection />
+          </>
         )}
-        {section("Needs attention", attention)}
-        {section("Servers", mine)}
-        {section("claude.ai connectors", connectors)}
-        {idle.length > 0 && (
-          <div className="mcp-section">
-            <button className="link-btn small" onClick={() => setShowIdle((v) => !v)} aria-expanded={showIdle}>
-              {showIdle ? "Hide" : "Show"} {idle.length} claude.ai connector{idle.length === 1 ? "" : "s"} not connected
-            </button>
-            {showIdle && idle.map(row)}
-          </div>
-        )}
-        {state && state.unparsed.length > 0 && (
-          <div className="mcp-section">
-            <div className="inbox-board">Couldn't read these lines</div>
-            <pre className="mcp-raw">{state.unparsed.join("\n")}</pre>
-          </div>
+        {tab === "automations" && (
+          <>
+            <span className="muted small">{BOARD_TIP}</span>
+            {note && <div className="mcp-msg info">{note}</div>}
+            {!board && <div className="muted"><span className="spinner" /> Loading…</div>}
+            {board && (ready.length > 0 || own.length > 0) && (
+              <div className="conn-section">
+                <div className="inbox-board">In use</div>
+                {ready.map(automationCard)}
+                {own.map(ownCard)}
+              </div>
+            )}
+            {addable.length > 0 && (
+              <div className="conn-section">
+                <div className="inbox-board">Can be added</div>
+                {addable.map(automationCard)}
+              </div>
+            )}
+            {unavailable.length > 0 && (
+              <div className="conn-section">
+                <div className="inbox-board">Can't be used by automations</div>
+                {unavailable.map(automationCard)}
+              </div>
+            )}
+            {addingPass
+              ? <AddPassForm onDone={(msg) => { setAddingPass(false); setNote(msg); loadBoard(); }} onCancel={() => setAddingPass(false)} />
+              : <button className="btn small conn-add-pass" onClick={() => setAddingPass(true)}>+ Add a key or address</button>}
+          </>
         )}
       </div>
       {removePass && (
@@ -416,10 +520,42 @@ export function ConnectionsDialog({ state, refreshKey = 0, onClose, onRunInTermi
         >
           {confirm.kind === "remove"
             ? <p>Runs <code>claude mcp remove {confirm.server.name} --scope user</code>. Claude sessions (terminal and board) won't have it anymore.</p>
-            : <p>Clears the saved login. Claude can't use this server until you log in again.</p>}
+            : <p>Clears the saved sign-in. Claude can't use this server until you sign in again.</p>}
         </ConfirmDialog>
       )}
     </Modal>
+  );
+}
+
+/** Signed in on another device: the page ends on this computer's localhost address, which only the CLI here can take. */
+function PasteRedirect({ name }: { name: string }) {
+  const [text, setText] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <details className="mcp-details conn-paste">
+      <summary>Signing in on another device, like your phone?</summary>
+      <form onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setErr(null);
+        try {
+          await api.mcpLoginPaste(name, text.trim());
+          setText("");
+        } catch (e: any) {
+          setErr(e.message);
+        } finally {
+          setBusy(false);
+        }
+      }}>
+        <span className="muted small">After you approve, the page may end on an error about "localhost". Copy that page's address and paste it here.</span>
+        <div className="conn-paste-row">
+          <input value={text} onChange={(e) => setText(e.target.value)} placeholder="http://localhost:…/callback?code=…" aria-label="Address the sign-in page ended on" spellCheck={false} autoComplete="off" />
+          <button className="btn small primary" disabled={busy || !text.trim()}>{busy ? "Sending…" : "Send"}</button>
+        </div>
+        {err && <div className="form-error">{err}</div>}
+      </form>
+    </details>
   );
 }
 
@@ -591,7 +727,7 @@ function AddServerForm({ onAdded, initial, onCancel }: { onAdded: () => void; in
   );
 }
 
-/** + Add for automations: an online MCP server the board signs in to by itself, or a key for scripts. */
+/** + Add a key or address: an online MCP server the board signs in to by itself, or a key for scripts. */
 function AddPassForm({ onDone, onCancel }: { onDone: (note: string) => void; onCancel: () => void }) {
   const [kind, setKind] = useState<"mcp" | "key">("mcp");
   const [name, setName] = useState("");

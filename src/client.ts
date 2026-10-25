@@ -357,7 +357,7 @@ export class BoardClient {
     (await this.req<{ result: unknown }>("POST", "/api/automation-call", { token, service, tool, args }, {}, true)).result;
   /** Claude Code's MCP servers as Connections shows them. */
   claudeServers = () => this.req<{ servers: { name: string; target: string; transport: string | null; scope: string; status: string }[] }>("GET", "/api/mcp");
-  /** The board's own passes (Connections → Board column), without secrets. */
+  /** The board's own passes (Connections → For automations), without secrets. */
   listPasses = () => this.req<{ passes: PassInfo[]; automations: number }>("GET", "/api/passes");
   passTools = (id: string) => this.req<{ name: string; description?: string }[]>("GET", `/api/passes/${encodeURIComponent(id)}/tools`);
   /** A trial run of a check script that isn't saved: what it found, nothing is created. */

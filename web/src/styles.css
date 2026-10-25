@@ -2901,15 +2901,37 @@ button.tag-chip:hover { border-color: currentColor; }
 .auto-passes { display: flex; flex-direction: column; gap: 6px; }
 .auto-pass { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .auto-pass input[type="password"] { flex: 1; min-width: 160px; }
-.mcp-cols { display: flex; justify-content: flex-end; gap: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 0 4px; }
-.mcp-cols span { cursor: help; }
-.mcp-board { display: inline-flex; align-items: center; gap: 6px; min-width: 112px; justify-content: flex-end; font-size: 12.5px; }
-.mcp-board .yes { color: var(--ok); font-weight: 600; }
-.mcp-board .none { color: var(--muted); cursor: help; }
-.mcp-board-label { display: none; color: var(--muted); font-size: 12px; }
+/* Connections window: tabs, one card per server, buttons in a fixed order on the right of the top line. */
+.conn-tabs { padding: 0; margin-top: -2px; }
+.conn-count { margin-left: 6px; background: var(--warn-soft); color: var(--warn); border-radius: 99px; font-size: 11px; padding: 0 6px; font-weight: 600; }
+.conn-section { display: flex; flex-direction: column; gap: 8px; }
+.conn-section .inbox-board { padding: 6px 0 0; }
+.conn-section > .link-btn { align-self: flex-start; margin: 2px 0; }
+.conn-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; background: var(--surface); min-width: 0; }
+.conn-top { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; }
+.conn-title { flex: 1 1 200px; min-width: 0; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.conn-name { font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; cursor: default; }
+.conn-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.conn-actions .btn.danger { background: var(--surface); border-color: var(--border); color: var(--err); }
+.conn-actions .btn.danger:hover:not(:disabled) { background: var(--err-soft); filter: none; }
+.conn-card a.btn { color: var(--text); text-decoration: none; display: inline-flex; align-items: center; }
+.conn-card .mcp-target-row .icon-btn { opacity: 0; }
+.conn-card:hover .mcp-target-row .icon-btn, .conn-card .mcp-target-row .icon-btn:focus-visible { opacity: 1; }
+.conn-card > .mcp-add { margin-top: 6px; }
+.conn-card .mcp-help { margin-top: 6px; }
+.mcp-help.info { background: var(--info-soft); }
+.mcp-help.info .spinner { vertical-align: -1px; }
+.conn-paste form { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.conn-paste-row { display: flex; gap: 6px; }
+.conn-paste-row input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; background: var(--surface); }
+.conn-add-pass { align-self: flex-start; }
 @media (max-width: 720px) {
   .auto-wrap { grid-template-columns: minmax(0, 1fr); }
-  .mcp-cols { display: none; }
-  .mcp-board { width: 100%; justify-content: flex-start; padding-top: 6px; border-top: 1px dashed var(--border); }
-  .mcp-board-label { display: inline; }
+  .conn-card { padding: 12px; }
+  .conn-name { font-size: 15px; }
+  .conn-actions { flex-basis: 100%; justify-content: flex-start; }
+  .conn-actions .btn, .conn-paste-row .btn, .conn-add-pass { min-height: 36px; }
+  .conn-card .mcp-target-row .icon-btn.mcp-copy { opacity: 1; }
+  .conn-tabs button { flex: 1; }
+  .conn-paste-row input { font-size: 16px; }
 }

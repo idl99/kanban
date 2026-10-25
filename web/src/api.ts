@@ -581,7 +581,13 @@ export interface McpServer {
   message: string | null;
   /** Counts toward the header badge: failed, or needs auth after having worked before. */
   attention: boolean;
-  login: { state: "waiting" | "failed"; url: string | null; error: string | null; startedAt: string } | null;
+  login: {
+    state: "waiting" | "failed"; url: string | null; error: string | null; startedAt: string;
+    /** A claude.ai connector: sign-in happens on claude.ai. */
+    claudeAi: boolean;
+    /** Takes the address the sign-in page ended on (signed in on another device). */
+    canPaste: boolean;
+  } | null;
 }
 
 export interface McpState {
@@ -1400,6 +1406,7 @@ export const api = {
   mcpAdd: (input: McpAddInput) => req<McpState>("POST", "/api/mcp", input),
   mcpRemove: (name: string) => req<McpState>("DELETE", `/api/mcp/${encodeURIComponent(name)}`),
   mcpLogin: (name: string) => req<McpState>("POST", `/api/mcp/${encodeURIComponent(name)}/login`),
+  mcpLoginPaste: (name: string, text: string) => req<McpState>("POST", `/api/mcp/${encodeURIComponent(name)}/login-paste`, { text }),
   mcpCancelLogin: (name: string) => req<McpState>("POST", `/api/mcp/${encodeURIComponent(name)}/cancel-login`),
   mcpLogout: (name: string) => req<McpState>("POST", `/api/mcp/${encodeURIComponent(name)}/logout`),
   mcpRecheck: (name: string) => req<McpState>("POST", `/api/mcp/${encodeURIComponent(name)}/recheck`),
