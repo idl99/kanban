@@ -124,7 +124,7 @@ test("runs get an outputs folder and deliverables are listed", async () => {
   }
 });
 
-test("chat in Planning refines read-only and keeps the card in place", async () => {
+test("chat on a Backlog card moves it to Planning and refines read-only", async () => {
   await setup();
   const t = await board.createTicket("p", { title: "App idea", body: "habit tracker", status: "backlog" });
   await board.chat("p", t.id, "Help me shape this idea");
@@ -132,8 +132,10 @@ test("chat in Planning refines read-only and keeps the card in place", async () 
   expect(board.running("p")).toBe(0);
   await board.whenIdle();
   const got = store.getTicket("p", t.id)!;
-  expect(got.status).toBe("backlog");
+  expect(got.status).toBe("planning");
   expect(got.runCount).toBe(0);
+  // The user's message is the only run: entering Planning this way starts no interview of its own.
+  expect(readArgs().length).toBe(1);
   expect(got.sessionStarted).toBe(true);
   const call = readArgs()[0];
   expect(call.args[call.args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");

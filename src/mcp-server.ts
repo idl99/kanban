@@ -1694,13 +1694,15 @@ export const TOOLS: Tool[] = [
   },
   {
     name: "move_ticket",
-    description: "Move a ticket to another column. ready starts a Claude run; planning starts the interview in the board chat.",
+    description: "Move a ticket to another column. ready starts a Claude run; planning starts the interview in the board chat. " +
+      "Your own ticket: only to done, backlog or ready, only when the user asked for it in a message they typed in this chat; it moves once your reply ends.",
     inputSchema: { type: "object", properties: { profile: PROFILE, id: ID, status: STATUS }, required: ["id", "status"] },
     changes: true,
     plannerScope: true,
     async run(args, ctx) {
       const slug = await slugFor(args, ctx);
       const t = await ctx.client.updateTicket(slug, str(args, "id")!, { status: parseStatus(str(args, "status")) }, ctx.env[RUN_ENV]);
+      if (t.selfMove) return `${t.id} moves to ${t.selfMove} once this reply ends. Tell the user.`;
       return `Moved ${t.id} to ${t.status}${t.running ? " (Claude is working on it)" : ""}.`;
     },
   },

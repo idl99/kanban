@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { handoff, liveView, saved } from "../web/src/liveReply";
+import { expired, handoff, HANDOFF_AFTER_RUN_MS, HANDOFF_RUNNING_MS, liveView, repeats, saved, withHandoff } from "../web/src/liveReply";
 
 const reply = (text: string) => ({ role: "assistant" as const, kind: "text", text });
 const RESULT = (summary: string) => `CKANBAN_RESULT: ${JSON.stringify({ status: "done", prUrl: null, summary })}`;
@@ -54,4 +54,35 @@ test("only board blocks: waits for any new entry", () => {
 test("live view hides board blocks and the result line", () => {
   expect(liveView(final).text.endsWith("follow-up ticket.")).toBe(true);
   expect(liveView('Text\n<ckanban-questions>[').preparing).toBe("Preparing questions…");
+});
+
+test("a finished reply waits for its saved copy while the run goes on, and only briefly after it ended", () => {
+  const h = handoff("A long reply, then a tool call that streams for a while.", 3, 1_000);
+  // Claude Code saves the message only once its tool call has streamed too: well past the old 5 s cut-off.
+  expect(expired(h, 1_000 + 30_000, null)).toBe(false);
+  expect(expired(h, 1_000 + HANDOFF_RUNNING_MS, null)).toBe(true);
+  // The run ended at 40 s: a little longer, counted from the end.
+  expect(expired(h, 40_000 + HANDOFF_AFTER_RUN_MS - 1, 40_000)).toBe(false);
+  expect(expired(h, 40_000 + HANDOFF_AFTER_RUN_MS, 40_000)).toBe(true);
+});
+
+test("the same reply handed over twice (run end and last clear) shows once, the longer copy", () => {
+  const short = handoff("It works end to e", 2, 10);
+  const full = handoff("It works end to end.", 2, 20);
+  const hs = withHandoff([short], full);
+  expect(hs.map((h) => [h.text, h.at])).toEqual([["It works end to end.", 10]]);
+  expect(withHandoff(hs, short)).toBe(hs);
+  expect(withHandoff(hs, handoff("Another reply.", 3, 30)).length).toBe(2);
+});
+
+test("the status line doesn't repeat an excerpt of a reply on screen", () => {
+  const text = "I checked the code.\n\nThe board   blocks a ticket's own Claude from moving its own card, because a move would cut off the reply.";
+  // summarizeEvent: the last text block, whitespace collapsed, first 80 characters.
+  const excerpt = "The board blocks a ticket's own Claude from moving its own card, because a move w";
+  expect(repeats(excerpt, ["", text])).toBe(true);
+  expect(repeats("Editing web/src/Chat.tsx", [text])).toBe(false);
+  expect(repeats(null, [text])).toBe(false);
+  // The excerpt runs into the result line, which the reply on screen hides: compared with the whole text.
+  const done = `Done: \`tea-brewing.md\` is in the Outputs tab.\n\n${RESULT("Wrote it.")}`;
+  expect(repeats("Done: `tea-brewing.md` is in the Outputs tab. CKANBAN_RESULT: {\"status\":\"done\",\"prUrl", [done])).toBe(true);
 });

@@ -177,7 +177,7 @@ test("restart mid-reply: planning chat keeps its partial text and recover() resu
   await until(() => drafts.includes("Half a repl"));
   await board.shutdown();
   const cut = store.getTicket("p", t.id)!;
-  expect(cut.status).toBe("backlog");
+  expect(cut.status).toBe("planning");
   expect(cut.interrupted).toMatchObject({ mode: "refine", partial: "Half a repl" });
   expect(cut.interrupted!.prompt).toBeUndefined();
   expect(cut.lastActivity).toBeNull();
@@ -195,7 +195,7 @@ test("restart mid-reply: planning chat keeps its partial text and recover() resu
   expect(store.listComments("p", t.id).map((c) => c.text)).toContain("Reply interrupted by daemon restart; resuming.");
   const after = store.getTicket("p", t.id)!;
   expect(after.interrupted ?? null).toBeNull();
-  expect(after.status).toBe("backlog");
+  expect(after.status).toBe("planning");
 }, 20000);
 
 test("recover() starts nothing when no reply was cut off", async () => {
@@ -306,3 +306,20 @@ test("requested restart gives up waiting after the timeout", async () => {
   await until(() => restarted);
   expect(restarted).toBe(true);
 }, 15000);
+
+test("a reply cut off by Stop hands its streamed text over, so the chat doesn't drop it", async () => {
+  await setup();
+  process.env.FAKE_MODE = "partial";
+  const drafts: { text: string; final?: string }[] = [];
+  bus.on((e) => { if (e.type === "draft") drafts.push({ text: e.text, final: e.final }); });
+  try {
+    const t = await board.createTicket("p", { title: "plan", body: "", status: "backlog" });
+    await board.chat("p", t.id, "what next?");
+    await until(() => drafts.some((d) => d.text === "Half a repl"));
+    board.stop("p", t.id);
+    await board.whenIdle();
+    expect(drafts.at(-1)).toEqual({ text: "", final: "Half a repl" });
+  } finally {
+    process.env.FAKE_MODE = "ok";
+  }
+}, 20000);

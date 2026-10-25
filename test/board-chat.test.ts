@@ -334,6 +334,81 @@ test("last ticket event after a chat reply reports it idle", async () => {
   bus.on((e) => { if (e.type === "ticket.updated" && e.ticket.id === t.id) seen.push(board.isRunning("p", t.id)); });
   await board.chat("p", t.id, "hi");
   await board.whenIdle();
-  expect(seen[0]).toBe(true);
+  expect(seen).toContain(true);
   expect(seen.at(-1)).toBe(false);
 });
+
+test("a peer message or a running plan's child keeps a Backlog card in Backlog", async () => {
+  await setup();
+  const t = await board.createTicket("p", { title: "x", body: "", status: "backlog" });
+  await board.chat("p", t.id, "a note from another ticket", { peer: true });
+  await board.whenIdle();
+  expect(store.getTicket("p", t.id)!.status).toBe("backlog");
+  const planner = await board.createTicket("p", { title: "plan", body: "", status: "review" });
+  const kid = await board.createTicket("p", { title: "kid", body: "", status: "backlog" });
+  store.updateTicket("p", kid.id, { parentId: planner.id, mode: "interview" });
+  const plan = (state: "running" | "paused") => ({ state, maxConcurrent: 1, wakeups: 0, startedAt: new Date().toISOString(), originalCount: 1, inbox: [], seen: {}, retries: {}, awaiting: null });
+  // The running plan moves its children itself.
+  store.updateTicket("p", planner.id, { plan: plan("running") });
+  expect((await board.chat("p", kid.id, "a question")).status).toBe("backlog");
+  await board.stop("p", kid.id);
+  await board.whenIdle();
+  // A paused plan's child is the user's to shape: it moves like any other card.
+  store.updateTicket("p", planner.id, { plan: plan("paused") });
+  store.updateTicket("p", kid.id, { status: "backlog" });
+  await board.chat("p", kid.id, "shape this");
+  await board.whenIdle();
+  expect(store.getTicket("p", kid.id)!.status).toBe("planning");
+});
+
+test("the user asks a Review card's own chat to mark it done: it moves once the reply ends", async () => {
+  await setup();
+  const t = await board.createTicket("p", { title: "x", body: "", status: "ready" });
+  await board.whenIdle();
+  expect(store.getTicket("p", t.id)!.status).toBe("review");
+  process.env.FAKE_STEP_MS = "200";
+  try {
+    // Not the user's message (another ticket's Claude): refused.
+    await board.chat("p", t.id, "mark yourself done", { peer: true });
+    await until(() => board.isRunning("p", t.id));
+    expect(board.requestSelfMove("p", t.id, "done")).toBe(false);
+    await board.whenIdle();
+    expect(store.getTicket("p", t.id)!.status).toBe("review");
+
+    await board.chat("p", t.id, "looks good, mark this done");
+    await until(() => board.isRunning("p", t.id));
+    expect(board.requestSelfMove("p", t.id, "done")).toBe(true);
+    // The reply goes on; the card moves only afterwards.
+    expect(board.isRunning("p", t.id)).toBe(true);
+    expect(store.getTicket("p", t.id)!.status).toBe("in_progress");
+    await board.whenIdle();
+    await until(() => store.getTicket("p", t.id)!.status === "done");
+    expect(store.listComments("p", t.id).at(-1)!.text).toBe("Moved it to done by its own chat (user request).");
+  } finally {
+    delete process.env.FAKE_STEP_MS;
+  }
+}, 20000);
+
+test("a self move is dropped when the user stops the reply or moves the card meanwhile", async () => {
+  await setup();
+  const t = await board.createTicket("p", { title: "x", body: "", status: "ready" });
+  await board.whenIdle();
+  process.env.FAKE_STEP_MS = "300";
+  try {
+    await board.chat("p", t.id, "put it back in Backlog");
+    await until(() => board.isRunning("p", t.id));
+    expect(board.requestSelfMove("p", t.id, "backlog")).toBe(true);
+    await board.stop("p", t.id);
+    await board.whenIdle();
+    expect(store.getTicket("p", t.id)!.status).not.toBe("backlog");
+
+    await board.chat("p", t.id, "mark this done");
+    await until(() => board.isRunning("p", t.id));
+    expect(board.requestSelfMove("p", t.id, "done")).toBe(true);
+    await board.updateTicket("p", t.id, { status: "review" });
+    await board.whenIdle();
+    expect(store.getTicket("p", t.id)!.status).toBe("review");
+  } finally {
+    delete process.env.FAKE_STEP_MS;
+  }
+}, 20000);

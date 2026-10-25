@@ -58,6 +58,8 @@ export interface TicketInfo {
   mode?: TicketMode;
   body: string;
   running?: boolean;
+  /** A run moving its own card at the user's request: the column it lands in once the reply ends (PATCH answer only). */
+  selfMove?: Status;
   outcome: string | null;
   prUrl: string | null;
   branch: string | null;

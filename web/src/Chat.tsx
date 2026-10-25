@@ -33,7 +33,7 @@ import { useSlashCommands, useSlashPicker } from "./SlashPicker";
 import { commandNote, messageCommand, type SlashCommand } from "./slashText";
 import { filesByReply } from "./fileCards";
 
-import { handoff as handoffOf, liveView, saved, type Handoff } from "./liveReply";
+import { expired, handoff as handoffOf, liveView, repeats, saved, withHandoff, type Handoff } from "./liveReply";
 import { heldByReply, inSession, norm, unsentNow, type Pending } from "./pendingBubbles";
 import { baseName, copyFile, dirName, downloadFile } from "./share";
 import { draftKey, formKey } from "./drafts";
@@ -111,7 +111,6 @@ function group(entries: SessionEntry[], splitAt?: string): Block[] {
 }
 
 const HANDOFF_RETRY_MS = 500;
-const HANDOFF_MAX_MS = 5000;
 
 const UNREADABLE = { questions: "questions", proposal: "ticket proposal", tickets: "proposed tickets" } as const;
 
@@ -199,6 +198,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   // Text Claude is writing right now (from the run's partial-message stream); not yet in the session file.
   const [live, setLive] = useState("");
+  const liveRef = useRef("");
+  liveRef.current = live;
   // Replies that finished streaming but aren't in the loaded conversation yet.
   const [handoff, setHandoff] = useState<Handoff[]>([]);
   const entriesRef = useRef<SessionEntry[]>([]);
@@ -210,6 +211,8 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   const keepOffset = useRef<number | null>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const running = !!ticket.running;
+  // When the run last ended (null while it runs): finished replies wait for their saved copy until a little after.
+  const endedAt = useRef<number | null>(running ? null : Date.now());
   const { stopping, stop } = useStop(slug, ticket, running, onError);
   const refine = REFINE(ticket.status);
 
@@ -252,10 +255,18 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
       else if (e.final) {
         // Message finished: show all of it until the saved copy is loaded, then swap without a gap.
         const h = handoffOf(e.final, entriesRef.current.length);
-        setHandoff((hs) => [...hs, h]);
+        setHandoff((hs) => withHandoff(hs, h));
         setLive("");
         loadTail().catch(() => {});
-      } else loadTail().catch(() => {}).finally(() => setLive(""));
+      } else {
+        // Cleared without the finished text: keep what streamed on screen until its saved copy shows.
+        if (liveRef.current) {
+          const h = handoffOf(liveRef.current, entriesRef.current.length);
+          setHandoff((hs) => withHandoff(hs, h));
+          setLive("");
+        }
+        loadTail().catch(() => {}).finally(() => setLive(""));
+      }
       return;
     }
     const mine = (e.type === "session.updated" || e.type === "activity") && e.profile === slug && e.id === ticket.id;
@@ -270,7 +281,14 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   // reached the session (Stop before Claude read it) can't arrive any more: drop its bubble so it doesn't stick below
   // later messages. Messages sent after this point are left alone.
   useEffect(() => {
+    endedAt.current = running ? null : Date.now();
     if (running) return;
+    // A reply still streaming when the run ended stays until its saved copy shows (or briefly, if it never does).
+    if (liveRef.current) {
+      const h = handoffOf(liveRef.current, entriesRef.current.length);
+      setHandoff((hs) => withHandoff(hs, h));
+      setLive("");
+    }
     const before = pendingRef.current.filter((p) => !p.steer);
     loadTail()
       .then((tail) => {
@@ -327,13 +345,19 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
   useEffect(() => {
     if (waitingHandoff.length !== handoff.length) setHandoff(waitingHandoff);
   }, [waitingHandoff, handoff]);
-  // The saved copy can lag the stream (transcript written after stdout): poll briefly, then give up.
+  // The saved copy lags the stream (the session file gets a message once all of it, tool calls too, has streamed):
+  // poll until it shows; give up only a little after the run ended (see expired).
   const handingOff = handoff.length > 0;
+  // Reply text on screen: the status line doesn't repeat an excerpt of it.
+  const onScreen = useMemo(() => [
+    ...waitingHandoff.map((h) => h.text),
+    entries.findLast((e) => e.role === "assistant" && e.kind === "text")?.text ?? "",
+  ], [waitingHandoff, entries]);
   useEffect(() => {
     if (!handingOff) return;
     const timer = setInterval(() => {
       const now = Date.now();
-      setHandoff((hs) => (hs.some((h) => now - h.at >= HANDOFF_MAX_MS) ? hs.filter((h) => now - h.at < HANDOFF_MAX_MS) : hs));
+      setHandoff((hs) => (hs.some((h) => expired(h, now, endedAt.current)) ? hs.filter((h) => !expired(h, now, endedAt.current)) : hs));
       loadTail().catch(() => {});
     }, HANDOFF_RETRY_MS);
     return () => clearInterval(timer);
@@ -730,7 +754,7 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
         )}
         {running && !live && !!ticket.waitingOn?.length && <WaitingCard tasks={ticket.waitingOn} />}
         {running && !live && !ticket.waitingOn?.length && (
-          <div className="chat-typing"><span className="spinner" /> {ticket.lastActivity && ticket.lastActivity !== "Starting…" ? ticket.lastActivity : "Claude is working…"}</div>
+          <div className="chat-typing"><span className="spinner" /> {ticket.lastActivity && ticket.lastActivity !== "Starting…" && !repeats(ticket.lastActivity, onScreen) ? ticket.lastActivity : "Claude is working…"}</div>
         )}
         {pending.filter((p) => p.steer && !queued.some((q) => q.text === p.text)).map((p, i) => (
           <div key={i} className="conv-msg user pending">

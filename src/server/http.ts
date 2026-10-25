@@ -49,7 +49,7 @@ import { addProjectRule, corrections, hasCorrections, LESSON_ACTIONS, lessonsAva
 import { ClaudeLogIndex, readWindows, recordWindow, ticketRuns, ticketUsage, UsageCache, windowsNeeded } from "./ticket-usage";
 import { fetchUsage, type UsageResult } from "./usage";
 import type { Store } from "./store";
-import { runCapFor, STATUSES, type Profile, type ScheduleEditor, type Status, type Ticket, type Workspace } from "./types";
+import { runCapFor, SELF_MOVES, STATUSES, type Profile, type SelfMove, type ScheduleEditor, type Status, type Ticket, type Workspace } from "./types";
 import { nowIso, slugify } from "./util";
 import { applyDetection, detectSetup } from "./worktree-setup";
 
@@ -306,10 +306,14 @@ export function createServer(deps: ServerDeps) {
     const requester = mine ? board.userRequestRights(slug, runId) : null;
     if (requester) {
       if (target?.id === requester.id) {
-        throw new HttpError(403, `${target.id} is this Planning chat's own ticket: ask the user to move, edit or stop it themselves ` +
-          "(changing it from here would end this reply or start its work)");
+        throw new HttpError(403, `${target.id} is this Planning chat's own ticket: ask the user to edit or stop it themselves ` +
+          "(changing it from here would end this reply or start its work). Only moving it to done, backlog or ready works, when the user asks in this chat");
       }
       return { requester };
+    }
+    if (mine && target?.id === runId) {
+      throw new HttpError(403, `${target.id} is this run's own ticket: it may only move it to done, backlog or ready, and only when the ` +
+        "user asks for that in a message they typed in this ticket's chat; otherwise ask the user to change it on the board");
     }
     const planner = mine ? board.plannerRights(slug, runId) : null;
     if (!planner) {
@@ -1163,6 +1167,10 @@ export function createServer(deps: ServerDeps) {
         // matters; a suggestion changes nothing until the user keeps it).
         const own = req.headers.get(RUN_HEADER) === `${slug}/${id}` && !req.headers.get(HUDDLE_HEADER);
         const onlyOwn = Object.keys(b).length > 0 && Object.keys(b).every((k) => k === "important" || k === "suggestedTags");
+        // Its own card to Done, Backlog or Ready, asked for by the user in this ticket's chat: moved once the reply ends.
+        if (own && Object.keys(b).length === 1 && SELF_MOVES.includes(b.status) && board.requestSelfMove(slug, id, b.status as SelfMove)) {
+          return json({ ...view(profile, target), selfMove: b.status });
+        }
         const { planner, requester } = own && onlyOwn ? {} : runRights(req, slug, target);
         const patch: Parameters<Board["updateTicket"]>[2] = {};
         const deps = strings(b.dependsOn);

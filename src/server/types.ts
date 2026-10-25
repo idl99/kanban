@@ -7,6 +7,9 @@ export type Outcome = null | "done" | "blocked" | "failed" | "stopped" | "needs_
 export type TicketMode = "interview" | "auto";
 
 export const STATUSES: Status[] = ["backlog", "planning", "ready", "in_progress", "review", "done"];
+/** Columns a ticket's own chat may move its card to when the user asks in that chat (see Board.requestSelfMove). */
+export type SelfMove = "done" | "backlog" | "ready";
+export const SELF_MOVES: SelfMove[] = ["done", "backlog", "ready"];
 
 export interface Profile {
   name: string;

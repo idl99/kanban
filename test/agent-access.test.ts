@@ -194,6 +194,9 @@ test("tools take an explicit profile and validate input", async () => {
   expect(noBoard.content[0].text).toContain("no profile matches");
   expect((await callTool("update_ticket", { profile: "site", id: "t_1" }, ctx)).content[0].text).toContain("nothing to change");
   expect((await callTool("create_ticket", { profile: "site" }, ctx)).content[0].text).toBe("title is required");
+  // Its own card at the user's request: the board answers that it moves once the reply ends.
+  ctx.client.updateTicket = (async () => ({ id: "t_9", status: "review", selfMove: "done" })) as any;
+  expect((await callTool("move_ticket", { profile: "site", id: "t_9", status: "done" }, ctx)).content[0].text).toBe("t_9 moves to done once this reply ends. Tell the user.");
   expect((await callTool("nope", {}, ctx)).isError).toBe(true);
 });
 

@@ -32,7 +32,7 @@ import { mcpConfig } from "./agents";
 import type { OwnedSession } from "./shell";
 import type { Store } from "./store";
 import { normalizeTags } from "./tags";
-import { autoHuddlesOn, runCapFor, workspaceOf, type FollowUp, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type Status, type Ticket, type TicketMode, type TicketSource } from "./types";
+import { autoHuddlesOn, runCapFor, workspaceOf, type FollowUp, type Interrupted, type LimitHit, type Plan, type PrStatus, type Profile, type QueuedMessage, type SelfMove, type Status, type Ticket, type TicketMode, type TicketSource } from "./types";
 import { CLEANUP_TIMEOUT_MS, copySetupFiles, prepareWorktree, runShell, SETUP_TIMEOUT_MS, withBoardText, type SetupOutcome, type SetupResult } from "./worktree-setup";
 
 const INSTALLING = "Installing project dependencies…";
@@ -70,6 +70,8 @@ interface ActiveRun {
   promise: Promise<void>;
   /** Status to land on when the run ends because the user moved the card. */
   targetStatus: Status | null;
+  /** The user asked this run, in its own chat, to move its card: the board moves it once the run ends (see requestSelfMove). */
+  selfMove?: SelfMove;
   stopRequested: boolean;
   /**
    * Set for runs started from the ticket chat (not the Ready queue). raw: text is the full prompt (planner wake-ups);
@@ -443,7 +445,7 @@ export class Board {
    * peer: the message comes from another session (a huddle) and is already a full prompt.
    */
   async chat(slug: string, id: string, text: string, opts: ChatOptions = {}): Promise<Ticket> {
-    const t = this.store.getTicket(slug, id);
+    let t = this.store.getTicket(slug, id);
     if (!t) throw new Error(`ticket ${id} not found`);
     if (!text.trim()) throw new Error("message is empty");
     if (t.error?.startsWith("corrupt")) throw new Error("ticket file is corrupt");
@@ -456,6 +458,11 @@ export class Board {
       const slash = slashMessage(text, this.commands(slug, id));
       if (slash && BOARD_COMMANDS.has(slash.command.name)) return this.boardCommand(slug, id, slash.command.name, slash.args);
       if (slash) [text, opts] = [slash.text, { ...opts, slash: slash.command.local ? "local" : "prompt" }];
+    }
+    // The user chats on a Backlog card: it is being shaped now, so it shows in Planning (a running plan's children stay put).
+    const parent = t.parentId ? this.store.getTicket(slug, t.parentId) : null;
+    if (t.status === "backlog" && !opts.peer && !opts.fromPlanner && !opts.hostWake && !opts.followUp && opts.slash !== "local" && !planActive(parent?.plan)) {
+      t = this.patch(slug, id, { status: "planning", refineStarted: true });
     }
     // The user (or the board's automatic continue) picks the conversation up again: the limit wait is over.
     if (t.limit && !opts.peer && !opts.hostWake && !opts.followUp) this.patch(slug, id, { limit: null });
@@ -636,8 +643,10 @@ export class Board {
           this.patch(slug, id, { ...this.endStatus(run), outcome: "failed", error: String(e?.message ?? e) });
         } catch {}
       })
-      .finally(() => {
+      .finally(async () => {
         this.runs.delete(this.key(slug, id));
+        // Before a pending restart, so the move the user asked for isn't lost.
+        await this.applySelfMove(run);
         if (this.restartPending) this.emitRestart();
         // Tell the UI the run is over (earlier updates were sent while it was still registered).
         const now = this.store.getTicket(slug, id);
@@ -649,6 +658,20 @@ export class Board {
         if (!this.shuttingDown && !run.targetStatus) this.dispatch(slug);
         if (!this.shuttingDown) this.advancePlans(slug);
       });
+  }
+
+  /** The move the user asked the run for, now that its reply is over; not when the user stopped or moved it meanwhile. */
+  private async applySelfMove(run: ActiveRun): Promise<void> {
+    const status = run.selfMove;
+    if (!status || run.stopRequested || run.targetStatus || this.shuttingDown || this.isRunning(run.slug, run.id)) return;
+    const t = this.store.getTicket(run.slug, run.id);
+    if (!t || t.status === status) return;
+    try {
+      await this.updateTicket(run.slug, run.id, { status });
+      this.store.addComment(run.slug, run.id, "ai", `Moved it to ${status} by its own chat (user request).`);
+    } catch (e) {
+      this.store.addComment(run.slug, run.id, "ai", `Couldn't move it to ${status} as asked in the chat: ${(e as Error).message}`);
+    }
   }
 
   private begin(run: ActiveRun) {
@@ -864,7 +887,8 @@ export class Board {
 
     const out = await run.handle.done;
     if (draftTimer) clearTimeout(draftTimer);
-    if (draft.text) this.bus.emit({ type: "draft", profile: slug, id, text: "" });
+    // A reply cut off before its message ended (Stop, a crash): the chat keeps it until it knows what was saved.
+    if (draft.text) this.bus.emit({ type: "draft", profile: slug, id, text: "", final: draft.text });
     // Daemon is exiting: leave the ticket in_progress so recover() resumes it on next start.
     if (this.shuttingDown) return;
     const finalText = extractFinalText(out.events);
@@ -1680,6 +1704,17 @@ export class Board {
   /** The ticket's current run answers a message the user typed in its chat (see ActiveRun.chat.user). */
   userChatRun(slug: string, id: string): boolean {
     return !!this.runs.get(this.key(slug, id))?.chat?.user;
+  }
+
+  /**
+   * The ticket's own chat, answering the user's own words (userAskedRun), asks to move its card: the board moves it
+   * once the run ends, so the reply isn't cut off. False when the run doesn't answer the user.
+   */
+  requestSelfMove(slug: string, id: string, status: SelfMove): boolean {
+    const run = this.runs.get(this.key(slug, id));
+    if (!run || !this.userAskedRun(slug, id)) return false;
+    run.selfMove = status;
+    return true;
   }
 
   /**

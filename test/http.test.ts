@@ -742,6 +742,42 @@ test("a Planning chat answering the user's message may change any other ticket o
   }
 });
 
+test("a ticket's own chat moves its own card to done, backlog or ready only at the user's request", async () => {
+  const p = (await (await fetch(`${base}/api/profiles`, json("POST", { name: "Self Move", path: tempDir("ck-self-") }))).json()) as any;
+  const tickets = `${base}/api/profiles/${p.slug}/tickets`;
+  const t = (await (await fetch(tickets, json("POST", { title: "Mine", status: "review" }))).json()) as any;
+  const patch = (b: unknown, headers: Record<string, string>) =>
+    fetch(`${tickets}/${t.id}`, { method: "PATCH", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(b) });
+  const run = { "x-ckanban-run": `${p.slug}/${t.id}` };
+  const errorOf = async (r: Response) => ((await r.json()) as any).error as string;
+
+  // No reply to the user's own message behind the run: refused, with what would work.
+  let r = await patch({ status: "done" }, run);
+  expect(r.status).toBe(403);
+  expect(await errorOf(r)).toContain("only when the user asks for that in a message they typed");
+
+  const asked: string[] = [];
+  const real = board.requestSelfMove.bind(board);
+  board.requestSelfMove = (slug, id, status) => (slug === p.slug && id === t.id ? (asked.push(status), true) : real(slug, id, status));
+  try {
+    for (const status of ["done", "backlog", "ready"]) {
+      r = await patch({ status }, run);
+      expect(r.status).toBe(200);
+      expect((await r.json()) as any).toMatchObject({ id: t.id, status: "review", selfMove: status });
+    }
+    expect(asked).toEqual(["done", "backlog", "ready"]);
+    // Other columns, other changes and a huddle agent of the same ticket: refused.
+    for (const [b, h] of [[{ status: "planning" }, run], [{ status: "done", title: "x" }, run], [{ status: "done" }, { ...run, "x-ckanban-huddle-agent": "reviewer" }]] as const) {
+      r = await patch(b, h);
+      expect(r.status).toBe(403);
+    }
+    expect(asked.length).toBe(3);
+    expect(store.getTicket(p.slug, t.id)!.status).toBe("review");
+  } finally {
+    board.requestSelfMove = real;
+  }
+});
+
 test("spending: card cost, today's spend and caps set by the user only", async () => {
   const path = tempDir("ck-plain-");
   let r = await fetch(`${base}/api/profiles`, json("POST", { name: "Spend", path }));
