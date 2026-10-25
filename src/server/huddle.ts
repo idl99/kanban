@@ -43,7 +43,7 @@
 // Brakes, so a huddle can't loop or overspend: it stops at maxCostUsd (agents' runs and @main's huddle replies; the
 // leads are warned at 80%) and at maxMessages; routing pauses after AGENT_ONLY_MAX messages without the user; two
 // participants answering each other PING_PONG times in a row stop waking each other and their lead is tagged.
-import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { summarizeEvent } from "./activity";
 import { mcpConfig } from "./agents";
@@ -286,6 +286,8 @@ export class Huddles {
   private summaryOwed = new Set<string>();
   /** Ticket sessions by "<slug>/<ticket>": the huddle participant that last woke them (its peer runs' cost is that huddle's). */
   private mainWoken = new Map<string, { hid: string; handle: string }>();
+  /** Ticket sessions' running cost, "<slug>/<ticket>/<session>" -> total_cost_usd at its latest result. */
+  private ticketTotals = new Map<string, number>();
   /** A ticket session's latest conversation size ("slug/id" -> tokens), and when it was last written to its huddles. */
   private ticketCtx = new Map<string, { tokens: number; savedAt: number; saved: number }>();
   private shuttingDown = false;
@@ -349,16 +351,44 @@ export class Huddles {
     return `${slug}/${hid}/${handle}`;
   }
 
-  /** A ticket session's result line: a huddle reply run's cost counts toward the huddle that woke it. */
+  /**
+   * A ticket session's result line: a huddle reply run's cost counts toward the huddle that woke it. Its total is the
+   * session's running total (kept across --resume), so the run's cost is the growth since the session's previous
+   * result, not since @main joined: the ticket's earlier chats and runs are not the huddle's.
+   */
   private mainResult(slug: string, ticketId: string, ev: any) {
-    if (ev?.type !== "result" || this.shuttingDown) return;
+    if (ev?.type !== "result") return;
+    const sid = String(ev.session_id ?? "");
+    const total = Number(ev.total_cost_usd) || 0;
+    const key = `${slug}/${ticketId}/${sid}`;
+    const known = this.ticketTotals.get(key);
+    this.ticketTotals.set(key, total);
+    if (this.shuttingDown) return;
     const woken = this.mainWoken.get(`${slug}/${ticketId}`);
     if (!woken || !this.board.isPeerRun(slug, ticketId)) return;
     const h = this.load(slug, woken.hid);
     const p = h?.participants.find((x) => x.handle === woken.handle && x.ticketId === ticketId);
     if (!h || !p || h.status === "closed") return;
-    this.updateP(slug, h.id, p.handle, { ...costAfter(p, Number(ev.total_cost_usd) || 0), idleAt: nowIso() });
+    const prev = known ?? this.priorSessionTotal(slug, ticketId, sid, total);
+    const cost = total >= prev ? total - prev : total;
+    this.updateP(slug, h.id, p.handle, { costUsd: (p.costUsd ?? 0) + cost, sessionCostUsd: total, idleAt: nowIso() });
     this.checkBudget(slug, h.id);
+  }
+
+  /** A ticket session's running total before its latest result (already in the activity log), from that log; 0 if none. */
+  private priorSessionTotal(slug: string, ticketId: string, sid: string, latest: number): number {
+    const path = this.store.activityPath(slug, ticketId);
+    if (!existsSync(path)) return 0;
+    const totals: number[] = [];
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      if (!line.includes('"total_cost_usd"')) continue;
+      try {
+        const ev = JSON.parse(line)?.event;
+        if (ev?.type === "result" && String(ev.session_id ?? "") === sid) totals.push(Number(ev.total_cost_usd) || 0);
+      } catch {}
+    }
+    if (totals.at(-1) === latest) totals.pop();
+    return totals.at(-1) ?? 0;
   }
 
   /**
@@ -1617,7 +1647,8 @@ export class Huddles {
     const max = h.maxCostUsd ?? DEFAULT_MAX_COST_USD;
     const spent = huddleCost(h);
     if (spent >= max) {
-      const stop = `The huddle spent ${money(spent)} of its ${money(max)} budget and stopped; every run was stopped.`;
+      const by = h.participants.filter((p) => (p.costUsd ?? 0) > 0).map((p) => `@${p.handle} ${money(p.costUsd!)}`).join(", ");
+      const stop = `The huddle spent ${money(spent)} of its ${money(max)} budget and stopped; every run was stopped.${by ? ` Spent: ${by}.` : ""}`;
       // The last wrap-up turn can tip it over after the work is finished: then Close is the next step, not more budget.
       const finished = !!h.closeRequest || this.quiet(slug, h, this.store.readHuddleMessages(slug, hid)).quiet;
       if (!finished) {

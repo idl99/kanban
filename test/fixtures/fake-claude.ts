@@ -223,7 +223,8 @@ const usage = ctx ? { usage: { input_tokens: 10, cache_read_input_tokens: ctx - 
 emit({ type: "assistant", message: { ...(ctx ? { id: `msg_${sessionId}_${Date.now()}`, model: "claude-opus-5-5" } : {}), content: [{ type: "text", text }], ...usage } });
 // A subagent's message (its own small context) comes last: the session's size must not take it.
 if (ctx) emit({ type: "assistant", parent_tool_use_id: "tu_task", message: { id: `msg_sub_${Date.now()}`, model: "claude-opus-5-5", content: [{ type: "text", text: "sub" }], usage: { input_tokens: 3, cache_read_input_tokens: 500, output_tokens: 1 } } });
-emit({ type: "result", subtype: "success", is_error: false, result: text, total_cost_usd: 0.01, duration_ms: 100, session_id: sessionId });
+// FAKE_TOTAL_COST: the session's running total its result reports (default 0.01), like a resumed session's.
+emit({ type: "result", subtype: "success", is_error: false, result: text, total_cost_usd: Number(process.env.FAKE_TOTAL_COST ?? 0.01), duration_ms: 100, session_id: sessionId });
 
 // The real CLI kills background tasks at end of input; otherwise it starts a turn when one finishes
 // (bgsilent: it doesn't, so the board has to end input itself).

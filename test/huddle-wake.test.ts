@@ -153,6 +153,7 @@ test("budget brake: @main's huddle replies count, the leads are warned at 80%, e
   expect(warn.mentions).toEqual(["main"]);
   expect(heardBy(store.getTicket("p", t.id)!.sessionId!).join("\n")).toContain("(83%)");
   expect(log.at(-1)).toContain("budget and stopped");
+  expect(log.at(-1)).toContain("Spent: @main $0.01, @reviewer $0.01.");
   // Work still going and no close request: the usual stop, which suggests more budget.
   expect(log.at(-1)).toContain("resume it with more budget if it should go on");
   expect(stopped.finishedAtStop).toBeFalsy();
@@ -165,6 +166,29 @@ test("budget brake: @main's huddle replies count, the leads are warned at 80%, e
   expect(resumed).toMatchObject({ status: "live", stopReason: null });
   expect(resumed.maxCostUsd).toBeCloseTo(10.012);
   expect(messages(h).at(-2)!.text).toContain("$10.00 more budget");
+}, 30000);
+
+test("@main's huddle cost is only its woken replies, not what the ticket's session spent before", async () => {
+  const t = await host();
+  const sid = crypto.randomUUID();
+  store.updateTicket("p", t.id, { sessionId: sid });
+  // The ticket's chat has already spent $30 in its session.
+  store.appendActivity("p", t.id, 1, { type: "result", session_id: sid, total_cost_usd: 30 });
+  const h = huddles.create("p", t.id, [{ preset: "reviewer" }], { maxCostUsd: 5 });
+  await idle();
+  const before = huddleCost(store.getHuddle("p", h.id)!);
+  // One $1 reply: the session's running total goes from $30 to $31.
+  process.env.FAKE_TOTAL_COST = "31";
+  try {
+    huddles.post("p", h.id, you(h), "@main what do you think?");
+    await until(() => (participant(h, "main").costUsd ?? 0) > 0);
+    await idle();
+  } finally {
+    delete process.env.FAKE_TOTAL_COST;
+  }
+  expect(participant(h, "main").costUsd).toBeCloseTo(1);
+  expect(huddleCost(store.getHuddle("p", h.id)!) - before).toBeCloseTo(1);
+  expect(store.getHuddle("p", h.id)!.status).toBe("live");
 }, 30000);
 
 test("budget runs out after a close request: the stop points to Close; resuming without a tag says nobody has work", async () => {
