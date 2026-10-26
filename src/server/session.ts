@@ -87,6 +87,8 @@ export interface SessionEntry {
    * ticket's Claude sent (chat_ticket) has that ticket's id and title, and text is just the message.
    */
   peer?: { dir: "in" | "out"; ticketId: string | null; title?: string };
+  /** A plain message of the user's that the chat can rewind to (not one sent mid-turn, not a huddle or peer message). */
+  rewind?: true;
   /** Huddle messages delivered to this ticket's session (also a peer entry, ticketId null): the huddle's id. */
   huddleId?: string;
   /** A setup the board ran: before this prompt (older runs), or alone (text "") after `ckanban ticket setup`. Shown as a row. */
@@ -534,7 +536,11 @@ export function parseSession(raw: string): ParsedSession {
         }
       }
       const u = userText(content);
-      if (u && !ev.isMeta) entries.push(peerEntry(u, uuid, at));
+      if (u && !ev.isMeta) {
+        const e = peerEntry(u, uuid, at);
+        if (e.kind === "text" && !e.peer && !e.setup) e.rewind = true;
+        entries.push(e);
+      }
       continue;
     }
 

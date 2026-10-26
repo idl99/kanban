@@ -21,6 +21,7 @@ import {
   resolveDeps, wakeupCap,
 } from "./plan";
 import { run as runCmd } from "./git";
+import { takeSnapshot } from "./rewind";
 import { parseResult } from "./result";
 import { FOLLOW_UP_LATE_MS, FOLLOW_UP_NOTE_MAX, FOLLOW_UP_REASON_MAX, FollowUpError, followUpTime, logFollowUp } from "./followup";
 import { formatAt } from "./jobs";
@@ -452,6 +453,16 @@ export class Board {
    * peer: the message comes from another session (a huddle) and is already a full prompt.
    */
   async chat(slug: string, id: string, text: string, opts: ChatOptions = {}): Promise<Ticket> {
+    // Rewind needs the folder as it is right before this message: saved quietly, the user's own history is untouched.
+    // Done first, so everything below still runs in one go (a message can't slip in between the checks and the start).
+    if (!opts.peer && !opts.hostWake && !opts.followUp && text.trim()) {
+      const dir = this.rewindDir(slug, id);
+      if (dir) await takeSnapshot(dir, id, text);
+    }
+    return this.chatNow(slug, id, text, opts);
+  }
+
+  private async chatNow(slug: string, id: string, text: string, opts: ChatOptions): Promise<Ticket> {
     let t = this.store.getTicket(slug, id);
     if (!t) throw new Error(`ticket ${id} not found`);
     if (!text.trim()) throw new Error("message is empty");
@@ -516,6 +527,37 @@ export class Board {
       this.patch(slug, id, { queued: [...(this.store.getTicket(slug, id)!.queued ?? []), msg] });
     }
     return this.store.getTicket(slug, id)!;
+  }
+
+  /**
+   * The folder a ticket's Claude edits, once it is known (its own copy, a linked folder, or the project folder after
+   * the first run edited it in place); null before that, so rewind never snapshots the wrong folder.
+   */
+  rewindDir(slug: string, id: string): string | null {
+    const t = this.store.getTicket(slug, id);
+    const profile = this.store.getProfile(slug);
+    if (!t || !profile) return null;
+    if (t.workdir || t.worktree) return t.workdir ?? t.worktree ?? null;
+    return t.baseSha ? profile.path : null;
+  }
+
+  /** Why the chat can't be rewound right now, or null when it can. */
+  rewindBlocked(slug: string, id: string): string | null {
+    const t = this.store.getTicket(slug, id);
+    if (!t) return "ticket not found";
+    if (this.isRunning(slug, id)) return "Claude is working. Stop it or wait until it has replied.";
+    if (t.queued?.length) return "A message is still waiting to be sent. Send or discard it first.";
+    // In the project folder itself, another ticket's run edits the same files: putting them back would undo its work too.
+    if (!t.workdir && !t.worktree && this.folderBusy(slug, t)) return "Another ticket is editing this folder right now. Try again when it has finished.";
+    return null;
+  }
+
+  /** The conversation was cut by a rewind: with nothing left of it, the next message starts a new session. */
+  rewound(slug: string, id: string, emptied: boolean): Ticket {
+    this.recoverable(slug, id);
+    return this.patch(slug, id, emptied
+      ? { sessionId: crypto.randomUUID(), sessionStarted: false, freshSession: true, lastActivity: null }
+      : { lastActivity: null });
   }
 
   /** What `/` can run in this ticket's chat (the composer's picker lists the same). */

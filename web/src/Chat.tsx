@@ -24,6 +24,8 @@ import { addOnFor, addOnState } from "./addOn";
 import { ProposalCard, type AddOn } from "./ProposalCard";
 import { QuestionsForm } from "./QuestionsForm";
 import { RecoveryBanner } from "./RecoveryBanner";
+import { Rewind } from "./Rewind";
+import { restoredDraft } from "./rewindText";
 import { SetupRow } from "./SetupRow";
 import { HelpCardView, HelpPending, type HelpState } from "./HelpMenu";
 import { useSimpler } from "./Simpler";
@@ -601,6 +603,18 @@ export function Chat({ slug, ticket, tickets, onOpenTicket, onOpenOutput, onErro
                   {e.at && <time className="muted small" dateTime={e.at} title={fullTime(e.at)}>{timeAgo(e.at)}</time>}
                 </div>
                 {e.role === "user" ? <UserText text={e.text} commands={commands} command={e.command} /> : <Markdown text={e.text} />}
+                {e.rewind && !old && (
+                  <Rewind slug={slug} ticketId={ticket.id} entry={e} running={running} queued={queued.length}
+                    later={entries.slice(b.index + 1).filter((x) => x.kind === "text" && !!x.text && !x.commandOutput).length}
+                    onError={onError}
+                    onDone={(text) => {
+                      setDraft((d) => restoredDraft(text, d));
+                      stickToBottom.current = true;
+                      setPage(null);
+                      reload();
+                      composer.current?.focus();
+                    }} />
+                )}
               </div>
             );
           }

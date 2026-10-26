@@ -10,6 +10,7 @@ import { DiffError, folderDiff, ticketDiff } from "./diff";
 import { detectBaseBranch, enableVersionHistory, hasUncommittedChanges, isGitRepo, repoKind, resolveBaseBranch, which } from "./git";
 import { checkPr, mergePr, PrError, REFRESH_MIN_MS, refreshPr, resolveConflicts, sendFailures, type PrDeps } from "./prpoller";
 import { resumeCommand } from "./prompts";
+import { applyRewind, previewRewind } from "./rewind";
 import { cronError, describeCron, nextRuns, parseCron } from "./cron";
 import { fromUserBrowser } from "./integrations/guard";
 import { PassError, Passes } from "./integrations/passes";
@@ -1558,6 +1559,25 @@ export function createServer(deps: ServerDeps) {
         return { ...e, agent: { ...agent, steps: agent.steps.slice(-AGENT_STEP_TAIL) } };
       });
       return json({ entries, start, total: all.length, title: parsed?.title ?? null });
+    }
+    if (action === "rewind" && (m === "GET" || m === "POST")) {
+      // Rewind: cut the chat before one of the user's messages and put the project files back as they were then.
+      // GET ?uuid= says what would change; POST { uuid, files } does it. Only the user's click, never a board run.
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "Rewind is the user's click, not a board run's");
+      const t = store.getTicket(slug, id)!;
+      const b = m === "POST" ? await body(req) : {};
+      const uuid = m === "POST" ? String(b.uuid ?? "") : url.searchParams.get("uuid") ?? "";
+      const entry = (t.sessionId ? sessions.get(t.sessionId)?.entries : null)?.find((e) => e.uuid === uuid && e.rewind);
+      if (!t.sessionId || !entry) throw new HttpError(404, "This message can't be rewound to.");
+      const blocked = board.rewindBlocked(slug, id);
+      const dir = board.rewindDir(slug, id);
+      if (m === "GET") return json({ blocked, ...(await previewRewind(dir, id, entry)) });
+      if (blocked) throw new ConflictError(blocked);
+      const file = sessions.file(t.sessionId);
+      if (!file) throw new HttpError(404, "The conversation file is missing.");
+      const { restored, cut } = await applyRewind({ dir, ticketId: id, entry, sessionFile: file, files: b.files !== false });
+      board.rewound(slug, id, cut.empty);
+      return json({ text: entry.text, restored });
     }
     if (action === "simplified" && m === "GET") {
       // Saved plain-words versions of this ticket's Claude replies, by message.

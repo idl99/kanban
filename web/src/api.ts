@@ -461,6 +461,8 @@ export interface SessionEntry {
   toolUseId?: string;
   /** Tool rows whose result was an error. */
   error?: true;
+  /** A plain message of the user's: the chat can rewind to it. */
+  rewind?: true;
   agent?: AgentInfo;
   questions?: Question[];
   proposal?: { title: string; description: string; important?: true };
@@ -1347,6 +1349,13 @@ export const api = {
   conversation: (slug: string, id: string, before?: number) =>
     req<{ entries: SessionEntry[]; start: number; total: number; title: string | null }>(
       "GET", `${t(slug, id)}/conversation${before !== undefined ? `?before=${before}` : ""}`),
+  /** Rewind: what going back to one of the user's messages would change (files null: they can't be changed back, filesReason says why). */
+  rewindPreview: (slug: string, id: string, uuid: string) =>
+    req<{ blocked: string | null; files: { path: string; status: "A" | "D" | "M" }[] | null; filesReason: "no-history" | "no-snapshot" | null }>(
+      "GET", `${t(slug, id)}/rewind?uuid=${encodeURIComponent(uuid)}`),
+  /** Rewind: cut the chat before the message and, with files, put the project files back. Returns the message text. */
+  rewind: (slug: string, id: string, uuid: string, files: boolean) =>
+    req<{ text: string; restored: number }>("POST", `${t(slug, id)}/rewind`, { uuid, files }),
   /** Saved plain-words versions of the ticket's Claude replies, by message uuid. */
   simplified: (slug: string, id: string) => req<Record<string, string>>("GET", `${t(slug, id)}/simplified`),
   /** "Say it simpler": one reply rewritten in plain words (a side call; saved, so the second time is free). */
