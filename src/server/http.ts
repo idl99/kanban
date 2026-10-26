@@ -1724,6 +1724,20 @@ export function createServer(deps: ServerDeps) {
         throw new HttpError(400, (e as Error).message);
       }
     }
+    // Move a Backlog ticket to another board (the user's click, not a run's).
+    if (m === "POST" && action === "move") {
+      if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "moving tickets is the user's call, not a run's");
+      const b = await body(req);
+      const target = String(b.board ?? "");
+      if (!store.getProfile(target)) throw new HttpError(404, "board not found");
+      try {
+        const t = await board.moveTicket(slug, id, target);
+        huddles.closeForTicket(slug, id);
+        return json(view(store.getProfile(target)!, t), 201);
+      } catch (e) {
+        throw new HttpError(400, (e as Error).message);
+      }
+    }
     // Add-on: a new ticket for a new requirement on this one, which keeps its title and description (the user's click).
     if (m === "POST" && action === "add-on") {
       if (req.headers.get(RUN_HEADER)) throw new HttpError(403, "add-on tickets are created by the user's click on a proposal card; use the propose_ticket tool");

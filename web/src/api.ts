@@ -1327,6 +1327,8 @@ export const api = {
   updateTicket: (slug: string, id: string, patch: Partial<Pick<Ticket, "title" | "body" | "status" | "order" | "mode" | "notice" | "needs" | "tags" | "suggestedTags" | "important" | "runCapUsd" | "model" | "effort">> & { expectedBody?: string }) =>
     req<Ticket>("PATCH", t(slug, id), patch),
   deleteTicket: (slug: string, id: string) => req<void>("DELETE", t(slug, id)),
+  /** Send a Backlog ticket to another board; returns the new ticket there. */
+  moveTicketToBoard: (slug: string, id: string, board: string) => req<Ticket>("POST", `${t(slug, id)}/move`, { board }),
   /** Inbox Snooze: hide what the ticket waits for now for a day (or until its state changes). */
   followUpNow: (slug: string, id: string) => req<Ticket>("POST", `${t(slug, id)}/follow-up/now`, {}),
   stopFollowUp: (slug: string, id: string) => req<Ticket>("DELETE", `${t(slug, id)}/follow-up`, {}),

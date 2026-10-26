@@ -2045,6 +2045,35 @@ export class Board {
     this.bus.emit({ type: "ticket.deleted", profile: slug, id });
   }
 
+  /**
+   * Move a Backlog ticket to another board: a fresh Backlog ticket there with the same title, description and tags
+   * (chat, comments and runs stay behind), then the original goes. Refused while it is linked to other tickets.
+   */
+  async moveTicket(slug: string, id: string, target: string): Promise<Ticket> {
+    const t = this.store.getTicket(slug, id);
+    if (!t) throw new Error(`ticket ${id} not found`);
+    if (!this.store.getProfile(target)) throw new Error(`board ${target} not found`);
+    if (target === slug) throw new Error("The ticket is already on that board.");
+    if (t.status !== "backlog") throw new Error("Only tickets in Backlog can move to another board.");
+    if (this.runs.has(this.key(slug, id))) throw new Error("Claude is working on this ticket. Stop it first.");
+    if (t.worktree || t.branch) throw new Error("This ticket has work in a copy of the folder. Delete the ticket or finish it instead of moving it.");
+    const linked = t.parentId || t.dependsOn?.length || t.branchedFrom || t.addOnOf || t.plan
+      || this.store.listTickets(slug).some((o) => o.id !== id && (o.parentId === id || o.branchedFrom === id || o.addOnOf === id
+        || o.dependsOn?.some((d) => d === id || (!!t.planKey && d === t.planKey))));
+    if (linked) throw new Error("Can't move: this ticket is linked to other tickets. Remove the links first.");
+    // Create first, delete second: a failure in between leaves the original in place.
+    const copy = await this.createTicket(target, { title: t.title, body: t.body, status: "backlog", tags: t.tags, important: t.important });
+    try {
+      this.store.deleteTicket(slug, id);
+    } catch (e) {
+      this.store.deleteTicket(target, copy.id);
+      this.bus.emit({ type: "ticket.deleted", profile: target, id: copy.id });
+      throw e;
+    }
+    this.bus.emit({ type: "ticket.deleted", profile: slug, id });
+    return copy;
+  }
+
   /** Images pasted into the ticket: its description, comments and chat (the Claude session transcript). */
   private attachmentsOf(slug: string, t: Ticket): string[] {
     const texts = [t.body, ...this.store.listComments(slug, t.id).map((c) => c.text), ...(t.queued ?? []).map((m) => m.text)];

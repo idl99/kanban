@@ -205,13 +205,15 @@ function usePanelWidth(fit: number) {
 }
 
 /** Ticket view: details on the left, the chat with Claude filling the right side. */
-export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, nav, slideIn = true, tabRequest, huddleSeed, onOpenTeam, jobs = [], onOpenJobs }: {
+export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, nav, slideIn = true, tabRequest, huddleSeed, onOpenTeam, jobs = [], onOpenJobs, moveTo }: {
   profile: Profile;
   ticket: Ticket;
   /** The board's tickets, for the planner/child links. */
   tickets: Ticket[];
   onOpenTicket: (id: string) => void;
   onClose: () => void;
+  /** The other boards, and the move of this ticket to one (true when it moved): "Move to board" in the ticket menu. */
+  moveTo?: { boards: { slug: string; name: string }[]; onMove: (id: string, board: { slug: string; name: string }) => Promise<boolean> };
   /** The previous/next visible ticket in board order (null at the ends or when this one isn't on the board view). */
   nav?: { prev: string | null; next: string | null; go: (id: string) => void };
   /** Slide in when opened; off when stepping from the neighbouring ticket. */
@@ -292,6 +294,8 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const [reportingBug, setReportingBug] = useState(false);
   const [confirmStart, setConfirmStart] = useState(false);
   const [confirmBranch, setConfirmBranch] = useState(false);
+  // "Move to board…": the dialog, and the board picked in it.
+  const [moveBoard, setMoveBoard] = useState<string | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [picking, setPicking] = useState(false);
   const [linked, setLinked] = useState<ClaudeSession | null>(null);
@@ -329,7 +333,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
   const revertTitle = useRef(false);
   // Leaving for the neighbouring ticket: keep a title edit, and don't drop an unsaved description edit.
   const step = (id: string | null | undefined) => {
-    if (!id || !nav || editing || confirmDelete || confirmStart || confirmBranch || confirmStop || picking || reportingBug) return;
+    if (!id || !nav || editing || confirmDelete || confirmStart || confirmBranch || moveBoard !== null || confirmStop || picking || reportingBug) return;
     if (title !== ticket.title) saveTitle();
     nav.go(id);
   };
@@ -797,6 +801,7 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             boardCap={profile.runCapUsd ?? null}
             onCap={(usd) => api.updateTicket(slug, ticket.id, { runCapUsd: usd })}
             onBranch={() => setConfirmBranch(true)}
+            onMoveToBoard={moveTo?.boards.length ? () => setMoveBoard(moveTo.boards[0].slug) : undefined}
             onPickSession={() => setPicking(true)}
             onUnlink={() => act(() => api.linkSession(slug, ticket.id, null))}
             onCheckPr={() => act(() => api.checkPr(slug, ticket.id))}
@@ -952,6 +957,19 @@ export function TicketDrawer({ profile, ticket, tickets, onOpenTicket, onClose, 
             onCancel={() => setConfirmBranch(false)}
             onConfirm={async () => { await branchTicket(slug, ticket, onOpenTicket); setConfirmBranch(false); }}>
             <p>Creates <b>Branch: {ticket.title}</b> in Planning with a copy of this conversation{ticket.branch ? <>, on its own branch off <code>{ticket.branch}</code> (committed work only)</> : ""}. Then take it in another direction; this ticket stays as it is.</p>
+          </ConfirmDialog>
+        )}
+        {moveBoard !== null && moveTo && (
+          <ConfirmDialog title="Move to another board?" confirmLabel="Move ticket" busyLabel="Moving…" tone="primary"
+            onCancel={() => setMoveBoard(null)}
+            onConfirm={async () => {
+              const target = moveTo.boards.find((b) => b.slug === moveBoard);
+              if (target && await moveTo.onMove(ticket.id, target)) onClose();
+              else setMoveBoard(null);
+            }}>
+            <p>Sends <b>{ticket.title}</b> to the Backlog of another board. Only the title, description and tags come along; chat and comments stay behind, and it leaves this board.</p>
+            <Select ariaLabel="Board to move to" value={moveBoard} onChange={setMoveBoard}
+              options={moveTo.boards.map((b) => ({ value: b.slug, label: b.name }))} />
           </ConfirmDialog>
         )}
         {reportingBug && (

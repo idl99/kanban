@@ -595,6 +595,21 @@ export function App() {
   }, [inbox]);
 
   // Without an order the server puts the ticket where a column entry goes (e.g. top of Done).
+  // "Move to board" in the ticket menu: the other boards; the ticket leaves this board and shows up in the target's Backlog.
+  const moveTo = useMemo(() => ({
+    boards: (profiles ?? []).filter((p) => p.slug !== slug).map((p) => ({ slug: p.slug, name: p.name })),
+    onMove: async (id: string, to: { slug: string; name: string }) => {
+      try {
+        const t = await api.moveTicketToBoard(slug!, id, to.slug);
+        toast(<>Moved <b>{t.title}</b> to {to.name}. It is in that board's Backlog.</>);
+        return true;
+      } catch (e: any) {
+        toast(e.message, { tone: "error" });
+        return false;
+      }
+    },
+  }), [profiles, slug]);
+
   const move = async (id: string, status: Status, order?: number, undo = true) => {
     const board = slug!;
     const before = tickets.find((t) => t.id === id);
@@ -991,7 +1006,7 @@ export function App() {
           onOpenConnections={() => { setAutomationsOpen(false); setConnections(true); }} />
       )}
       {snippetsOpen && profile && <SnippetsDialog profile={profile} onClose={() => setSnippetsOpen(false)} />}
-      {open && profile && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket}
+      {open && profile && <TicketDrawer key={open.id} profile={profile} ticket={open} tickets={tickets} onOpenTicket={openTicket} onClose={closeTicket} moveTo={moveTo}
         jobs={jobs ?? []} onOpenJobs={openSchedules}
         nav={{ prev: prevId, next: nextId, go: stepTicket }} slideIn={!stepped.current}
         tabRequest={huddleTab?.id === open.id ? { tab: "huddle", n: huddleTab.n, huddleId: huddleTab.huddleId } : null}

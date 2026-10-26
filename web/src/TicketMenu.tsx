@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { copy, type Ticket } from "./api";
-import { BranchIcon, BugIcon, CheckIcon, CloseIcon, CopyIcon, MoreIcon, RefreshIcon, TerminalIcon, TrashIcon } from "./icons";
+import { BranchIcon, BugIcon, CheckIcon, ChevronRightIcon, CloseIcon, CopyIcon, MoreIcon, RefreshIcon, TerminalIcon, TrashIcon } from "./icons";
 import { capInputText, parseCap } from "./capText";
 import { useLayer } from "./layers";
 import { MenuSheet } from "./MenuSheet";
@@ -10,7 +10,7 @@ import { costText } from "./usage";
  * "⋯" menu in the ticket panel header: the session (resume command, branch, ID, linked session),
  * then Report a bug and Delete. ↑↓ move, Esc closes only the menu.
  */
-export function TicketMenu({ ticket, working, live, linkedLabel, boardCap, onCap, onBranch, onPickSession, onUnlink, onCheckPr, onReportBug, onDelete }: {
+export function TicketMenu({ ticket, working, live, linkedLabel, boardCap, onCap, onBranch, onMoveToBoard, onPickSession, onUnlink, onCheckPr, onReportBug, onDelete }: {
   ticket: Ticket;
   working: boolean;
   /** The session is open in a terminal right now. */
@@ -23,6 +23,8 @@ export function TicketMenu({ ticket, working, live, linkedLabel, boardCap, onCap
   onCap: (usd: number | null) => Promise<unknown>;
   /** Branch the ticket (copy of its conversation + committed code); only offered once it has a conversation. */
   onBranch: () => void;
+  /** Move a Backlog ticket to another board; missing when there is no other board. */
+  onMoveToBoard?: () => void;
   onPickSession: () => void;
   onUnlink: () => void;
   onCheckPr: () => void;
@@ -118,6 +120,14 @@ export function TicketMenu({ ticket, working, live, linkedLabel, boardCap, onCap
                 <span className="menu-icon" aria-hidden><BranchIcon size={14} /></span>
                 <span className="menu-label">Branch ticket…</span>
                 <span className="menu-hint">{working ? "Wait until Claude is done" : "copy chat + code"}</span>
+              </button>
+            )}
+            {ticket.status === "backlog" && onMoveToBoard && (
+              <button role="menuitem" className="menu-item" disabled={working}
+                title={working ? "Wait until Claude is done" : "Send this ticket to the Backlog of another board"} onClick={pick(onMoveToBoard)}>
+                <span className="menu-icon" aria-hidden><ChevronRightIcon size={14} /></span>
+                <span className="menu-label">Move to board…</span>
+                <span className="menu-hint">{working ? "Wait until Claude is done" : "title, description, tags"}</span>
               </button>
             )}
             {hasSession && !working && (
